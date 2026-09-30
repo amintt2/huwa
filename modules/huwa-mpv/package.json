@@ -1,0 +1,8 @@
+{
+  "name": "huwa-mpv",
+  "version": "0.1.0",
+  "description": "Huwa fallback video engine (libmpv) for Expo",
+  "main": "index.ts",
+  "license": "MIT",
+  "private": true
+}

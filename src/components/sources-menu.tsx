@@ -8,6 +8,7 @@ import { isTorrent, type AddonStream } from '@/addons/protocol';
 import { detectQuality, QUALITIES, streamKey, type Quality } from '@/addons/quality';
 import { qualityLabel, type useSource } from '@/addons/use-source';
 import { hostOf } from '@/addons/web-player';
+import { EngineBadge } from '@/components/player/engines';
 import { Button, Chip, IconButton, InfoPill, Press, Txt } from '@/components/ui';
 import { YouTubePlayer } from '@/components/youtube-player';
 import { C, R, S } from '@/theme/tokens';
@@ -25,7 +26,10 @@ export function SourceButton({ src, onOpen }: { src: Source; onOpen: () => void 
     <Press onPress={onOpen} style={styles.button} accessibilityRole="button" accessibilityLabel={`Sources : ${status}`}>
       <Ionicons name="layers-outline" size={20} color={C.accentText} />
       <View style={{ flex: 1, gap: 2 }}>
-        <Txt v="label" numberOfLines={1}>{status}</Txt>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+          <Txt v="label" numberOfLines={1} style={{ flexShrink: 1 }}>{status}</Txt>
+          <EngineBadge />
+        </View>
         <Txt v="small" numberOfLines={1}>
           {auto ? 'Automatique' : 'Choix manuel'} · {ranked.length} source{ranked.length > 1 ? 's' : ''}
           {pending > 0 ? ` · ${pending} addon${pending > 1 ? 's' : ''} en attente` : ''}
@@ -67,6 +71,7 @@ export function SourcesMenu({ src, visible, onClose }: { src: Source; visible: b
           <IconButton icon="close" label="Fermer" onPress={onClose} />
         </View>
         <ScrollView contentContainerStyle={{ padding: S.lg, gap: S.lg, paddingBottom: S.xxl }}>
+          <EngineBadge variant="row" />
           <Press onPress={() => { src.pick('auto'); onClose(); }} style={[styles.row, auto && styles.active]}>
             <Ionicons name="sparkles-outline" size={20} color={C.accentText} />
             <View style={{ flex: 1, gap: 2 }}>

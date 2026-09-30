@@ -5,6 +5,7 @@ import { ActivityIndicator, Alert, ScrollView, StyleSheet, Switch, TextInput, Vi
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { LanguagePrefs } from '@/components/language-prefs';
+import { EngineSetting } from '@/components/player/engines/EngineSetting';
 import { FilterChip, Group, Row, ScreenHeader } from '@/components/states';
 import { Button, Txt } from '@/components/ui';
 import { useT } from '@/i18n';
@@ -139,6 +140,7 @@ export default function Settings() {
             hint={t('settings.wifiOnlyHint')}
             right={<Switch value={s.wifiOnly} onValueChange={(v) => setSetting('wifiOnly', v)} accessibilityLabel={t('settings.wifiOnly')} {...switchProps} />}
           />
+          <EngineSetting />
           <View style={styles.block}>
             <Txt v="label">{t('settings.quality')}</Txt>
             <View style={styles.inline}>

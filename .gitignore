@@ -69,3 +69,6 @@ store/screens/
 
 # Paperback extension sandbox bundle (npm run build:paperback, runs on postinstall)
 src/manga-ext/runtime/runtime.bundle.js
+
+# libmpv dynamic framework (scripts/fetch-mpvkit.sh)
+modules/huwa-mpv/ios/Libmpv.xcframework/
