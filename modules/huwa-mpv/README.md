@@ -45,6 +45,29 @@ LANG=en_US.UTF-8 npx expo prebuild -p ios
 npx expo run:ios
 ```
 
+## Mesures (simulateur iPhone 17 Pro, iOS 27, build Release, Mac Apple Silicon)
+
+Taille ajoutée : `Libmpv.framework` = 28,4 Mo (arm64 appareil, strippé), ≈ 11,7 Mo compressé
+(ordre de grandeur du surcoût de téléchargement de l'IPA). Le module Swift/JS est négligeable.
+
+CPU moyen sur 30 s (`top`, échantillons de 2 s ; « appareil » = tous les processus du simulateur,
+décodeurs VideoToolbox et serveur média compris), Sintel 1280×720 24 i/s, réglage Automatique :
+
+| Cas | Moteur | App | Appareil |
+|---|---|---|---|
+| Accueil (référence) | — | 5,7 % | 6,5 % |
+| MP4 H.264 | AVPlayer | 15,1 % | 21,6 % |
+| Même flux H.264 remuxé en MKV | mpv (VideoToolbox) | 27,0 % | 41,8 % |
+| MKV HEVC 10 bits + 2 pistes ASS | mpv (VideoToolbox + libass) | 40,4 % | 58,0 % |
+| WebM VP9 | mpv (logiciel, pas de VP9 matériel sur iOS) | 30,5 % | 33,6 % |
+| MKV HEVC en arrière-plan | mpv en pause, `vid=no` | 1,2 % | 2,1 % |
+| Retour à l'accueil après mpv | libmpv détruit | 5,5 % | 6,5 % |
+
+À flux égal, mpv coûte ≈ 2× AVPlayer sur le simulateur (rendu gpu-next via MoltenVK en plus du
+décodage) : c'est pourquoi il n'est utilisé que lorsque AVPlayer ne sait pas lire. Le simulateur
+n'est pas représentatif de la consommation réelle (GPU du Mac, pas de moteur vidéo d'iPhone) ; à
+re-mesurer sur appareil avec Instruments (Energy Log).
+
 ## Licences (conformité LGPL)
 
 Le code de ce module (Swift/Kotlin/TS) est MIT. `Libmpv.framework` embarque des bibliothèques

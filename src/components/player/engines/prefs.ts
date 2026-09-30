@@ -46,9 +46,16 @@ const subscribeActive = (l: () => void) => {
 };
 const getActive = () => active;
 
-export function setActiveEngine(next: ActiveEngine) {
-  if (next?.engine === active?.engine && next?.reason === active?.reason && next?.detail === active?.detail) return;
-  active = next;
+// One entry per mounted player (a watch screen can stay mounted under another one): the badge
+// follows the most recently updated player still alive.
+const owners = new Map<object, NonNullable<ActiveEngine>>();
+
+export function setActiveEngine(owner: object, next: ActiveEngine) {
+  owners.delete(owner);
+  if (next) owners.set(owner, next);
+  const last = [...owners.values()].pop() ?? null;
+  if (last?.engine === active?.engine && last?.reason === active?.reason && last?.detail === active?.detail) return;
+  active = last;
   activeListeners.forEach((l) => l());
 }
 

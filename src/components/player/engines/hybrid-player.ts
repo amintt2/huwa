@@ -156,7 +156,7 @@ export class HybridPlayer implements EventEmitter<VideoPlayerEvents> {
   }
 
   private publish() {
-    setActiveEngine({ engine: this.engine, reason: this.reason, detail: this.detail });
+    setActiveEngine(this, { engine: this.engine, reason: this.reason, detail: this.detail });
   }
 
   private viewReady = false;
@@ -312,7 +312,7 @@ export class HybridPlayer implements EventEmitter<VideoPlayerEvents> {
     this.nativeSubs.forEach((s) => s.remove());
     this.nativeSubs = [];
     this.view?.stop().catch(() => {});
-    setActiveEngine(null);
+    setActiveEngine(this, null);
   }
 
   // ---------- native engine ----------

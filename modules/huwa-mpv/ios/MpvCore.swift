@@ -72,9 +72,7 @@ final class MpvCore {
       ("sid", "no"),
       ("input-default-bindings", "no"),
       ("input-vo-keyboard", "no"),
-      ("osc", "no"),
       ("terminal", "no"),
-      ("ytdl", "no"),
       ("load-scripts", "no"),
       ("config", "no"),
     ]
