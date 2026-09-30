@@ -33,7 +33,8 @@
           "UIInterfaceOrientationLandscapeLeft",
           "UIInterfaceOrientationLandscapeRight"
         ]
-      }
+      },
+      "appleTeamId": "XPB668GFX4"
     },
     "android": {
       "adaptiveIcon": {
@@ -50,6 +51,7 @@
       "favicon": "./assets/images/favicon.png"
     },
     "plugins": [
+      "./plugins/with-optional-push",
       "expo-router",
       [
         "expo-splash-screen",

@@ -1,0 +1,143 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Huwa — anime et manhwa, reliés</title>
+  <meta name="description" content="Huwa relie chaque épisode d'anime au chapitre du manhwa. Addons de flux, communauté de pair à pair, sans serveur central. Android et iOS.">
+  <meta name="theme-color" content="#05070D">
+  <meta property="og:title" content="Huwa — anime et manhwa, reliés">
+  <meta property="og:description" content="Fini l'anime ? Huwa te dit à quel chapitre reprendre le manhwa. Sans compte, sans serveur central.">
+  <meta property="og:image" content="/altstore/icon.png">
+  <link rel="icon" href="/icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="/altstore/icon.png">
+  <style>
+    :root {
+      --bg: #05070D; --surface: #0C111C; --elevated: #141B2B; --border: rgba(120,140,180,.18);
+      --text: #F2F5FA; --text2: #9AA5BA; --body: #C3CBDA; --accent: #2F6BEB; --accent-text: #7FB0FF;
+      --accent-soft: rgba(47,107,235,.18);
+    }
+    * { box-sizing: border-box; }
+    html { -webkit-text-size-adjust: 100%; }
+    body {
+      margin: 0; background: var(--bg); color: var(--body);
+      font: 16px/1.55 -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto, sans-serif;
+    }
+    a { color: var(--accent-text); }
+    .wrap { max-width: 1040px; margin: 0 auto; padding: 0 20px; }
+    header { display: flex; align-items: center; justify-content: space-between; padding: 20px 0; }
+    .brand { display: flex; align-items: center; gap: 10px; color: var(--text); font-weight: 900; letter-spacing: .04em; text-decoration: none; font-size: 20px; }
+    .brand img { width: 32px; height: 32px; }
+    .gh { color: var(--text2); text-decoration: none; font-size: 14px; }
+    .hero { padding: 56px 0 40px; display: grid; gap: 28px; }
+    h1 { margin: 0; color: var(--text); font-size: clamp(36px, 7vw, 64px); line-height: 1.02; font-weight: 900; text-transform: uppercase; letter-spacing: -.01em; }
+    h1 span { color: var(--accent-text); }
+    .lead { margin: 0; font-size: clamp(17px, 2.4vw, 20px); max-width: 640px; color: var(--body); }
+    .cta { display: flex; flex-wrap: wrap; gap: 12px; }
+    .btn {
+      display: inline-flex; align-items: center; gap: 10px; min-height: 52px; padding: 0 22px; border-radius: 14px;
+      font-weight: 700; text-decoration: none; letter-spacing: .02em; border: 1px solid transparent;
+      transition: transform .12s ease, background-color .15s ease;
+    }
+    .btn:active { transform: scale(.97); }
+    .btn-primary { background: var(--accent); color: #fff; }
+    .btn-primary:hover { background: #3a76f5; }
+    .btn-soft { background: var(--accent-soft); color: var(--accent-text); border-color: rgba(127,176,255,.3); }
+    .btn svg { width: 20px; height: 20px; flex: none; }
+    section { padding: 44px 0; border-top: 1px solid var(--border); }
+    h2 { margin: 0 0 20px; color: var(--text); font-size: 24px; font-weight: 900; text-transform: uppercase; letter-spacing: .02em; }
+    .grid { display: grid; gap: 14px; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); }
+    .card { background: var(--surface); border: 1px solid var(--border); border-radius: 16px; padding: 20px; }
+    .card h3 { margin: 0 0 6px; color: var(--text); font-size: 17px; }
+    .card p { margin: 0; font-size: 15px; color: var(--text2); }
+    .install { display: grid; gap: 14px; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); }
+    .install .card { display: grid; gap: 14px; align-content: start; }
+    .install ol { margin: 0; padding-left: 20px; color: var(--text2); font-size: 15px; }
+    .install li { margin: 4px 0; }
+    .tag { display: inline-block; font-size: 12px; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; color: var(--accent-text); }
+    code { background: var(--elevated); padding: 2px 6px; border-radius: 6px; font-size: 13px; color: var(--text); word-break: break-all; }
+    .note { font-size: 14px; color: var(--text2); }
+    footer { padding: 32px 0 48px; border-top: 1px solid var(--border); font-size: 14px; color: var(--text2); }
+    @media (prefers-reduced-motion: reduce) { .btn { transition: none; } }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <header>
+      <a class="brand" href="/"><img src="/icon.svg" alt="" width="32" height="32">HUWA</a>
+      <a class="gh" href="https://github.com/amintt2/huwa">Code source</a>
+    </header>
+
+    <div class="hero">
+      <h1>Anime et manhwa,<br><span>enfin reliés.</span></h1>
+      <p class="lead">Fini l’anime ? Huwa te dit à quel chapitre reprendre le manhwa, et inversement. Tes sources viennent des addons que tu choisis, ta communauté passe de pair à pair. Pas de compte, pas de pub, pas de serveur central.</p>
+      <div class="cta">
+        <a class="btn btn-primary" href="#installer">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4v11m0 0-4.5-4.5M12 15l4.5-4.5M5 20h14"/></svg>
+          Installer Huwa
+        </a>
+        <a class="btn btn-soft" href="https://github.com/amintt2/huwa">Voir sur GitHub</a>
+      </div>
+    </div>
+
+    <section>
+      <h2>Ce que fait Huwa</h2>
+      <div class="grid">
+        <div class="card"><h3>Le pont épisode ↔ chapitre</h3><p>Chaque épisode sait quels chapitres il adapte. Reprends l’histoire dans l’autre format sans chercher.</p></div>
+        <div class="card"><h3>Addons de flux</h3><p>Compatible avec les addons au format Stremio : tu ajoutes l’URL, Huwa lance la meilleure source et passe à une meilleure qualité dès qu’elle arrive.</p></div>
+        <div class="card"><h3>Lecteur complet</h3><p>Paysage plein écran, passer l’intro et le générique, épisode suivant préchargé, sous-titres, gestes volume et luminosité.</p></div>
+        <div class="card"><h3>Communauté pair à pair</h3><p>Commentaires, messages privés et profil signés par ta clé. Ils passent directement entre fans, sans serveur qui les stocke.</p></div>
+        <div class="card"><h3>Rang vérifiable</h3><p>Ce que tu regardes et lis te fait progresser. Chacun peut recalculer ton rang depuis ton journal signé.</p></div>
+        <div class="card"><h3>Catalogue et calendrier</h3><p>Tendances, recherche et sorties de la semaine depuis AniList, avec rappel pour les nouveaux épisodes.</p></div>
+      </div>
+    </section>
+
+    <section id="installer">
+      <h2>Installer</h2>
+      <div class="install">
+        <div class="card">
+          <span class="tag">Android</span>
+          <h3>APK direct ou Obtainium</h3>
+          <ol>
+            <li>Télécharge le fichier <code>.apk</code> de la dernière version.</li>
+            <li>Autorise l’installation depuis ton navigateur si Android le demande.</li>
+            <li>Avec Obtainium, les mises à jour arrivent toutes seules.</li>
+          </ol>
+          <div class="cta">
+            <a class="btn btn-primary" href="https://github.com/amintt2/huwa/releases/latest">Télécharger l’APK</a>
+            <a class="btn btn-soft" href="obtainium://add/https://github.com/amintt2/huwa">Ajouter à Obtainium</a>
+          </div>
+        </div>
+
+        <div class="card">
+          <span class="tag">iPhone et iPad</span>
+          <h3>AltStore ou SideStore</h3>
+          <ol>
+            <li>Installe <a href="https://altstore.io">AltStore</a> (AltStore PAL dans l’Union européenne) ou <a href="https://sidestore.io">SideStore</a>.</li>
+            <li>Ajoute la source Huwa avec le bouton ci-dessous, puis installe l’app.</li>
+            <li>Sans store alternatif, télécharge l’<code>.ipa</code> et ouvre-le avec Sideloadly.</li>
+          </ol>
+          <div class="cta">
+            <a class="btn btn-primary" href="altstore://source?url=https://huwa.mciut.fr/altstore-source.json">Ajouter à AltStore</a>
+            <a class="btn btn-soft" href="sidestore://source?url=https://huwa.mciut.fr/altstore-source.json">SideStore</a>
+            <a class="btn btn-soft" href="https://github.com/amintt2/huwa/releases/latest">Fichier .ipa</a>
+          </div>
+          <p class="note">Adresse de la source : <code>https://huwa.mciut.fr/altstore-source.json</code></p>
+        </div>
+      </div>
+      <p class="note">Huwa est en développement actif. Si aucun fichier n’apparaît encore sur la page des versions, la première version publique arrive bientôt.</p>
+    </section>
+
+    <section>
+      <h2>Ce que Huwa ne fait pas</h2>
+      <div class="card">
+        <p>Huwa n’héberge, n’indexe et ne recommande aucun contenu. Les vidéos viennent uniquement des addons que tu installes toi-même, et tu es responsable de ce que tu regardes avec. Le moteur torrent est désactivé par défaut et le partage (seeding) est coupé. Le catalogue vient de l’API publique d’AniList.</p>
+      </div>
+    </section>
+
+    <footer>
+      Huwa · open source · <a href="https://github.com/amintt2/huwa/blob/huwa-v1/distribution/LEGAL.md">Conditions et signalements</a>
+    </footer>
+  </div>
+</body>
+</html>
