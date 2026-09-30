@@ -98,6 +98,10 @@ export default function RootLayout() {
           <Stack.Screen name="settings/moderation" />
           <Stack.Screen name="settings/notifications" />
           <Stack.Screen name="addons" />
+          <Stack.Screen name="addon" options={SHEET} />
+          <Stack.Screen name="install" options={SHEET} />
+          <Stack.Screen name="addon-catalog" />
+          <Stack.Screen name="import" />
           <Stack.Screen name="debrid" />
           <Stack.Screen name="discover" />
           <Stack.Screen name="meta/[id]" />

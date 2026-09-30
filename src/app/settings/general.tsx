@@ -1,5 +1,5 @@
 import Constants from 'expo-constants';
-import { router } from 'expo-router';
+import { router, type Href } from 'expo-router';
 import { useState } from 'react';
 import { ActivityIndicator, Alert, ScrollView, StyleSheet, Switch, TextInput, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -196,6 +196,7 @@ export default function Settings() {
             />
             <Button small variant="ghost" icon="log-in-outline" label={t('anilist.login')} onPress={onLogin} />
             {!oauthAvailable() && <Txt v="small" style={{ fontSize: 12 }}>{t('anilist.noClient')}</Txt>}
+            <Button small variant="ghost" icon="download-outline" label="Importer depuis Stremio ou anime-sama" onPress={() => router.push('/import' as Href)} />
           </View>
         </Group>
 

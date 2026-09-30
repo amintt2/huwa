@@ -338,3 +338,49 @@ export async function fetchUserList(userName: string, token?: string): Promise<I
   registerSeries(out.map((e) => e.series).filter((s) => !getSeries(s.id)));
   return out;
 }
+
+// ---------- imports from other apps (Stremio, anime-sama) ----------
+
+/** Series for AniList anime ids, 50 per request (unknown or unaired ids are skipped). */
+export async function fetchAnimeByIds(ids: number[]): Promise<Series[]> {
+  const out: Series[] = [];
+  for (let i = 0; i < ids.length; i += 50) {
+    const chunk = ids.slice(i, i + 50);
+    const data = await gql<{ Page: { media: Media[] } }>(
+      `query ($ids: [Int]) { Page(perPage: 50) { media(id_in: $ids, type: ANIME) { ${NODE} } } }`,
+      { ids: chunk },
+    );
+    for (const m of data.Page.media) {
+      const s = getSeries(`al${m.id}`) ?? build(m, null, 999);
+      if (s) out.push(s);
+    }
+  }
+  registerSeries(out.filter((s) => !getSeries(s.id)));
+  return out;
+}
+
+/**
+ * Best AniList match for each title (anime, or Korean manhwa when `manhwa`), 10 titles per
+ * request through GraphQL aliases. `null` when nothing matches.
+ */
+export async function matchTitles(items: { title: string; manhwa?: boolean }[]): Promise<(Series | null)[]> {
+  const out: (Series | null)[] = [];
+  for (let i = 0; i < items.length; i += 10) {
+    const chunk = items.slice(i, i + 10);
+    const vars = Object.fromEntries(chunk.map((c, j) => [`s${j}`, c.title]));
+    const fields = chunk
+      .map((c, j) => `a${j}: Page(perPage: 3) { media(search: $s${j}, type: ${c.manhwa ? 'MANGA' : 'ANIME'}, sort: SEARCH_MATCH) { ${NODE} } }`)
+      .join('\n');
+    const data = await gql<Record<string, { media: Media[] }>>(
+      `query (${chunk.map((_, j) => `$s${j}: String`).join(', ')}) { ${fields} }`,
+      vars,
+    );
+    chunk.forEach((c, j) => {
+      const list = data[`a${j}`]?.media ?? [];
+      const m = c.manhwa ? list.find(isManhwa) : list[0];
+      out.push(m ? getSeries(c.manhwa ? `alm${m.id}` : `al${m.id}`) ?? (c.manhwa ? build(null, m, 999) : build(m, null, 999)) : null);
+    });
+  }
+  registerSeries([...new Map(out.filter((s): s is Series => !!s && !getSeries(s.id)).map((s) => [s.id, s])).values()]);
+  return out;
+}

@@ -7,13 +7,18 @@ import { useEffect, useMemo, useState } from 'react';
 
 import { resolveTorrent, useCachedHashes, useTorrentResolver } from '@/debrid/resolve';
 
-import { isPlayable, isTorrent, type AddonStream } from './protocol';
+import { isExternal, isPlayable, isTorrent, isYouTube, type AddonStream } from './protocol';
 import { detectQuality, rankStreams, streamKey, type Quality } from './quality';
 import { useAddonPrefs, useAddons, useStreams } from './registry';
 
 type Resolution = { url?: string; via?: string; error?: string };
 
-export type SourceState = 'playing' | 'resolving' | 'failed' | 'ready' | 'needs-debrid' | 'external' | 'unusable';
+export type SourceState = 'playing' | 'resolving' | 'failed' | 'ready' | 'needs-debrid' | 'youtube' | 'external' | 'unusable';
+
+// Stremio `bingeGroup`: the release last played for a series, preferred for its next episode
+// (same group, same quality/subs/audio), as Stremio's binge-watching does.
+const lastBinge = new Map<string, string>();
+const NO_SUBS: NonNullable<AddonStream['subtitles']> = [];
 
 /** `enabled: false` = idle (used to prefetch the next episode only once armed). */
 export function useSource(seriesId: string, episode: number, { enabled = true }: { enabled?: boolean } = {}) {
@@ -52,13 +57,20 @@ export function useSource(seriesId: string, episode: number, { enabled = true }:
     };
     const candidates = ranked.filter((s) => usable(s) && !bad.includes(streamKey(s)));
     const pool = candidates.some(safe) ? candidates.filter(safe) : candidates;
+    const binge = lastBinge.get(seriesId);
+    const same = binge ? pool.find((s) => s.behaviorHints?.bingeGroup === binge) : undefined;
+    if (same) return same;
     return pool.reduce<AddonStream | undefined>((best, s) => (!best || score(s) > score(best) ? s : best), undefined);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [ranked, bad, resolverLabel, cached, prefs.preferredQuality]);
+  }, [ranked, bad, resolverLabel, cached, prefs.preferredQuality, seriesId]);
 
   const current = (manual ? ranked.find((s) => streamKey(s) === manual) : undefined) ?? auto;
   const currentKey = current ? streamKey(current) : undefined;
   const url = current ? (isPlayable(current) ? current.url : resolved[currentKey!]?.url) : undefined;
+  useEffect(() => {
+    const group = current?.behaviorHints?.bingeGroup;
+    if (enabled && url && group) lastBinge.set(seriesId, group);
+  }, [enabled, url, current, seriesId]);
 
   const markBad = (k: string, error?: string) => {
     setBad((b) => (b.includes(k) ? b : [...b, k]));
@@ -96,7 +108,8 @@ export function useSource(seriesId: string, episode: number, { enabled = true }:
     if (k === currentKey) return url ? 'playing' : 'resolving';
     if (usable(s)) return 'ready';
     if (isTorrent(s)) return 'needs-debrid';
-    if (s.externalUrl) return 'external';
+    if (isYouTube(s)) return 'youtube';
+    if (isExternal(s)) return 'external';
     return 'unusable';
   };
 
@@ -106,6 +119,8 @@ export function useSource(seriesId: string, episode: number, { enabled = true }:
     currentKey,
     url,
     headers: current?.behaviorHints?.proxyHeaders?.request,
+    /** Subtitles shipped with the current stream (merged with the subtitles addons by the player). */
+    streamSubtitles: current?.subtitles ?? NO_SUBS,
     quality: current ? detectQuality(current) : null,
     auto: !manual,
     pending,

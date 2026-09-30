@@ -7,6 +7,7 @@ import { anilistNumber, useAnimeIds, type AnimeIds } from './ids';
 import {
   type AddonStream,
   browsableCatalogs,
+  catalogSupports,
   fetchCatalog,
   fetchManifest,
   fetchStreams,
@@ -17,6 +18,8 @@ import {
   normalizeAddonUrl,
   prefixesFor,
   type Resource,
+  searchableCatalogs,
+  type StreamItem,
   supports,
 } from './protocol';
 import type { Quality } from './quality';
@@ -98,11 +101,34 @@ export async function hydrateAddons() {
   }
 }
 
-export async function installAddon(input: string) {
+/** Fetches and validates an addon without installing it (for the confirmation sheet). */
+export async function previewAddon(input: string) {
   const baseUrl = normalizeAddonUrl(input);
   const manifest = await fetchManifest(baseUrl);
-  if (state.addons.some((a) => a.manifest.id === manifest.id)) throw new Error('Addon déjà installé');
-  commit([...state.addons, { baseUrl, manifest, enabled: true }]);
+  const existing = state.addons.find((a) => a.manifest.id === manifest.id);
+  return { baseUrl, manifest, existing };
+}
+
+/**
+ * Installs an addon. An addon with the same id is replaced in place (same priority): that is how
+ * a reconfigured addon (new URL carrying its settings) updates, as in Stremio.
+ */
+export async function installAddon(input: string, preloaded?: Manifest) {
+  const baseUrl = normalizeAddonUrl(input);
+  const manifest = preloaded ?? (await fetchManifest(baseUrl));
+  const i = state.addons.findIndex((a) => a.manifest.id === manifest.id);
+  if (i >= 0) {
+    const next = [...state.addons];
+    next[i] = { ...next[i], baseUrl, manifest };
+    commit(next);
+  } else commit([...state.addons, { baseUrl, manifest, enabled: true }]);
+  return manifest;
+}
+
+/** Re-reads the manifest of an installed addon (new catalogs, version…). */
+export async function refreshAddon(baseUrl: string) {
+  const manifest = await fetchManifest(baseUrl);
+  commit(state.addons.map((a) => (a.baseUrl === baseUrl ? { ...a, manifest } : a)));
   return manifest;
 }
 
@@ -223,7 +249,7 @@ function useAggregate<T>(
 /** Streams for an episode, unsorted (see `rankStreams`). */
 export function useStreams(seriesId: string, episode: number, enabled = true) {
   const r = useAggregate<AddonStream>('stream', seriesId, episode, async (a, req) => {
-    const items = a.baseUrl === builtin.baseUrl ? DEMO_STREAMS : await fetchStreams(a.baseUrl, req.type, req.id);
+    const items: StreamItem[] = a.baseUrl === builtin.baseUrl ? DEMO_STREAMS : await fetchStreams(a.baseUrl, req.type, req.id);
     return items.map((s) => ({ ...s, addonId: a.manifest.id, addonName: a.manifest.name }));
   }, enabled);
   return { streams: r.items, pending: r.pending, failed: r.failed };
@@ -240,36 +266,91 @@ export function useSubtitles(seriesId: string, episode: number, enabled = true):
 
 // ---------- catalogs (Découvrir) ----------
 
-export type CatalogRow = { addon: InstalledAddon; catalog: ManifestCatalog; state: 'loading' | 'ok' | 'error'; metas: MetaPreview[] };
+export type CatalogDef = { addon: InstalledAddon; catalog: ManifestCatalog };
+export const catalogKey = (d: CatalogDef) => `${d.addon.baseUrl}|${d.catalog.type}|${d.catalog.id}`;
 
-export function useAddonCatalogs(): CatalogRow[] {
+/** Browsable catalogs of the enabled addons, in addon priority order. */
+export function useCatalogDefs(): CatalogDef[] {
   const list = useAddons().filter((a) => a.enabled && a.baseUrl !== builtin.baseUrl);
-  const defs = list.flatMap((addon) => browsableCatalogs(addon.manifest).map((catalog) => ({ addon, catalog })));
-  const rowKey = (d: { addon: InstalledAddon; catalog: ManifestCatalog }) => `${d.addon.baseUrl}|${d.catalog.type}|${d.catalog.id}`;
-  const key = defs.map(rowKey).join('\n');
-  const [res, setRes] = useState<{ key: string; rows: Record<string, { state: 'ok' | 'error'; metas: MetaPreview[] }> }>({ key: '', rows: {} });
+  return list.flatMap((addon) => browsableCatalogs(addon.manifest).map((catalog) => ({ addon, catalog })));
+}
+
+
+/**
+ * One catalog row with its `genre` filter and `skip` paging. `loadMore` fetches the next page
+ * when the catalog declares `skip` and the last page was not empty.
+ */
+export function useCatalogRow(def: CatalogDef, genre?: string) {
+  const key = `${catalogKey(def)}|${genre ?? ''}`;
+  const [res, setRes] = useState<{ key: string; state: 'loading' | 'ok' | 'error'; metas: MetaPreview[]; more: boolean; busy: boolean }>({
+    key: '', state: 'loading', metas: [], more: false, busy: false,
+  });
+  const canPage = catalogSupports(def.catalog, 'skip');
+
+  const load = (skip: number) => {
+    fetchCatalog(def.addon.baseUrl, def.catalog.type, def.catalog.id, { genre, skip: skip || undefined })
+      .then((metas) =>
+        setRes((p) => {
+          const base = p.key === key ? p.metas : [];
+          const seen = new Set(base.map((m) => m.id));
+          const fresh = metas.filter((m) => !seen.has(m.id));
+          return { key, state: 'ok', metas: [...base, ...fresh], more: canPage && fresh.length > 0, busy: false };
+        }),
+      )
+      .catch(() => setRes((p) => (p.key === key && p.metas.length ? { ...p, more: false, busy: false } : { key, state: 'error', metas: [], more: false, busy: false })));
+  };
 
   useEffect(() => {
+    load(0);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [key]);
+
+  const cur = res.key === key ? res : { state: 'loading' as const, metas: [] as MetaPreview[], more: false, busy: false };
+  return {
+    ...cur,
+    loadMore: () => {
+      if (!cur.more || cur.busy || res.key !== key) return;
+      setRes((p) => ({ ...p, busy: true }));
+      load(cur.metas.length);
+    },
+  };
+}
+
+export type SearchHit = { addon: InstalledAddon; catalog: ManifestCatalog; metas: MetaPreview[] };
+
+/** Text search across every catalog that accepts the `search` extra. */
+export function useCatalogSearch(query: string) {
+  const list = useAddons().filter((a) => a.enabled && a.baseUrl !== builtin.baseUrl);
+  const defs = list.flatMap((addon) => searchableCatalogs(addon.manifest).map((catalog) => ({ addon, catalog })));
+  const q = query.trim();
+  const key = `${q}\n${defs.map(catalogKey).join('\n')}`;
+  const [res, setRes] = useState<{ key: string; hits: SearchHit[]; done: number }>({ key: '', hits: [], done: 0 });
+
+  useEffect(() => {
+    if (q.length < 2) return;
     let cancelled = false;
-    for (const d of defs) {
-      fetchCatalog(d.addon.baseUrl, d.catalog.type, d.catalog.id)
-        .then((metas) => ({ state: 'ok' as const, metas }))
-        .catch(() => ({ state: 'error' as const, metas: [] }))
-        .then((row) => {
-          if (cancelled) return;
-          setRes((p) => ({ key, rows: { ...(p.key === key ? p.rows : {}), [rowKey(d)]: row } }));
-        });
-    }
+    const timer = setTimeout(() => {
+      for (const d of defs) {
+        fetchCatalog(d.addon.baseUrl, d.catalog.type, d.catalog.id, { search: q })
+          .catch(() => [] as MetaPreview[])
+          .then((metas) => {
+            if (cancelled) return;
+            setRes((p) => {
+              const base = p.key === key ? p : { key, hits: [], done: 0 };
+              return { key, done: base.done + 1, hits: metas.length ? [...base.hits, { ...d, metas }] : base.hits };
+            });
+          });
+      }
+    }, 350);
     return () => {
       cancelled = true;
+      clearTimeout(timer);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [key]);
 
-  return defs.map((d) => {
-    const r = res.key === key ? res.rows[rowKey(d)] : undefined;
-    return { ...d, state: r?.state ?? 'loading', metas: r?.metas ?? [] };
-  });
+  const cur = res.key === key ? res : { hits: [] as SearchHit[], done: 0 };
+  return { searchable: defs.length, hits: cur.hits, pending: q.length < 2 ? 0 : Math.max(0, defs.length - cur.done) };
 }
 
 export const getAddonByBase = (baseUrl: string) => state.addons.find((a) => a.baseUrl === baseUrl);

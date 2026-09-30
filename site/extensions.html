@@ -1,0 +1,292 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Huwa — ajouter une extension en 1 clic</title>
+  <meta name="description" content="Transforme le lien d’un addon Stremio ou d’un dépôt Paperback en bouton « Ajouter à Huwa » et en QR code. Huwa ne fournit aucune extension.">
+  <meta name="theme-color" content="#05070D">
+  <meta property="og:title" content="Huwa — ajouter une extension en 1 clic">
+  <meta property="og:description" content="Colle le lien d’un addon Stremio ou d’un dépôt Paperback : Huwa l’ajoute en un clic.">
+  <meta property="og:image" content="/altstore/icon.png">
+  <link rel="icon" href="/icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="/altstore/icon.png">
+  <style>
+    :root {
+      --bg: #05070D; --surface: #0C111C; --elevated: #141B2B; --border: rgba(120,140,180,.18);
+      --text: #F2F5FA; --text2: #9AA5BA; --body: #C3CBDA; --accent: #2F6BEB; --accent-text: #7FB0FF;
+      --accent-soft: rgba(47,107,235,.18); --warn: rgba(255,196,0,.35);
+    }
+    * { box-sizing: border-box; }
+    html { -webkit-text-size-adjust: 100%; }
+    body {
+      margin: 0; background: var(--bg); color: var(--body);
+      font: 16px/1.55 -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto, sans-serif;
+    }
+    a { color: var(--accent-text); }
+    .wrap { max-width: 1040px; margin: 0 auto; padding: 0 20px; }
+    header { display: flex; align-items: center; justify-content: space-between; padding: 20px 0; }
+    .brand { display: flex; align-items: center; gap: 10px; color: var(--text); font-weight: 900; letter-spacing: .04em; text-decoration: none; font-size: 20px; }
+    .brand img { width: 32px; height: 32px; }
+    .gh { color: var(--text2); text-decoration: none; font-size: 14px; }
+    .hero { padding: 40px 0 32px; display: grid; gap: 20px; }
+    h1 { margin: 0; color: var(--text); font-size: clamp(32px, 6vw, 56px); line-height: 1.04; font-weight: 900; text-transform: uppercase; letter-spacing: -.01em; }
+    h1 span { color: var(--accent-text); }
+    .lead { margin: 0; font-size: clamp(17px, 2.4vw, 20px); max-width: 680px; }
+    .cta { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; }
+    .btn {
+      display: inline-flex; align-items: center; justify-content: center; gap: 10px; min-height: 52px; padding: 0 22px; border-radius: 14px;
+      font: inherit; font-weight: 700; text-decoration: none; letter-spacing: .02em; border: 1px solid transparent; cursor: pointer;
+      transition: transform .12s ease, background-color .15s ease;
+    }
+    .btn:active { transform: scale(.97); }
+    .btn-primary { background: var(--accent); color: #fff; }
+    .btn-primary:hover { background: #3a76f5; }
+    .btn-soft { background: var(--accent-soft); color: var(--accent-text); border-color: rgba(127,176,255,.3); }
+    .btn[aria-disabled="true"] { opacity: .45; pointer-events: none; }
+    .btn svg { width: 20px; height: 20px; flex: none; }
+    section { padding: 40px 0; border-top: 1px solid var(--border); }
+    h2 { margin: 0 0 20px; color: var(--text); font-size: 24px; font-weight: 900; text-transform: uppercase; letter-spacing: .02em; }
+    h3 { margin: 0 0 6px; color: var(--text); font-size: 17px; }
+    .grid { display: grid; gap: 14px; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); }
+    .card { background: var(--surface); border: 1px solid var(--border); border-radius: 16px; padding: 20px; min-width: 0; }
+    .card p { margin: 0; font-size: 15px; color: var(--text2); }
+    .card p + p { margin-top: 8px; }
+    .tool { display: grid; gap: 16px; }
+    label { color: var(--text); font-weight: 700; font-size: 15px; }
+    input[type=url] {
+      width: 100%; min-height: 52px; padding: 0 16px; border-radius: 14px; border: 1px solid var(--border);
+      background: var(--elevated); color: var(--text); font: inherit; font-size: 16px;
+    }
+    input[type=url]:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+    .seg { display: inline-flex; gap: 6px; flex-wrap: wrap; }
+    .seg button {
+      font: inherit; font-size: 14px; font-weight: 700; color: var(--body); background: var(--elevated);
+      border: 1px solid var(--border); border-radius: 10px; min-height: 40px; padding: 0 14px; cursor: pointer;
+    }
+    .seg button[aria-pressed="true"] { background: var(--accent-soft); color: var(--accent-text); border-color: rgba(127,176,255,.35); }
+    .result { display: grid; gap: 16px; grid-template-columns: 1fr auto; align-items: start; }
+    .result[hidden] { display: none; }
+    @media (max-width: 640px) { .result { grid-template-columns: 1fr; } }
+    .qr { background: #fff; padding: 12px; border-radius: 14px; width: 204px; height: 204px; }
+    .qr canvas, .qr img { width: 180px !important; height: 180px !important; display: block; }
+    .info { display: flex; gap: 12px; align-items: center; min-height: 40px; }
+    .info img { width: 44px; height: 44px; border-radius: 10px; background: var(--elevated); object-fit: contain; }
+    .info strong { color: var(--text); display: block; }
+    .muted { color: var(--text2); font-size: 14px; }
+    .warn { border-color: var(--warn); }
+    code { background: var(--elevated); padding: 2px 6px; border-radius: 6px; font-size: 13px; color: var(--text); word-break: break-all; }
+    pre { margin: 0; background: var(--elevated); padding: 12px; border-radius: 10px; overflow-x: auto; font-size: 13px; color: var(--text); white-space: pre-wrap; word-break: break-all; }
+    ol { margin: 0; padding-left: 20px; color: var(--text2); font-size: 15px; }
+    li { margin: 4px 0; }
+    .tag { display: inline-block; font-size: 12px; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; color: var(--accent-text); margin-bottom: 6px; }
+    .copy { font: inherit; font-size: 13px; color: var(--accent-text); background: none; border: 1px solid rgba(127,176,255,.3); border-radius: 8px; padding: 2px 8px; cursor: pointer; }
+    footer { padding: 32px 0 48px; border-top: 1px solid var(--border); font-size: 14px; color: var(--text2); }
+    @media (prefers-reduced-motion: reduce) { .btn { transition: none; } }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <header>
+      <a class="brand" href="/"><img src="/icon.svg" alt="" width="32" height="32">HUWA</a>
+      <a class="gh" href="/">Accueil</a>
+    </header>
+
+    <div class="hero">
+      <h1>Ajoute une extension<br><span>en 1 clic.</span></h1>
+      <p class="lead">Huwa est une bibliothèque vide : aucun contenu, aucune extension préinstallée. Il lit les addons au format Stremio (vidéo) et les dépôts au format Paperback (manhwa), hébergés par leurs auteurs. Colle le lien d’une extension : on te donne un bouton « Ajouter à Huwa » et un QR code.</p>
+    </div>
+
+    <section id="outil" style="border-top:0;padding-top:0">
+      <div class="card tool">
+        <label for="url">Lien de l’extension</label>
+        <input id="url" type="url" inputmode="url" autocomplete="off" autocapitalize="none" spellcheck="false"
+          placeholder="https://…/manifest.json, stremio://… ou lien de dépôt Paperback">
+        <div class="seg" role="group" aria-label="Type d’extension">
+          <button type="button" data-kind="auto" aria-pressed="true">Détection auto</button>
+          <button type="button" data-kind="stremio" aria-pressed="false">Addon Stremio (vidéo)</button>
+          <button type="button" data-kind="paperback" aria-pressed="false">Dépôt Paperback (manhwa)</button>
+        </div>
+        <div id="result" class="result" hidden>
+          <div style="display:grid;gap:14px;min-width:0">
+            <div class="info" id="info"></div>
+            <div class="cta">
+              <a class="btn btn-primary" id="add" href="#">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+                Ajouter à Huwa
+              </a>
+              <button class="btn btn-soft" type="button" id="copyLink">Copier le lien huwa://</button>
+              <button class="btn btn-soft" type="button" id="copyPage">Copier le lien de partage</button>
+            </div>
+            <p class="muted">Sur ton téléphone, le bouton ouvre Huwa sur une fiche de confirmation. Sur ordinateur, scanne le QR code avec ton téléphone.</p>
+            <details>
+              <summary class="muted" style="cursor:pointer">Tu es l’auteur de cette extension ? Code du bouton</summary>
+              <pre id="snippet" style="margin-top:10px"></pre>
+            </details>
+          </div>
+          <div class="qr" id="qr" role="img" aria-label="QR code du lien d’ajout"></div>
+        </div>
+        <p class="muted" id="hint">Le lien reste dans ton navigateur : seule la vérification du manifest contacte l’adresse que tu colles.</p>
+      </div>
+    </section>
+
+    <section>
+      <h2>Comment ça marche</h2>
+      <div class="grid">
+        <div class="card"><span class="tag">1</span><h3>Trouve le lien</h3><p>L’auteur d’un addon Stremio publie un lien <code>…/manifest.json</code> (souvent via un bouton « Install »). Un dépôt Paperback publie l’adresse de son dépôt.</p></div>
+        <div class="card"><span class="tag">2</span><h3>Colle-le ici</h3><p>La page génère le lien <code>huwa://</code>, un QR code et un lien de partage. Les addons configurables se configurent d’abord sur leur propre site.</p></div>
+        <div class="card"><span class="tag">3</span><h3>Confirme dans Huwa</h3><p>Huwa affiche le nom, la description, ce que fait l’extension et qui l’héberge. Rien n’est installé sans ta confirmation.</p></div>
+      </div>
+      <p class="muted" style="margin-top:16px">Dans l’app, tu peux aussi coller le lien directement : Profil → Extensions.</p>
+    </section>
+
+    <section>
+      <h2>Comment trouver des extensions</h2>
+      <div class="grid">
+        <div class="card">
+          <span class="tag">Vidéo · Stremio</span>
+          <h3>Le protocole</h3>
+          <p>Un addon Stremio est un simple service web. La <a href="https://github.com/Stremio/stremio-addon-sdk/tree/master/docs">documentation officielle du SDK</a> décrit le <a href="https://github.com/Stremio/stremio-addon-sdk/blob/master/docs/protocol.md">protocole</a> : tout addon qui le respecte marche dans Huwa.</p>
+        </div>
+        <div class="card">
+          <span class="tag">Vidéo · Stremio</span>
+          <h3>Les catalogues d’addons</h3>
+          <p>Stremio tient un catalogue « Community » visible sur <a href="https://web.stremio.com/#/addons">web.stremio.com</a>, et la communauté en maintient un autre sur <a href="https://stremio-addons.net">stremio-addons.net</a>. Si un de tes addons publie un catalogue d’addons, Huwa l’affiche dans Extensions.</p>
+        </div>
+        <div class="card">
+          <span class="tag">Manhwa · Paperback</span>
+          <h3>Les dépôts</h3>
+          <p>Le guide <a href="https://paperback.moe/getting-started/adding-content/">« Adding content »</a> de Paperback explique ce qu’est un dépôt d’extensions ; <a href="https://github.com/Paperback-iOS/paperback-toolchain">paperback-toolchain</a> et <a href="https://github.com/Paperback-iOS/extensions-common">extensions-common</a> documentent leur format.</p>
+        </div>
+      </div>
+      <div class="card warn" style="margin-top:14px">
+        <p>Huwa ne liste, n’héberge, ne vérifie et ne recommande aucune extension, et cette page n’en propose aucune. Une extension est un service tiers : tu es seul responsable de celles que tu ajoutes et de la légalité de leurs contenus dans ton pays. N’ajoute que des extensions dont tu as le droit d’utiliser les contenus.</p>
+      </div>
+    </section>
+
+    <section>
+      <h2>Pour les auteurs</h2>
+      <div class="grid">
+        <div class="card">
+          <h3>Liens d’installation</h3>
+          <p>Addon Stremio : <code>huwa://addon?url=&lt;manifest encodé&gt;</code></p>
+          <p>Dépôt Paperback : <code>huwa://install?type=paperback&amp;url=&lt;dépôt encodé&gt;</code></p>
+          <p>Lien web (marche aussi sans l’app) : <code>https://huwa.mciut.fr/extensions?url=&lt;lien encodé&gt;</code></p>
+        </div>
+        <div class="card">
+          <h3>Addons configurables</h3>
+          <p>Huwa ouvre votre page <code>/configure</code> quand le manifest déclare <code>behaviorHints.configurable</code> ou <code>configurationRequired</code>, et récupère le lien <code>stremio://…/manifest.json</code> de votre bouton « Install ».</p>
+        </div>
+      </div>
+    </section>
+
+    <footer>
+      Huwa · open source · <a href="/">Accueil</a> · <a href="/privacy.html">Confidentialité</a> · <a href="https://github.com/amintt2/huwa/blob/huwa-v1/distribution/LEGAL.md">Conditions et signalements</a>
+    </footer>
+  </div>
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js" integrity="sha512-CNgIRecGo7nphbeZ04Sc13ka07paqdeTu0WR1IM4kNcpmBAUSHSQX0FslNhTDadL4O5SAGapGt4FodqL8My0mA==" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+  <script>
+    (() => {
+      const $ = (id) => document.getElementById(id);
+      const input = $('url');
+      let kind = 'auto';
+      let seq = 0;
+
+      // Same rules as the app (src/addons/protocol.ts → normalizeAddonUrl).
+      function manifestUrl(raw) {
+        let u = raw.trim();
+        for (let i = 0; i < 3; i++) {
+          const m = /[?&#](?:addon|url|manifest)=([^&#\s]+)/i.exec(u);
+          if (!m || !/^(huwa:|https?:\/\/(web|app)\.strem(io\.com|\.io)|https?:\/\/www\.stremio\.com)/i.test(u)) break;
+          try { u = decodeURIComponent(m[1]).trim(); } catch { u = m[1]; }
+        }
+        u = u.replace(/^stremio:\/\//i, 'https://');
+        if (!/^https?:\/\//i.test(u)) u = 'https://' + u;
+        u = u.replace(/[?#].*$/, '').replace(/\/manifest\.json$/i, '').replace(/\/configure\/?$/i, '').replace(/\/+$/, '');
+        return u + '/manifest.json';
+      }
+      const looksPaperback = (u) => /versioning\.json$/i.test(u) || /github\.io\/[^?#]*(extensions|sources|paperback)/i.test(u) || /paperback/i.test(u);
+      const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+
+      function build(raw) {
+        const pb = kind === 'paperback' || (kind === 'auto' && looksPaperback(raw));
+        if (pb) {
+          const repo = raw.trim().replace(/\/versioning\.json$/i, '').replace(/\/+$/, '');
+          return { pb, target: repo, link: 'huwa://install?type=paperback&url=' + encodeURIComponent(repo) };
+        }
+        const m = manifestUrl(raw);
+        return { pb, target: m, link: 'huwa://addon?url=' + encodeURIComponent(m) };
+      }
+
+      async function describe(r, mine) {
+        const info = $('info');
+        info.innerHTML = '<span class="muted">Vérification…</span>';
+        try {
+          const url = r.pb ? r.target + '/versioning.json' : r.target;
+          const res = await fetch(url, { headers: { Accept: 'application/json' } });
+          if (!res.ok) throw new Error('HTTP ' + res.status);
+          const j = await res.json();
+          if (mine !== seq) return;
+          if (r.pb) {
+            const n = Array.isArray(j.sources) ? j.sources.length : 0;
+            info.innerHTML = '<div><strong>Dépôt Paperback</strong><span class="muted">' + n + ' extension' + (n > 1 ? 's' : '') + ' déclarée' + (n > 1 ? 's' : '') + '</span></div>';
+          } else {
+            if (!j || !j.id || !j.name || !Array.isArray(j.resources)) throw new Error('pas un manifest Stremio');
+            const cfg = j.behaviorHints && (j.behaviorHints.configurationRequired ? ' · à configurer sur son site' : j.behaviorHints.configurable ? ' · configurable' : '');
+            info.innerHTML = (j.logo ? '<img alt="" referrerpolicy="no-referrer" onerror="this.remove()" src="' + esc(j.logo) + '">' : '') +
+              '<div><strong>' + esc(j.name) + (j.version ? ' <span class="muted">v' + esc(j.version) + '</span>' : '') + '</strong>' +
+              '<span class="muted">' + esc((j.description || '').slice(0, 180)) + esc(cfg || '') + '</span></div>';
+          }
+        } catch (e) {
+          if (mine !== seq) return;
+          info.innerHTML = '<span class="muted">Impossible de vérifier ce lien depuis le navigateur (' + esc(e.message) + '). Le bouton marche quand même : Huwa le vérifiera.</span>';
+        }
+      }
+
+      function render() {
+        const raw = input.value;
+        const mine = ++seq;
+        if (!raw.trim()) { $('result').hidden = true; return; }
+        const r = build(raw);
+        $('result').hidden = false;
+        $('add').href = r.link;
+        const share = location.origin + location.pathname + '?url=' + encodeURIComponent(r.target) + (r.pb ? '&type=paperback' : '');
+        $('copyLink').dataset.copy = r.link;
+        $('copyPage').dataset.copy = share;
+        $('snippet').textContent = '<a href="' + share + '">Ajouter à Huwa</a>';
+        const qr = $('qr');
+        qr.innerHTML = '';
+        if (window.QRCode) new QRCode(qr, { text: r.link, width: 180, height: 180, correctLevel: QRCode.CorrectLevel.M });
+        else qr.textContent = 'QR code indisponible';
+        clearTimeout(render.t);
+        render.t = setTimeout(() => describe(r, mine), 400);
+      }
+
+      input.addEventListener('input', render);
+      document.querySelectorAll('.seg button').forEach((b) => b.addEventListener('click', () => {
+        kind = b.dataset.kind;
+        document.querySelectorAll('.seg button').forEach((x) => x.setAttribute('aria-pressed', String(x === b)));
+        render();
+      }));
+      ['copyLink', 'copyPage'].forEach((id) => $(id).addEventListener('click', async (ev) => {
+        const b = ev.currentTarget;
+        const label = b.textContent;
+        try { await navigator.clipboard.writeText(b.dataset.copy); b.textContent = 'Copié'; } catch { prompt('Copie ce lien :', b.dataset.copy); }
+        setTimeout(() => { b.textContent = label; }, 1500);
+      }));
+
+      // Share links: /extensions?url=<…>[&type=paperback] prefill the tool.
+      const q = new URLSearchParams(location.search);
+      if (q.get('url')) {
+        input.value = q.get('url');
+        if (q.get('type') === 'paperback' || q.get('type') === 'stremio') {
+          kind = q.get('type');
+          document.querySelectorAll('.seg button').forEach((x) => x.setAttribute('aria-pressed', String(x.dataset.kind === kind)));
+        }
+        render();
+      }
+    })();
+  </script>
+</body>
+</html>

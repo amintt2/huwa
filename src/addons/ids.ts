@@ -123,7 +123,9 @@ export function idsForStremioId(stremioId: string): Promise<AnimeIds | null> {
     return cached(`imdb:${head}`, async () => {
       // One IMDb id covers every season: take the first season / TV entry.
       const list = await getJson<ArmEntry[]>(`${ARM}/imdb?id=${head}`);
-      const best = [...list].sort((a, b) => (a['thetvdb-season'] ?? 99) - (b['thetvdb-season'] ?? 99))[0];
+      // Prefer the TV series over OVAs/specials (TheTVDB season 0), then the earliest season.
+      const rank = (e: ArmEntry) => (e.media === 'TV' ? 0 : 1000) + (e['thetvdb-season'] || 99);
+      const best = [...list].sort((a, b) => rank(a) - rank(b))[0];
       return fromArm(best);
     });
   return Promise.resolve(null);

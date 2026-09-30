@@ -1,11 +1,13 @@
 import { Ionicons } from '@expo/vector-icons';
 import { router, type Href } from 'expo-router';
+import { useState } from 'react';
 import { Linking, Modal, ScrollView, StyleSheet, View } from 'react-native';
 
 import { isTorrent, type AddonStream } from '@/addons/protocol';
 import { detectQuality, QUALITIES, streamKey, type Quality } from '@/addons/quality';
 import { qualityLabel, type useSource } from '@/addons/use-source';
 import { Button, Chip, IconButton, Press, Txt } from '@/components/ui';
+import { YouTubePlayer } from '@/components/youtube-player';
 import { C, R, S } from '@/theme/tokens';
 
 type Source = ReturnType<typeof useSource>;
@@ -38,13 +40,15 @@ const GROUPS: { label: string; match: (q: Quality | null) => boolean }[] = [
 
 export function SourcesMenu({ src, visible, onClose }: { src: Source; visible: boolean; onClose: () => void }) {
   const { ranked, auto, pending, failed, resolverLabel, currentKey } = src;
+  const [yt, setYt] = useState<{ id: string; title?: string } | null>(null);
 
   const choose = (s: AddonStream) => {
     const st = src.stateOf(s);
     if (st === 'needs-debrid') {
       onClose();
       router.push('/debrid' as Href);
-    } else if (st === 'external') Linking.openURL(s.externalUrl!);
+    } else if (st === 'youtube') setYt({ id: s.ytId!, title: s.title ?? s.name });
+    else if (st === 'external') Linking.openURL(s.externalUrl!).catch(() => {});
     else if (st !== 'unusable') {
       src.pick(s);
       onClose();
@@ -81,7 +85,7 @@ export function SourcesMenu({ src, visible, onClose }: { src: Source; visible: b
           })}
 
           {pending > 0 && <Txt v="small">Recherche en cours… ({pending} addon{pending > 1 ? 's' : ''})</Txt>}
-          {pending === 0 && ranked.length === 0 && <Txt v="small">Aucune source. Active ou installe un addon dans Profil → Addons.</Txt>}
+          {pending === 0 && ranked.length === 0 && <Txt v="small">Aucune source. Active ou installe un addon dans Profil → Extensions.</Txt>}
           {failed.length > 0 && <Txt v="small">Injoignable : {failed.join(', ')}</Txt>}
           {!resolverLabel && ranked.some(isTorrent) && (
             <Button small variant="soft" icon="flash-outline" label="Lire les torrents via un service débrid"
@@ -89,6 +93,7 @@ export function SourcesMenu({ src, visible, onClose }: { src: Source; visible: b
           )}
         </ScrollView>
       </View>
+      <YouTubePlayer ytId={yt?.id ?? null} title={yt?.title} onClose={() => setYt(null)} />
     </Modal>
   );
 }
@@ -102,6 +107,7 @@ function SourceRow({ s, src, active, onPress }: { s: AddonStream; src: Source; a
     torrent && (src.resolverLabel ? `torrent via ${src.resolverLabel}` : 'torrent · service débrid requis'),
     cached === true && 'en cache',
     cached === false && 'pas en cache',
+    st === 'youtube' && 'YouTube',
     st === 'external' && 'ouvre le navigateur',
     st === 'failed' && `échec${src.errorOf(s) ? ` : ${src.errorOf(s)}` : ''}`,
   ].filter(Boolean).join(' · ');
