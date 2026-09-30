@@ -1,0 +1,45 @@
+[package]
+name = "huwa-torrent-core"
+version = "0.1.0"
+edition = "2021"
+# librqbit 9 is edition 2024 and uses let-chains: needs a recent stable toolchain.
+rust-version = "1.89"
+license = "MIT"
+description = "Huwa torrent engine: librqbit session + loopback HTTP Range server, exposed through a C ABI (iOS) and JNI (Android)."
+publish = false
+
+[lib]
+name = "huwa_torrent_core"
+crate-type = ["cdylib", "staticlib", "rlib"]
+
+[dependencies]
+# Pinned exactly: the API used here was read from the v9.0.1 sources.
+# - default-features = false drops the native TLS (OpenSSL) path, which does not cross-compile to mobile.
+# - rust-tls: rustls + ring for trackers over HTTPS and SHA-1.
+# - disable-upload: exposes `SessionOptions::disable_upload` (seeding off by default).
+librqbit = { version = "=9.0.1", default-features = false, features = ["rust-tls", "disable-upload"] }
+
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "io-util", "fs", "sync", "time"] }
+tokio-util = { version = "0.7", features = ["io"] }
+axum = { version = "0.8", default-features = false, features = ["http1", "tokio", "json"] }
+http = "1"
+bytes = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+anyhow = "1"
+tracing = "0.1"
+parking_lot = "0.12"
+hex = "0.4"
+url = "2"
+urlencoding = "2"
+
+[target.'cfg(target_os = "android")'.dependencies]
+jni = "0.21"
+
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+strip = true
+# Keep unwinding so panics never cross the FFI boundary uncaught (see ffi.rs catch_unwind).
+panic = "unwind"

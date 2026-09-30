@@ -56,7 +56,8 @@
       "./plugins/with-scene-lifecycle",
       "expo-secure-store",
       "expo-sharing",
-      "expo-notifications"
+      "expo-notifications",
+      "./plugins/with-huwa-torrent"
     ],
     "experiments": {
       "typedRoutes": true,

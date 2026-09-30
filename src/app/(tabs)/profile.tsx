@@ -54,6 +54,8 @@ export default function Profile() {
 
       <Button variant="soft" icon="extension-puzzle-outline" label={`Addons (${addonCount} actifs)`} onPress={() => router.push('/addons' as Href)} />
 
+      <Button variant="soft" icon="download-outline" label="Téléchargements" onPress={() => router.push('/downloads' as Href)} />
+
       <Button
         variant="soft"
         icon="refresh"
