@@ -8,6 +8,11 @@ import { useEffect, useState, useSyncExternalStore } from 'react';
 export type Lang = 'fr' | 'en';
 export type Quality = 'auto' | '1080p' | '720p' | '480p';
 export type SubtitleSize = 'small' | 'medium' | 'large';
+/** Anime: original Japanese audio with subtitles, or a dubbed version. */
+export type WatchMode = 'sub' | 'dub';
+/** ISO 639-1 codes, in order of preference (first = primary). */
+export type LangList = string[];
+export const LANG_CODES = ['fr', 'en', 'es', 'de', 'it', 'pt', 'ar', 'ja', 'ko'] as const;
 
 export type Settings = {
   lang: Lang;
@@ -21,6 +26,16 @@ export type Settings = {
   notificationsAsked: boolean;
   /** First-launch onboarding done. */
   onboarded: boolean;
+  /** Default audio choice for anime (sources are ranked with it). */
+  watchMode: WatchMode;
+  /** Subtitle languages, primary first (auto-selected track). */
+  subLangs: LangList;
+  /** Dub languages, primary first (used when watchMode is 'dub'). */
+  dubLangs: LangList;
+  /** Reads manhwa at all (bridge prompts and manhwa suggestions). */
+  readsManhwa: boolean;
+  /** Chapter languages, primary first (chapter lists are filtered with it). */
+  mangaLangs: LangList;
 };
 
 export const SETTINGS_KEY = 'huwa/settings/v1';
@@ -33,6 +48,11 @@ export const DEFAULT_SETTINGS: Settings = {
   notifications: false,
   notificationsAsked: false,
   onboarded: false,
+  watchMode: 'sub',
+  subLangs: ['fr', 'en'],
+  dubLangs: ['fr'],
+  readsManhwa: true,
+  mangaLangs: ['fr', 'en'],
 };
 
 /** Font size in points for each subtitle size setting. */
@@ -54,6 +74,7 @@ function sanitize(raw: unknown): Settings {
   const pick = <K extends keyof Settings>(k: K, ok: (x: unknown) => boolean): Settings[K] =>
     ok(v[k]) ? (v[k] as Settings[K]) : DEFAULT_SETTINGS[k];
   const bool = (x: unknown) => typeof x === 'boolean';
+  const langs = (x: unknown) => Array.isArray(x) && x.length > 0 && x.length <= 5 && x.every((c) => typeof c === 'string' && /^[a-z]{2}$/.test(c));
   return {
     lang: pick('lang', (x) => x === 'fr' || x === 'en'),
     wifiOnly: pick('wifiOnly', bool),
@@ -62,6 +83,11 @@ function sanitize(raw: unknown): Settings {
     notifications: pick('notifications', bool),
     notificationsAsked: pick('notificationsAsked', bool),
     onboarded: pick('onboarded', bool),
+    watchMode: pick('watchMode', (x) => x === 'sub' || x === 'dub'),
+    subLangs: pick('subLangs', langs),
+    dubLangs: pick('dubLangs', langs),
+    readsManhwa: pick('readsManhwa', bool),
+    mangaLangs: pick('mangaLangs', langs),
   };
 }
 

@@ -144,6 +144,7 @@ export default function Calendar() {
   return (
     <View style={{ flex: 1, backgroundColor: C.bg, paddingTop: insets.top + S.sm }}>
       <ScreenHeader title={t('calendar.title')} />
+      <Txt v="small" style={{ paddingHorizontal: S.lg, marginTop: -4, marginBottom: S.md }}>{t('calendar.subtitle')}</Txt>
 
       <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ flexGrow: 0 }} contentContainerStyle={styles.tabs}>
         {days.map((d, i) => {

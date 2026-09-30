@@ -4,6 +4,7 @@ import { useState } from 'react';
 import { ActivityIndicator, Alert, ScrollView, StyleSheet, Switch, TextInput, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
+import { LanguagePrefs } from '@/components/language-prefs';
 import { FilterChip, Group, Row, ScreenHeader } from '@/components/states';
 import { Button, Txt } from '@/components/ui';
 import { useT } from '@/i18n';
@@ -124,6 +125,12 @@ export default function Settings() {
               </View>
             }
           />
+        </Group>
+
+        <Group title="LANGUES">
+          <View style={{ padding: S.md }}>
+            <LanguagePrefs />
+          </View>
         </Group>
 
         <Group title={t('settings.playback')}>
