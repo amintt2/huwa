@@ -1,10 +1,11 @@
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { router } from 'expo-router';
-import { Alert, ScrollView, StyleSheet, View } from 'react-native';
+import { Alert, ScrollView, StyleSheet, Switch, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { DANGER, Group, Loading, Row, ScreenHeader, WARN } from '@/components/social';
 import { Button, Chip, Txt } from '@/components/ui';
+import { cloudBackup, cloudBackupSupported, useCloudBackup } from '@/p2p/cloud-backup';
 import { social, useMe, useSecurity } from '@/p2p/hooks';
 import { C, R, S } from '@/theme/tokens';
 
@@ -29,8 +30,25 @@ export default function Security() {
       ],
     );
 
-  const safe = !!state?.phraseVerified;
-  const level = !state ? 0 : (state.phraseVerified ? 1 : 0) + (state.cloud ? 1 : 0) + (state.devices > 1 ? 1 : 0);
+  const cloud = useCloudBackup();
+  const cloudOn = cloud.enabled && cloud.saved;
+  const safe = !!state?.phraseVerified || cloudOn;
+  const level = !state ? 0 : (state.phraseVerified ? 1 : 0) + (state.cloud || cloudOn ? 1 : 0) + (state.devices > 1 ? 1 : 0);
+
+  const toggleCloud = (on: boolean) => {
+    if (on) {
+      cloudBackup.setEnabled(true).catch((e) => Alert.alert('Trousseau iCloud', e instanceof Error ? e.message : String(e)));
+      return;
+    }
+    Alert.alert(
+      'Retirer la phrase d’iCloud ?',
+      'La copie est supprimée de ton Trousseau iCloud sur tous tes appareils Apple. Garde ta phrase notée ailleurs.',
+      [
+        { text: 'Annuler', style: 'cancel' },
+        { text: 'Retirer', style: 'destructive', onPress: () => cloudBackup.setEnabled(false).catch(() => {}) },
+      ],
+    );
+  };
 
   return (
     <View style={{ flex: 1, backgroundColor: C.bg }}>
@@ -52,7 +70,9 @@ export default function Security() {
             </View>
             <Txt v="small" style={{ lineHeight: 18 }}>
               {safe
-                ? 'Si tu perds ce téléphone, ta phrase de récupération suffit à retrouver ton identité, ton rang et tes abonnements.'
+                ? cloudOn && !state.phraseVerified
+                  ? 'Ta phrase est dans ton Trousseau iCloud : sur un nouvel iPhone connecté au même compte Apple, un tap suffit pour retrouver ton compte.'
+                  : 'Si tu perds ce téléphone, ta phrase de récupération suffit à retrouver ton identité, ton rang et tes abonnements.'
                 : 'Ta clé n’existe que sur ce téléphone. Si tu le perds sans avoir noté ta phrase, personne ne pourra te rendre ton compte.'}
             </Txt>
             {!safe && <Button label="Sauvegarder ma phrase" icon="key" onPress={() => router.push('/settings/phrase')} />}
@@ -67,7 +87,23 @@ export default function Security() {
             right={safe ? <Chip kind="accent" label="OK" /> : undefined}
             onPress={() => router.push('/settings/phrase')}
           />
-          <Row icon="cloud-outline" label="Trousseau iCloud / Google" detail="Bientôt : copie chiffrée dans ta sauvegarde système" disabled last />
+          {cloudBackupSupported ? (
+            <Row
+              icon={cloud.saved ? 'cloud-done-outline' : 'cloud-outline'}
+              label="Trousseau iCloud"
+              detail={
+                !cloud.enabled
+                  ? 'Désactivé'
+                  : cloud.saved
+                    ? 'Phrase sauvegardée, chiffrée de bout en bout'
+                    : 'Activé · rien à sauvegarder sur cet appareil'
+              }
+              right={<Switch value={cloud.enabled} onValueChange={toggleCloud} trackColor={{ true: C.accent }} />}
+              last
+            />
+          ) : (
+            <Row icon="cloud-outline" label="Sauvegarde Google" detail="Bientôt disponible sur Android" disabled last />
+          )}
         </Group>
 
         <Group

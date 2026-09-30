@@ -26,7 +26,7 @@
     },
     "ios": {
       "icon": "./assets/expo.icon",
-      "bundleIdentifier": "com.huwa.app",
+      "bundleIdentifier": "com.amintt2.huwa",
       "infoPlist": {
         "UISupportedInterfaceOrientations": [
           "UIInterfaceOrientationPortrait",
@@ -44,7 +44,7 @@
         "monochromeImage": "./assets/images/android-icon-monochrome.png"
       },
       "predictiveBackGestureEnabled": false,
-      "package": "com.huwa.app"
+      "package": "com.amintt2.huwa"
     },
     "web": {
       "output": "static",

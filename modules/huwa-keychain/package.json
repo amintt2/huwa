@@ -1,0 +1,7 @@
+{
+  "name": "huwa-keychain",
+  "version": "0.1.0",
+  "private": true,
+  "description": "iCloud Keychain (synchronizable) storage for the Huwa recovery phrase",
+  "main": "index.ts"
+}

@@ -1,11 +1,12 @@
 import * as Haptics from 'expo-haptics';
 import { router } from 'expo-router';
 import { useMemo, useState } from 'react';
-import { KeyboardAvoidingView, Platform, ScrollView, View } from 'react-native';
+import { Alert, KeyboardAvoidingView, Platform, ScrollView, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { DANGER, Field, Group, Row, ScreenHeader } from '@/components/social';
 import { Button, Txt } from '@/components/ui';
+import { cloudBackup, cloudBackupSupported } from '@/p2p/cloud-backup';
 import { social } from '@/p2p/hooks';
 import { PHRASE_WORDS, isValidPhrase, normalizePhraseInput, unknownWords } from '@/social/identity';
 import { C, S } from '@/theme/tokens';
@@ -34,6 +35,27 @@ export default function Restore() {
     }
   };
 
+  const restoreFromCloud = async () => {
+    if (busy) return;
+    setError(undefined);
+    const saved = await cloudBackup.load();
+    if (!saved || !isValidPhrase(saved)) {
+      Alert.alert(
+        'Aucune sauvegarde trouvée',
+        'Vérifie que le Trousseau iCloud est activé (Réglages → ton nom → iCloud → Mots de passe et trousseau) et que tu es connecté au même compte Apple que sur ton ancien iPhone. La synchronisation peut prendre quelques minutes.',
+      );
+      return;
+    }
+    setBusy(true);
+    try {
+      await social.restoreIdentity(saved);
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Restauration impossible.');
+      setBusy(false);
+    }
+  };
+
   const hint = unknown.length
     ? `Mot${unknown.length > 1 ? 's' : ''} inconnu${unknown.length > 1 ? 's' : ''} : ${unknown.map((i) => `n° ${i + 1} « ${words[i]} »`).join(', ')}`
     : complete && !valid
@@ -50,7 +72,11 @@ export default function Restore() {
           title="Le plus simple"
           footer="Sur ton autre appareil : Profil → Réglages → Sécurité → Lier un appareil. Un QR code s’affiche.">
           <Row icon="qr-code-outline" label="Scanner depuis mon autre appareil" onPress={() => router.push('/onboarding/scan')} />
-          <Row icon="cloud-outline" label="Sauvegarde iCloud / Google" detail="Bientôt disponible" disabled last />
+          {cloudBackupSupported ? (
+            <Row icon="cloud-download-outline" label="Restaurer depuis iCloud" detail="Phrase sauvegardée dans ton Trousseau iCloud" onPress={restoreFromCloud} last />
+          ) : (
+            <Row icon="cloud-outline" label="Sauvegarde Google" detail="Bientôt disponible sur Android" disabled last />
+          )}
         </Group>
 
         <View style={{ gap: S.md }}>
@@ -72,7 +98,7 @@ export default function Restore() {
           />
           <View style={{ flexDirection: 'row', justifyContent: 'space-between', gap: S.md }}>
             <Txt v="small" color={hint ? DANGER : C.text2} style={{ flex: 1, lineHeight: 18 }}>
-              {hint ?? 'Ta phrase ne quitte jamais cet appareil.'}
+              {hint ?? 'Ta phrase n’est envoyée à aucun serveur.'}
             </Txt>
             <Txt v="small" color={complete ? C.accentText : C.text2} style={{ fontVariant: ['tabular-nums'] }}>
               {`${words.length}/${PHRASE_WORDS}`}

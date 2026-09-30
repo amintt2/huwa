@@ -14,7 +14,7 @@ Ce qu'il faut savoir :
 
 Étapes réelles :
 
-1. **App Store Connect** : créer l'app (bundle `com.huwa.app`), remplir la fiche minimale (nom, confidentialité, âge).
+1. **App Store Connect** : créer l'app (bundle `com.amintt2.huwa`), remplir la fiche minimale (nom, confidentialité, âge).
 2. **Enregistrer votre Developer ID auprès d'AltStore** via leur REST API (`faq.altstore.io/developers/rest-api`) : l'ID se trouve dans App Store Connect → *Edit Profile*. Vous recevez un **jeton de sécurité**.
 3. App Store Connect → *Users and Access → Integrations → Marketplace* : ajouter le jeton AltStore et cocher l'app. Choisir **« Yes, send notifications »** pour qu'AltStore PAL traite automatiquement chaque build.
 4. Construire avec `npx eas-cli build --platform ios --profile altstore-ios` (distribution `store`, signature App Store) puis **téléverser** le build (`eas submit -p ios --profile store` ou Transporter).

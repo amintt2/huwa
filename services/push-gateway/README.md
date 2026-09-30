@@ -14,7 +14,7 @@ Correction par rapport au plan : il n'y a pas de « clé APNs montée en secret 
 ## Déploiement
 
 1. Projet Firebase gratuit (Spark) → Paramètres → Comptes de service → **Générer une clé privée** → `secrets/service-account.json` (git-ignoré, `chmod 600`).
-2. Même console → Cloud Messaging → Apple : téléverser la clé APNs `.p8` (Apple Developer → Keys), Key ID, Team ID. Bundle `com.huwa.app`.
+2. Même console → Cloud Messaging → Apple : téléverser la clé APNs `.p8` (Apple Developer → Keys), Key ID, Team ID. Bundle `com.amintt2.huwa`.
 3. `docker compose up -d --build`, puis `docker compose logs push-gateway | grep 'Public key'`.
 4. Donner cette clé au blind peer (`PUSH_GATEWAY_KEY` dans `services/blind-peer/.env`) et à l'app (Réglages → Notifications → « Passerelle push »).
 5. Tester sans Firebase : `--dry-run` journalise les payloads au lieu de les envoyer.

@@ -11,6 +11,7 @@ import { replayJournal } from '@/social/rank';
 import type { BackupState, Conversation, Device, DirectMessage, JournalEntry, Label, P2PComment, P2PStatus, Profile, PublicKey } from './contract';
 import { DEMO_LABELERS } from './demo';
 import { getP2P } from './index';
+import { cloudBackup } from './cloud-backup';
 import { recoveryPhrase } from './phrase';
 import { getPrefs, setPrefs, toggleIn, usePrefs } from './prefs';
 
@@ -233,6 +234,7 @@ export const social = {
   async createIdentity(name: string) {
     const r = await p2p().createIdentity(name);
     await recoveryPhrase.set(r.phrase).catch(() => {});
+    await cloudBackup.save(r.phrase).catch(() => {});
     applyDefaults();
     identityBus.emit();
     journalBus.emit();
@@ -241,6 +243,7 @@ export const social = {
   async restoreIdentity(words: string[]) {
     const r = await p2p().restoreIdentity(words);
     await recoveryPhrase.set(words).catch(() => {});
+    await cloudBackup.save(words).catch(() => {});
     applyDefaults();
     identityBus.emit();
     journalBus.emit();
