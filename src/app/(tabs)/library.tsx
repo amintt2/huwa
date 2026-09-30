@@ -1,15 +1,22 @@
 import { router } from 'expo-router';
 import { ScrollView, StyleSheet, View } from 'react-native';
 
+import { STATUS_ICON } from '@/components/lists';
+import { FilterChip } from '@/components/states';
 import { Chip, Cover, Press, Progress, SectionHeader, Txt } from '@/components/ui';
 import { getSeries } from '@/data/catalog';
+import { useT } from '@/i18n';
 import { useContinueItems } from '@/store/derived';
+import { useLists, WATCH_STATUSES } from '@/store/lists';
 import { useStore } from '@/store/store';
 import { C, S, kindColor } from '@/theme/tokens';
 
 export default function Library() {
   const items = useContinueItems();
   const myList = useStore((s) => s.myList);
+  const lists = useLists((s) => s.lists);
+  const statuses = useLists((s) => s.status);
+  const t = useT();
 
   return (
     <ScrollView
@@ -54,6 +61,32 @@ export default function Library() {
           );
         })}
       </View>
+
+      <SectionHeader title={t('lists.title')} icon="albums-outline" action={t('lists.manage')} onAction={() => router.push('/lists')} />
+      <View style={styles.wrap}>
+        {WATCH_STATUSES.map((st) => {
+          const n = Object.values(statuses).filter((x) => x === st).length;
+          return (
+            <FilterChip
+              key={st}
+              icon={STATUS_ICON[st]}
+              label={`${t(`lists.status.${st}`)} · ${n}`}
+              selected={false}
+              onPress={() => router.push({ pathname: '/list/[id]', params: { id: `status-${st}` } })}
+            />
+          );
+        })}
+        {lists.map((l) => (
+          <FilterChip
+            key={l.id}
+            icon="albums-outline"
+            label={`${l.name} · ${l.seriesIds.length}`}
+            selected={false}
+            onPress={() => router.push({ pathname: '/list/[id]', params: { id: l.id } })}
+          />
+        ))}
+        <FilterChip icon="add" label={t('lists.new')} selected={false} onPress={() => router.push('/lists')} />
+      </View>
     </ScrollView>
   );
 }
@@ -62,4 +95,5 @@ const styles = StyleSheet.create({
   row: { flexDirection: 'row', alignItems: 'center', gap: S.md, padding: 10, borderRadius: 16, backgroundColor: C.surface },
   grid: { flexDirection: 'row', flexWrap: 'wrap', gap: S.md, paddingHorizontal: S.lg },
   dot: { width: 7, height: 7, borderRadius: 4 },
+  wrap: { flexDirection: 'row', flexWrap: 'wrap', gap: S.sm, paddingHorizontal: S.lg },
 });

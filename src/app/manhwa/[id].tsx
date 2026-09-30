@@ -5,6 +5,7 @@ import { FlatList, Pressable, StyleSheet, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { BridgeToAnime } from '@/components/bridge';
+import { ListsButton } from '@/components/lists';
 import { Button, Chip, Cover, IconButton, Press, Progress, Txt } from '@/components/ui';
 import { episodeForChapter } from '@/data/bridge';
 import { getSeries, type Chapter } from '@/data/catalog';
@@ -107,6 +108,7 @@ export default function ManhwaDetail() {
               <Press onPress={() => toggleMyList(series.id)} style={styles.square} accessibilityLabel={inList ? 'Retirer de ma liste' : 'Ajouter à ma liste'}>
                 <Ionicons name={inList ? 'checkmark' : 'add'} size={24} color={C.text} />
               </Press>
+              <ListsButton seriesId={series.id} />
             </View>
             <Txt v="body">{series.synopsis}</Txt>
             {series.anime && <BridgeToAnime series={series} />}

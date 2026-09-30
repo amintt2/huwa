@@ -49,7 +49,10 @@ export default function Home() {
               <Txt v="display" style={{ fontSize: 26, letterSpacing: 1 }}>huwa</Txt>
               <View style={styles.logoDot} />
             </View>
-            <IconButton icon="search" label="Rechercher" onPress={() => router.push('/anime')} />
+            <View style={{ flexDirection: 'row', gap: S.sm }}>
+              <IconButton icon="calendar-outline" label="Calendrier des sorties" onPress={() => router.push('/calendar')} />
+              <IconButton icon="search" label="Rechercher" onPress={() => router.push('/search')} />
+            </View>
           </View>
         </View>
 
@@ -62,7 +65,7 @@ export default function Home() {
           </>
         )}
 
-        <SectionHeader title="Prochaines sorties" icon="calendar-outline" action="Tout voir" onAction={() => router.push('/anime')} />
+        <SectionHeader title="Prochaines sorties" icon="calendar-outline" action="Calendrier" onAction={() => router.push('/calendar')} />
         <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.rail}>
           {animeOut.map((r) => <ReleaseCard key={r.key} release={r} />)}
         </ScrollView>
