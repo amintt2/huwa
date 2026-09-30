@@ -51,6 +51,9 @@ Pod::Spec.new do |s|
   if link_rust
     s.vendored_frameworks = xcframework_rel
     xcconfig['SWIFT_ACTIVE_COMPILATION_CONDITIONS'] = '$(inherited) HUWA_TORRENT'
+    # CocoaPods copies a library xcframework's headers but does not expose its module map to
+    # Swift, so `import HuwaTorrentCore` fails without this include path.
+    xcconfig['SWIFT_INCLUDE_PATHS'] = '$(inherited) "${PODS_TARGET_SRCROOT}/../../../native/huwa-torrent-core/include"'
     # Rust's std on iOS links against these.
     s.libraries = 'resolv', 'c++'
     s.frameworks = 'Security', 'SystemConfiguration', 'Network'

@@ -40,7 +40,9 @@ jni = "0.21"
 opt-level = 3
 lto = "fat"
 codegen-units = 1
-strip = true
+# "debuginfo", not true: full stripping removes the exported C symbols from the staticlib
+# (the app then fails to link `_huwa_torrent_call`). Xcode strips the final binary anyway.
+strip = "debuginfo"
 # Keep unwinding so panics never cross the FFI boundary uncaught (see ffi.rs catch_unwind).
 panic = "unwind"
 
