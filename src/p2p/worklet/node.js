@@ -44,9 +44,12 @@ function withTimeout(promise, ms, fallback) {
   ]).finally(() => clearTimeout(timer))
 }
 
-const workBaseKey = (work) => crypto.keyPair(hash('huwa/work/v1/' + work)).publicKey
+// Protocol version of rooms and DM bases: bump it whenever `apply` rules change incompatibly
+// (a peer on older rules would reject new nodes and never bind their writers).
+const PROTOCOL = 'v2'
+const workBaseKey = (work) => crypto.keyPair(hash('huwa/work/' + PROTOCOL + '/' + work)).publicKey
 const dmPair = (a, b) => [a, b].sort()
-const dmBaseKey = (pair) => crypto.keyPair(hash('huwa/dm/v1/' + pair.join(':'))).publicKey
+const dmBaseKey = (pair) => crypto.keyPair(hash('huwa/dm/' + PROTOCOL + '/' + pair.join(':'))).publicKey
 const idTopic = (identity) => hash('huwa/id/v1/' + identity)
 
 function viewOf(store) {
@@ -623,7 +626,7 @@ class HuwaNode {
     if (!schema.WORK.test(work)) throw new Error('Œuvre invalide')
     let room = this.rooms.get(work)
     if (!room) {
-      const base = new Autobase(this.store.namespace('work/' + work), workBaseKey(work), {
+      const base = new Autobase(this.store.namespace('work/' + PROTOCOL + '/' + work), workBaseKey(work), {
         optimistic: true,
         valueEncoding: 'json',
         wakeup: this.wakeup,
@@ -783,7 +786,7 @@ class HuwaNode {
       return entry.base
     }
     const pair = dmPair(this.secret.identity, peer)
-    const base = new Autobase(this.store.namespace('dm/' + peer), dmBaseKey(pair), {
+    const base = new Autobase(this.store.namespace('dm/' + PROTOCOL + '/' + peer), dmBaseKey(pair), {
       optimistic: true,
       valueEncoding: 'json',
       wakeup: this.wakeup,
