@@ -5,6 +5,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Group, Row, ScreenHeader, WARN } from '@/components/social';
 import { Txt } from '@/components/ui';
 import { useAddons } from '@/addons/registry';
+import { useMangaExt } from '@/manga-ext/registry';
 import { useP2PStatus, useSecurity } from '@/p2p/hooks';
 import { usePrefs } from '@/p2p/prefs';
 import { resetAll } from '@/store/store';
@@ -18,6 +19,7 @@ export default function Settings() {
   const lists = usePrefs((p) => p.subscriptions.length);
   const words = usePrefs((p) => p.words.length);
   const addonCount = useAddons().filter((a) => a.enabled).length;
+  const mangaSources = useMangaExt().installed.filter((s) => s.enabled).length;
 
   const network =
     status.state === 'ready' && status.peers === 0
@@ -68,6 +70,7 @@ export default function Settings() {
 
         <Group title="Lecture">
           <Row icon="extension-puzzle-outline" label="Addons" detail={`${addonCount} actif${addonCount > 1 ? 's' : ''}`} onPress={() => router.push('/addons')} />
+          <Row icon="book-outline" label="Extensions manhwa" detail={`${mangaSources} source${mangaSources > 1 ? 's' : ''}`} onPress={() => router.push('/manga-sources')} />
           <Row
             icon="refresh"
             label="Réinitialiser la progression"

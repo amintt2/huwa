@@ -113,6 +113,7 @@ Modèle des *labelers* Bluesky : chacun publie dans son core des enregistrements
 ## Phase 8 — Lecteur, manga, produit
 - Lecteur : sous-titres (SRT/VTT, taille, langue), pistes audio, vitesse, saut d'intro/outro, épisode suivant auto, PiP, AirPlay/Cast.
 - Manhwa via addons (pages), lecture verticale continue, téléchargement hors-ligne, reprise précise.
+- **Fait** : sources manhwa/manga via les **extensions Paperback 0.8 et 0.9** (dépôts ajoutés par l'utilisateur, exécutées dans une WebView cachée, une iframe isolée par source). Voir `docs/PAPERBACK.md`.
 - Pont épisode↔chapitre : mapping exact communautaire, signé et voté par les pairs (remplace l'estimation).
 - Recherche et filtres, calendrier de sorties, notifications locales de nouveaux épisodes, listes perso, synchro AniList/MAL optionnelle, paramètres (langue, Wi-Fi seulement, cache, confidentialité, export/import), accessibilité, i18n FR/EN, onboarding, écrans d'erreur/hors-ligne.
 

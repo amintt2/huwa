@@ -6,6 +6,8 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { BridgeToAnime } from '@/components/bridge';
 import { ListsButton } from '@/components/lists';
+import { SourcePanel } from '@/components/paperback';
+import { useSourceLink } from '@/manga-ext/link';
 import { Button, Chip, Cover, IconButton, Press, Progress, Txt } from '@/components/ui';
 import { episodeForChapter } from '@/data/bridge';
 import { getSeries, type Chapter } from '@/data/catalog';
@@ -20,6 +22,8 @@ export default function ManhwaDetail() {
   const episodes = useStore((s) => s.episodes);
   const inList = useStore((s) => s.myList.includes(id));
   const [newestFirst, setNewestFirst] = useState(true);
+  // Covers of a source-only page may need the source's headers (Referer).
+  const coverHeaders = useSourceLink(id)?.imageHeaders;
 
   const list = useMemo(() => {
     const all = series?.manhwa?.chapters ?? [];
@@ -33,7 +37,9 @@ export default function ManhwaDetail() {
   const inProgress = all.find((c) => chapters[c.id] && !chapters[c.id].done);
   const lastRead = [...all].reverse().find((c) => chapters[c.id]?.done)?.number ?? 0;
   const lastWatched = Math.max(0, ...(series.anime?.episodes.filter((e) => episodes[e.id]?.done).map((e) => e.chapters[1]) ?? []));
-  const resume = inProgress ?? all[Math.min(all.length - 1, Math.max(lastRead, lastWatched))];
+  // By number, not position: chapters from a source can start at 0 or skip numbers.
+  const after = Math.max(lastRead, lastWatched);
+  const resume = inProgress ?? all.find((c) => c.number > after) ?? all[all.length - 1];
 
   const renderRow = ({ item: c }: { item: Chapter }) => {
     const p = chapters[c.id];
@@ -42,7 +48,7 @@ export default function ManhwaDetail() {
     const muted = p?.done || seenInAnime;
     return (
       <Press onPress={() => router.push(`/read/${c.id}`)} style={styles.row} accessibilityLabel={`Chapitre ${c.number}`}>
-        <Cover palette={series.palette} image={series.image} width={56} height={56} radius={10} dim={muted} />
+        <Cover palette={series.palette} image={series.image} imageHeaders={series.id.startsWith('px') ? coverHeaders : undefined} width={56} height={56} radius={10} dim={muted} />
         <View style={{ flex: 1, gap: 4 }}>
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: S.sm, flexWrap: 'wrap' }}>
             <Txt v="label" color={muted ? C.text2 : C.text}>Chapitre {c.number}</Txt>
@@ -58,7 +64,7 @@ export default function ManhwaDetail() {
             </>
           ) : (
             <Txt v="small">
-              {p?.done ? 'Lu' : c.releasedDaysAgo === 0 ? 'Aujourd’hui' : `il y a ${c.releasedDaysAgo} j`}
+              {p?.done ? 'Lu' : c.releasedDaysAgo < 0 ? (c.title || 'Chapitre') : c.releasedDaysAgo === 0 ? 'Aujourd’hui' : `il y a ${c.releasedDaysAgo} j`}
               {ep && !seenInAnime ? ` · adapté dans l’ép. ${ep.number}` : ''}
             </Txt>
           )}
@@ -78,12 +84,12 @@ export default function ManhwaDetail() {
       ListHeaderComponent={
         <View style={{ gap: S.lg, paddingBottom: S.xs }}>
           <View style={{ height: 350 }}>
-            <Cover palette={series.palette} image={series.image} height={350} radius={0} dim style={StyleSheet.absoluteFill} />
+            <Cover palette={series.palette} image={series.image} imageHeaders={series.id.startsWith('px') ? coverHeaders : undefined} height={350} radius={0} dim style={StyleSheet.absoluteFill} />
             <View style={[styles.nav, { top: insets.top + S.sm }]}>
               <IconButton icon="chevron-back" label="Retour" onPress={() => router.back()} />
             </View>
             <View style={styles.info}>
-              <Cover palette={series.palette} image={series.image} width={128} height={190} radius={14} />
+              <Cover palette={series.palette} image={series.image} imageHeaders={series.id.startsWith('px') ? coverHeaders : undefined} width={128} height={190} radius={14} />
               <View style={{ flex: 1, gap: S.sm }}>
                 <Chip kind="manhwa" />
                 <Txt v="title" style={{ fontSize: 24, lineHeight: 28 }}>{series.title}</Txt>
@@ -102,14 +108,15 @@ export default function ManhwaDetail() {
                 style={{ flex: 1 }}
                 color={C.accent}
                 textColor={C.onAccent}
-                label={inProgress || lastRead ? `Continuer · Ch. ${resume.number}` : `Lire · Ch. ${resume.number}`}
-                onPress={() => router.push(`/read/${resume.id}`)}
+                label={!resume ? 'Aucun chapitre' : inProgress || lastRead ? `Continuer · Ch. ${resume.number}` : `Lire · Ch. ${resume.number}`}
+                onPress={() => resume && router.push(`/read/${resume.id}`)}
               />
               <Press onPress={() => toggleMyList(series.id)} style={styles.square} accessibilityLabel={inList ? 'Retirer de ma liste' : 'Ajouter à ma liste'}>
                 <Ionicons name={inList ? 'checkmark' : 'add'} size={24} color={C.text} />
               </Press>
               <ListsButton seriesId={series.id} />
             </View>
+            <SourcePanel series={series} />
             <Txt v="body">{series.synopsis}</Txt>
             {series.anime && <BridgeToAnime series={series} />}
             <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>

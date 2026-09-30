@@ -66,3 +66,6 @@ src/p2p/worklet.bundle.js
 # App Store posters and raw captures (regenerated with scripts/shots.ts)
 store/shots/
 store/screens/
+
+# Paperback extension sandbox bundle (npm run build:paperback, runs on postinstall)
+src/manga-ext/runtime/runtime.bundle.js

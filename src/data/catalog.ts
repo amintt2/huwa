@@ -195,10 +195,30 @@ const listeners = new Set<() => void>();
 const EXTRA_KEY = 'huwa/catalog/extra/v1';
 const MAX_EXTRAS = 400;
 
+/**
+ * Real chapter lists from a manga source (see src/manga-ext/link.ts), keyed by series id. They
+ * replace the placeholder chapters of that series everywhere (detail page, reader, bridge).
+ */
+const chapterOverlays = new Map<string, Chapter[]>();
+
+function withOverlay(s: Series): Series {
+  const chapters = chapterOverlays.get(s.id);
+  return chapters ? { ...s, manhwa: { chapters } } : s;
+}
+
+let currentView: Series[] = current;
+
 function rebuildIndex() {
-  byId = new Map([...extras.values(), ...current].map((s) => [s.id, s]));
+  currentView = chapterOverlays.size ? current.map(withOverlay) : current;
+  byId = new Map([...extras.values(), ...current].map((s) => [s.id, withOverlay(s)]));
   version++;
   listeners.forEach((l) => l());
+}
+
+export function setChapterOverlay(seriesId: string, chapters: Chapter[] | undefined) {
+  if (chapters) chapterOverlays.set(seriesId, chapters);
+  else chapterOverlays.delete(seriesId);
+  rebuildIndex();
 }
 
 export function setCatalog(list: Series[]) {
@@ -244,9 +264,9 @@ export function useCatalog() {
   );
 }
 
-export const allSeries = () => current;
-export const animeSeries = () => current.filter((s) => s.anime);
-export const manhwaSeries = () => current.filter((s) => s.manhwa);
+export const allSeries = () => currentView;
+export const animeSeries = () => currentView.filter((s) => s.anime);
+export const manhwaSeries = () => currentView.filter((s) => s.manhwa);
 export const getSeries = (id: string) => byId.get(id);
 
 export function getEpisode(id: string) {

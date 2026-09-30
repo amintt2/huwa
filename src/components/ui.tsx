@@ -116,6 +116,7 @@ export function InfoPill({ icon, label, tone = 'neutral' }: { icon: IconName; la
 export function Cover({
   palette,
   image,
+  imageHeaders,
   width,
   height,
   radius = R.card,
@@ -127,6 +128,8 @@ export function Cover({
   palette: Palette;
   /** Real poster; the gradient art stays underneath as the loading placeholder. */
   image?: string;
+  /** Request headers for the image (e.g. a Referer required by a manga source's CDN). */
+  imageHeaders?: Record<string, string>;
   width?: number | `${number}%`;
   height: number;
   radius?: number;
@@ -155,7 +158,7 @@ export function Cover({
         }}
       />
       {image && (
-        <Image source={image} style={StyleSheet.absoluteFill} contentFit="cover" transition={200} cachePolicy="memory-disk" recyclingKey={image} />
+        <Image source={imageHeaders ? { uri: image, headers: imageHeaders } : image} style={StyleSheet.absoluteFill} contentFit="cover" transition={200} cachePolicy="memory-disk" recyclingKey={image} />
       )}
       {shade && (
         <LinearGradient

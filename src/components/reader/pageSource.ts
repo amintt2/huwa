@@ -3,8 +3,11 @@
 // `downloads.ts`) take priority over all of them — `usePages` handles that.
 import { getChapter, pageUrl } from '@/data/catalog';
 
-/** Returns the ordered image URLs of a chapter, or `[]` when this source doesn't have it. */
-export type PageSource = (chapterId: string) => Promise<string[]>;
+/**
+ * Returns the ordered image URLs of a chapter (optionally with the request headers its images
+ * need, e.g. a Referer), or `[]` when this source doesn't have it.
+ */
+export type PageSource = (chapterId: string) => Promise<string[] | { pages: string[]; headers?: Record<string, string> }>;
 
 /** A page to render: its URL plus optional request headers (e.g. Referer for some CDNs). */
 export type RegisteredSource = { id: string; name: string; fetchPages: PageSource; headers?: Record<string, string> };
@@ -34,24 +37,35 @@ export function onPageSourcesChange(l: () => void) {
 }
 
 /** Demo pages, kept as the default until an addon provides real ones. */
-export const placeholderPages: PageSource = async (chapterId) => placeholderPagesSync(chapterId);
+export const placeholderPages = async (chapterId: string): Promise<string[]> => placeholderPagesSync(chapterId);
 
 export function placeholderPagesSync(chapterId: string): string[] {
   const found = getChapter(chapterId);
   return found ? Array.from({ length: found.chapter.pageCount }, (_, i) => pageUrl(chapterId, i)) : [];
 }
 
-export type ResolvedPages = { pages: string[]; origin: 'offline' | 'addon' | 'placeholder'; sourceName?: string; headers?: Record<string, string> };
+export type ResolvedPages = {
+  pages: string[];
+  origin: 'offline' | 'addon' | 'placeholder';
+  sourceName?: string;
+  headers?: Record<string, string>;
+  /** Last source error, when no source could provide the pages. */
+  error?: string;
+};
 
 /** Online resolution: registered addons in order, then the placeholder. */
 export async function remotePages(chapterId: string): Promise<ResolvedPages> {
+  let error: string | undefined;
   for (const s of [...sources]) {
     try {
-      const pages = await s.fetchPages(chapterId);
-      if (pages?.length) return { pages, origin: 'addon', sourceName: s.name, headers: s.headers };
-    } catch {
+      const r = await s.fetchPages(chapterId);
+      const pages = Array.isArray(r) ? r : r?.pages;
+      const headers = (Array.isArray(r) ? undefined : r?.headers) ?? s.headers;
+      if (pages?.length) return { pages, origin: 'addon', sourceName: s.name, headers };
+    } catch (e) {
       // try the next source
+      error = e instanceof Error ? e.message : String(e);
     }
   }
-  return { pages: await placeholderPages(chapterId), origin: 'placeholder' };
+  return { pages: await placeholderPages(chapterId), origin: 'placeholder', error };
 }

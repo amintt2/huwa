@@ -12,6 +12,9 @@ import { registerNativeTorrentEngine } from '@/torrent/register';
 import { Onboarding } from '@/components/onboarding';
 import { OfflineBanner } from '@/components/states';
 import { loadCatalog } from '@/data/anilist';
+import { hydrateLinks } from '@/manga-ext/link';
+import { PaperbackHost } from '@/manga-ext/PaperbackHost';
+import { hydrateMangaExt } from '@/manga-ext/registry';
 import { useEpisodeNotifications } from '@/notifications/episodes';
 import { useMe, useP2PStatus } from '@/p2p/hooks';
 import { useJournalSync } from '@/p2p/sync';
@@ -49,7 +52,8 @@ export default function RootLayout() {
   }, []);
   useEffect(() => {
     const timeout = setTimeout(() => setCatalogReady(true), 6000);
-    loadCatalog().finally(() => {
+    // Source links overlay real chapters on catalog series: restore them with the catalog.
+    Promise.all([loadCatalog(), hydrateMangaExt().then(hydrateLinks)]).finally(() => {
       clearTimeout(timeout);
       setCatalogReady(true);
     });
@@ -101,6 +105,8 @@ export default function RootLayout() {
           <Stack.Screen name="settings/moderation" />
           <Stack.Screen name="settings/notifications" />
           <Stack.Screen name="addons" />
+          <Stack.Screen name="manga-sources" />
+          <Stack.Screen name="paperback" options={{ animation: 'none' }} />
           <Stack.Screen name="debrid" />
           <Stack.Screen name="discover" />
           <Stack.Screen name="meta/[id]" />
@@ -119,6 +125,7 @@ export default function RootLayout() {
       </Stack>
       {isDemo ? <DemoRoute /> : <EpisodeNotifications />}
       <OfflineBanner />
+      <PaperbackHost />
     </ThemeProvider>
   );
 }

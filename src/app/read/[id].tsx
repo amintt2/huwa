@@ -58,12 +58,14 @@ function Reader({ id }: { id: string }) {
   const { width, height } = useWindowDimensions();
   const { series, chapter } = getChapter(id)!;
   const chapters = series.manhwa!.chapters;
-  const prev = chapters[chapter.number - 2];
-  const next = chapters[chapter.number];
+  // By position: chapters from a source can be 12.5, or skip numbers.
+  const at = chapters.findIndex((c) => c.id === id);
+  const prev = at > 0 ? chapters[at - 1] : undefined;
+  const next = at >= 0 ? chapters[at + 1] : undefined;
   const mode = useReaderMode();
   const paged = mode === 'paged';
 
-  const { pages, origin, loading, headers } = usePages(id);
+  const { pages, origin, loading, headers, error, sourceName, retry } = usePages(id);
   const download = useDownload(id);
   const count = useThread(`ch:${id}`).length;
 
@@ -233,6 +235,13 @@ function Reader({ id }: { id: string }) {
           <ActivityIndicator color={C.white} />
           <Txt v="small">Chargement des pages…</Txt>
         </View>
+      ) : !pages.length ? (
+        <View style={[styles.center, { paddingHorizontal: S.xl }]}>
+          <Ionicons name="cloud-offline-outline" size={34} color={C.text2} />
+          <Txt v="label" style={{ textAlign: 'center' }}>Pages indisponibles</Txt>
+          <Txt v="small" style={{ textAlign: 'center' }}>{error ?? 'Aucune source ne fournit ce chapitre.'}</Txt>
+          <Button small variant="soft" icon="refresh" label="Réessayer" onPress={retry} />
+        </View>
       ) : (
         <ZoomLayer key={mode} axis={paged ? 'xy' : 'x'} onTap={() => setBars((b) => !b)} onZoomedChange={setZoomed}>
           <FlatList
@@ -286,7 +295,7 @@ function Reader({ id }: { id: string }) {
               <Txt v="label" numberOfLines={1}>{chapterLabel(chapter)}</Txt>
               <Txt v="small" numberOfLines={1}>
                 {series.title}
-                {origin === 'offline' ? ' · hors-ligne' : ''}
+                {origin === 'offline' ? ' · hors-ligne' : origin === 'addon' && sourceName && sourceName !== 'Extensions' ? ` · ${sourceName}` : ''}
               </Txt>
             </View>
             <Press onPress={switchMode} style={styles.round}

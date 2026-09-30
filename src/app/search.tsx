@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import { ActivityIndicator, Alert, FlatList, ScrollView, StyleSheet, TextInput, View, useWindowDimensions } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
+import { SourceResultsRail } from '@/components/paperback';
 import { ErrorState, FilterChip, LoadingView, ScreenHeader, StateView } from '@/components/states';
 import { Cover, Press, TypeBadge, Txt } from '@/components/ui';
 import { palette } from '@/data/anilist';
@@ -133,6 +134,8 @@ export default function Search() {
           <FilterChip key={s} label={t(`search.sort.${s}`)} selected={params.sort === s} onPress={() => update({ sort: s })} />
         ))}
       </ScrollView>
+
+      {params.type !== 'anime' && <SourceResultsRail query={params.query} cardWidth={Math.min(cardW, 112)} />}
 
       {showFilters && (
         <>
