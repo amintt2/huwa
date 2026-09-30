@@ -5,18 +5,28 @@ import { useRef, useState } from 'react';
 import { ScrollView, StyleSheet, View, useWindowDimensions } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
+import * as WebBrowser from 'expo-web-browser';
+
+import { EXTENSIONS_SITE } from '@/addons/recommended';
+import { isStoreBuild } from '@/config/channel';
 import { useT, type Key } from '@/i18n';
 import { setSetting, useSettings } from '@/settings/settings';
 import { BRIDGE, C, S } from '@/theme/tokens';
 
+import { LanguagePrefs } from './language-prefs';
+import { RecommendedExtensions } from './recommended-extensions';
 import { FilterChip } from './states';
 import { Button, Txt, type IconName } from './ui';
 
-const PAGES: { icon: IconName; title: Key; body: Key }[] = [
+type Page = { icon: IconName; title: Key; body: Key; extensions?: boolean; prefs?: boolean };
+const BASE: Page[] = [
   { icon: 'swap-horizontal', title: 'onb.1.title', body: 'onb.1.body' },
   { icon: 'calendar-outline', title: 'onb.2.title', body: 'onb.2.body' },
   { icon: 'shield-checkmark-outline', title: 'onb.3.title', body: 'onb.3.body' },
+  { icon: 'language-outline', title: 'onb.prefs.title', body: 'onb.prefs.body', prefs: true },
 ];
+// AltStore PAL / sideload builds end on "add your extensions"; the App Store build does not.
+const PAGES: Page[] = isStoreBuild ? BASE : [...BASE, { icon: 'extension-puzzle-outline', title: 'onb.4.title', body: 'onb.4.body', extensions: true }];
 
 export function Onboarding() {
   const { width } = useWindowDimensions();
@@ -51,15 +61,29 @@ export function Onboarding() {
         showsHorizontalScrollIndicator={false}
         onMomentumScrollEnd={(e) => setPage(Math.round(e.nativeEvent.contentOffset.x / width))}
         style={{ flex: 1 }}>
-        {PAGES.map((p) => (
+        {PAGES.map((p) =>
+          p.prefs ? (
+            <ScrollView key={p.title} style={{ width }} contentContainerStyle={styles.prefsPage} showsVerticalScrollIndicator={false}>
+              <Txt v="display" style={{ fontSize: 28 }} accessibilityRole="header">{t(p.title)}</Txt>
+              <Txt v="body" style={{ fontSize: 16, lineHeight: 23 }}>{t(p.body)}</Txt>
+              <LanguagePrefs />
+            </ScrollView>
+          ) : (
           <View key={p.title} style={[styles.page, { width }]}>
             <LinearGradient colors={BRIDGE} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={styles.badge}>
               <Ionicons name={p.icon} size={44} color={C.white} />
             </LinearGradient>
             <Txt v="display" style={{ fontSize: 28, textAlign: 'center' }} accessibilityRole="header">{t(p.title)}</Txt>
             <Txt v="body" style={{ textAlign: 'center', fontSize: 16, lineHeight: 23, maxWidth: 340 }}>{t(p.body)}</Txt>
+            {p.extensions && (
+              <View style={{ alignSelf: 'stretch', gap: S.md, marginTop: S.sm }}>
+                <RecommendedExtensions />
+                <Button small variant="ghost" icon="open-outline" label={t('onb.4.more')} onPress={() => WebBrowser.openBrowserAsync(EXTENSIONS_SITE)} />
+              </View>
+            )}
           </View>
-        ))}
+          ),
+        )}
       </ScrollView>
 
       <View style={[styles.bottom, { paddingBottom: insets.bottom + S.lg }]}>
@@ -76,6 +100,7 @@ export function Onboarding() {
 
 const styles = StyleSheet.create({
   top: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: S.lg },
+  prefsPage: { paddingHorizontal: S.xl, paddingTop: S.xl, paddingBottom: S.xxl, gap: S.lg },
   page: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: S.lg, paddingHorizontal: S.xl },
   badge: { width: 104, height: 104, borderRadius: 32, borderCurve: 'continuous', alignItems: 'center', justifyContent: 'center', marginBottom: S.md },
   bottom: { paddingHorizontal: S.lg, gap: S.lg },

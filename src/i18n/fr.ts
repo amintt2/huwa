@@ -66,7 +66,7 @@ export const fr = {
 
   // calendar
   'calendar.title': 'Calendrier',
-  'calendar.subtitle': 'Épisodes des 7 prochains jours',
+  'calendar.subtitle': '🇯🇵 Sorties en VO au Japon, à ton heure. La VF et la VOSTFR arrivent souvent plus tard.',
   'calendar.today': 'Aujourd’hui',
   'calendar.tomorrow': 'Demain',
   'calendar.inMyList': 'Dans ta liste',
@@ -76,6 +76,12 @@ export const fr = {
   'calendar.all': 'Tout',
   'calendar.aired': 'Diffusé',
   'calendar.emptyMine': 'Aucune série de ta liste ne sort cette semaine.',
+  'calendar.next': 'Prochain épisode',
+  'calendar.in': 'dans {time}',
+  'calendar.count': '{n} sorties',
+  'calendar.ep': 'Ép. {n}',
+  'calendar.new': 'Nouveau',
+  'calendar.final': 'Final',
 
   // lists
   'lists.title': 'Mes listes',
@@ -170,6 +176,11 @@ export const fr = {
   'onb.2.body': 'Ajoute des séries, range-les dans tes listes et suis le calendrier des nouveaux épisodes.',
   'onb.3.title': 'Tout reste chez toi',
   'onb.3.body': 'Pas de compte, pas de pub, pas de pistage. Choisis tes sources via des addons. Huwa n’héberge aucun contenu.',
+  'onb.prefs.title': 'Tes préférences',
+  'onb.prefs.body': 'Huwa choisira les bonnes sources et les bons sous-titres pour toi.',
+  'onb.4.title': 'Ajoute tes extensions',
+  'onb.4.body': 'Huwa lit ce que tes extensions lui donnent. Commence par les essentielles, tu pourras en ajouter d’autres à tout moment.',
+  'onb.4.more': 'Plus d’extensions',
 };
 
 export type Key = keyof typeof fr;

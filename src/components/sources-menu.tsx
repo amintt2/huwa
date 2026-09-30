@@ -3,6 +3,7 @@ import { router, type Href } from 'expo-router';
 import { useState } from 'react';
 import { Linking, Modal, ScrollView, StyleSheet, View } from 'react-native';
 
+import { detectLangs } from '@/addons/audio';
 import { isTorrent, type AddonStream } from '@/addons/protocol';
 import { detectQuality, QUALITIES, streamKey, type Quality } from '@/addons/quality';
 import { qualityLabel, type useSource } from '@/addons/use-source';
@@ -112,12 +113,14 @@ function SourceRow({ s, src, active, onPress }: { s: AddonStream; src: Source; a
     st === 'failed' && `échec${src.errorOf(s) ? ` : ${src.errorOf(s)}` : ''}`,
   ].filter(Boolean).join(' · ');
   const dim = st === 'failed' || st === 'unusable' || st === 'needs-debrid';
+  const langLabel = detectLangs(s).label;
   return (
     <Press onPress={onPress} disabled={st === 'unusable'} style={[styles.row, active && styles.active, dim && { opacity: 0.5 }]}>
       <View style={{ flex: 1, gap: 2 }}>
         <Txt v="label" numberOfLines={1}>{(s.name ?? 'Flux').replace(/\n/g, ' ') + (s.title ? ` · ${s.title.split('\n')[0]}` : '')}</Txt>
         <Txt v="small" numberOfLines={2}>{detail}</Txt>
       </View>
+      {!!langLabel && <Chip kind="neutral" label={langLabel} />}
       {active && <Chip kind="accent" label={st === 'playing' ? 'EN COURS' : '…'} />}
     </Press>
   );

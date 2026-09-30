@@ -79,7 +79,7 @@ function applyChapters(seriesId: string, list: StoredChapter[]) {
 }
 
 async function storeChapters(link: SourceLink, all: ExtChapter[]) {
-  const lang = pickLang(all, link.lang, getSettings().lang);
+  const lang = pickLang(all, link.lang, getSettings().lang, getSettings().mangaLangs);
   const langs = [...new Set(all.map((c) => c.lang))];
   const list = buildChapters(link.seriesId, all, lang);
   const next: SourceLink = { ...link, lang, langs, updatedAt: Date.now() };

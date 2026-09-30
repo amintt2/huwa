@@ -22,6 +22,7 @@ import {
   useAddons,
 } from '@/addons/registry';
 import { ADDON_LEGAL } from '@/components/addon-install';
+import { RecommendedExtensions } from '@/components/recommended-extensions';
 import { Group, Row } from '@/components/states';
 import { Button, IconButton, Press, Txt } from '@/components/ui';
 import { useDebrid } from '@/debrid/store';
@@ -64,6 +65,12 @@ export default function Extensions() {
       <Txt v="small">
         Huwa est une bibliothèque : il ne fournit aucun contenu, et à part la démo (vidéos libres de droits, désactivable) aucune extension n’est préinstallée. Tu ajoutes celles que tu veux, hébergées par leurs auteurs.
       </Txt>
+
+      <View style={{ gap: S.sm }}>
+        <Txt v="section">Recommandées</Txt>
+        <Txt v="small">Sous-titres, catalogues et fiches : elles ne fournissent aucune vidéo.</Txt>
+        <RecommendedExtensions />
+      </View>
 
       {/* ---------- Vidéo ---------- */}
       <View style={{ gap: S.sm }}>

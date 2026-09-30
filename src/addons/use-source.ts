@@ -5,8 +5,10 @@
 // Manual mode: the user picked a source in the menu; a failure drops back to auto.
 import { useEffect, useMemo, useState } from 'react';
 
+import { useSettings } from '@/settings/settings';
 import { resolveTorrent, useCachedHashes, useTorrentResolver } from '@/debrid/resolve';
 
+import { langScore } from './audio';
 import { isExternal, isPlayable, isTorrent, isYouTube, type AddonStream } from './protocol';
 import { detectQuality, rankStreams, streamKey, type Quality } from './quality';
 import { useAddonPrefs, useAddons, useStreams } from './registry';
@@ -24,6 +26,8 @@ const NO_SUBS: NonNullable<AddonStream['subtitles']> = [];
 export function useSource(seriesId: string, episode: number, { enabled = true }: { enabled?: boolean } = {}) {
   const { streams, pending, failed } = useStreams(seriesId, episode, enabled);
   const prefs = useAddonPrefs();
+  const { watchMode, subLangs, dubLangs } = useSettings();
+  const langPrefs = useMemo(() => ({ watchMode, subLangs, dubLangs }), [watchMode, subLangs, dubLangs]);
   const addonList = useAddons();
   const resolverLabel = useTorrentResolver();
   const cached = useCachedHashes(streams.filter(isTorrent).map((s) => s.infoHash!));
@@ -34,8 +38,9 @@ export function useSource(seriesId: string, episode: number, { enabled = true }:
       addonOrder: addonList.map((a) => a.manifest.id),
       canResolveTorrents: !!resolverLabel,
       cached,
+      lang: (s) => langScore(s, langPrefs),
     }),
-    [streams, prefs.preferredQuality, addonList, resolverLabel, cached],
+    [streams, prefs.preferredQuality, addonList, resolverLabel, cached, langPrefs],
   );
 
   const [manual, setManual] = useState<string | undefined>();
@@ -51,9 +56,10 @@ export function useSource(seriesId: string, episode: number, { enabled = true }:
   // to unconfirmed torrents only when nothing safe exists. Ties keep the ranking order.
   const auto = useMemo(() => {
     const pref = prefs.preferredQuality;
+    // Language fit first (VF / VOSTFR… per the user's preferences), then quality.
     const score = (s: AddonStream) => {
       const q = detectQuality(s) ?? 0;
-      return pref !== 'auto' && q > pref ? pref - (q - pref) / 10 : q;
+      return -langScore(s, langPrefs) * 10_000 + (pref !== 'auto' && q > pref ? pref - (q - pref) / 10 : q);
     };
     const candidates = ranked.filter((s) => usable(s) && !bad.includes(streamKey(s)));
     const pool = candidates.some(safe) ? candidates.filter(safe) : candidates;
@@ -62,7 +68,7 @@ export function useSource(seriesId: string, episode: number, { enabled = true }:
     if (same) return same;
     return pool.reduce<AddonStream | undefined>((best, s) => (!best || score(s) > score(best) ? s : best), undefined);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [ranked, bad, resolverLabel, cached, prefs.preferredQuality, seriesId]);
+  }, [ranked, bad, resolverLabel, cached, prefs.preferredQuality, seriesId, langPrefs]);
 
   const current = (manual ? ranked.find((s) => streamKey(s) === manual) : undefined) ?? auto;
   const currentKey = current ? streamKey(current) : undefined;

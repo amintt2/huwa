@@ -4,11 +4,14 @@ import type { ExtChapter } from './validate';
 
 export type StoredChapter = ExtChapter & { id: string };
 
-/** Language to show: the one picked before, then the app language, French, English, the most frequent. */
-export function pickLang(chapters: Pick<ExtChapter, 'lang'>[], prefer?: string, appLang?: string): string {
+/**
+ * Language to show: the one picked before for this series, then the user's reading languages
+ * (Réglages → Langues), the app language, French, English, the most frequent.
+ */
+export function pickLang(chapters: Pick<ExtChapter, 'lang'>[], prefer?: string, appLang?: string, readingLangs: string[] = []): string {
   const counts = new Map<string, number>();
   for (const c of chapters) counts.set(c.lang, (counts.get(c.lang) ?? 0) + 1);
-  for (const l of [prefer, appLang, 'fr', 'en']) if (l && counts.has(l)) return l;
+  for (const l of [prefer, ...readingLangs, appLang, 'fr', 'en']) if (l && counts.has(l)) return l;
   return [...counts.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] ?? 'unknown';
 }
 
