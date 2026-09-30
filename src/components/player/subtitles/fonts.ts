@@ -9,7 +9,7 @@
 //   - full Latin Extended + Vietnamese + Cyrillic: every French accent, œ, «», ’, …;
 //   - its soft shapes match the tone of anime fansubs (close to the classic "Gandhi Sans" look).
 import * as Font from 'expo-font';
-import { useEffect, useState } from 'react';
+import { useEffect, useSyncExternalStore } from 'react';
 import { Platform, type TextStyle } from 'react-native';
 
 import type { FontId } from '@/subtitles/prefs';
@@ -93,6 +93,15 @@ const familyName = (id: FontId, v: keyof Files) => `HuwaSub-${id}-${v}`;
 const loading = new Map<FontId, Promise<void>>();
 const loaded = new Set<FontId>(['system']);
 const listeners = new Set<() => void>();
+/** Loaded ids as a string: a new value on every load, so memoised renders see the change. */
+let snapshot = 'system';
+const subscribe = (l: () => void) => {
+  listeners.add(l);
+  return () => {
+    listeners.delete(l);
+  };
+};
+const getSnapshot = () => snapshot;
 
 export function loadSubtitleFont(id: FontId): Promise<void> {
   if (loaded.has(id)) return Promise.resolve();
@@ -105,6 +114,7 @@ export function loadSubtitleFont(id: FontId): Promise<void> {
     p = Font.loadAsync(map)
       .then(() => {
         loaded.add(id);
+        snapshot = [...loaded].sort().join(',');
         listeners.forEach((l) => l());
       })
       .catch(() => {
@@ -120,17 +130,11 @@ export function loadSubtitleFont(id: FontId): Promise<void> {
  * string: pass it to `fontStyle` so memoised renders see the change.
  */
 export function useSubtitleFonts(ids: FontId[]): string {
-  const [, bump] = useState(0);
   const key = [...new Set(ids)].sort().join(',');
   useEffect(() => {
-    const l = () => bump((n) => n + 1);
-    listeners.add(l);
     for (const id of key.split(',')) if (id) void loadSubtitleFont(id as FontId);
-    return () => {
-      listeners.delete(l);
-    };
   }, [key]);
-  return [...loaded].sort().join(',');
+  return useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
 }
 
 const SYSTEM_WEIGHT = { regular: '500', bold: '800' } as const;

@@ -11,7 +11,6 @@
 // offset. This gives a clean, even contour like libass for 1-2 lines of dialogue.
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { Platform, StyleSheet, Text, View, type LayoutChangeEvent, type TextStyle } from 'react-native';
-import Animated, { LinearTransition } from 'react-native-reanimated';
 
 import { useSubtitlePrefs, type SubtitlePrefs } from '@/subtitles/prefs';
 import { bandColor, renderEvent, type Rect, type RenderBlock, type RenderSpan } from '@/subtitles/render';
@@ -207,8 +206,9 @@ export type SubtitleOverlayProps = {
   offset?: number;
   /** Video width / height (defaults to 16:9). */
   aspect?: number;
-  /** Space to keep free at the bottom (player controls visible). */
+  /** Space to keep free at the bottom / top (player controls visible). */
   reserveBottom?: number;
+  reserveTop?: number;
   /** Safe-area insets (notch, home indicator) when the overlay covers the screen. */
   insets?: Insets;
   /** Style override (settings preview); defaults to the saved preferences. */
@@ -217,7 +217,7 @@ export type SubtitleOverlayProps = {
 
 const COL = ['flex-start', 'center', 'flex-end'] as const;
 
-export function SubtitleOverlay({ doc, time, playing, rate = 1, offset = 0, aspect, reserveBottom = 0, insets = NO_INSETS, prefs: prefsProp }: SubtitleOverlayProps) {
+export function SubtitleOverlay({ doc, time, playing, rate = 1, offset = 0, aspect, reserveBottom = 0, reserveTop = 0, insets = NO_INSETS, prefs: prefsProp }: SubtitleOverlayProps) {
   const saved = useSubtitlePrefs();
   const prefs = prefsProp ?? saved;
   const [size, setSize] = useState({ w: 0, h: 0 });
@@ -240,8 +240,9 @@ export function SubtitleOverlay({ doc, time, playing, rate = 1, offset = 0, aspe
   // Horizontal safe band: the picture, minus notch / rounded corners when full screen.
   const safeL = Math.max(video.x, insets.left);
   const safeR = Math.min(video.x + video.width, size.w - insets.right);
-  const bottomEdge = Math.min(video.y + video.height, size.h - insets.bottom);
-  const topEdge = Math.max(video.y, insets.top);
+  // The home indicator hides itself in full screen: only keep clear of its lower half.
+  const bottomEdge = Math.min(video.y + video.height, size.h - insets.bottom * 0.5);
+  const topEdge = Math.max(video.y, insets.top, reserveTop);
 
   const slots = new Map<number, RenderBlock[]>();
   const anchors: RenderBlock[] = [];
@@ -285,9 +286,8 @@ export function SubtitleOverlay({ doc, time, playing, rate = 1, offset = 0, aspe
         // Collisions: the first line keeps its place, later ones move away from the edge.
         const ordered = row === 'bottom' ? [...list].reverse() : list;
         return (
-          <Animated.View
+          <View
             key={`slot${slot}`}
-            layout={LinearTransition.duration(180)}
             style={[
               styles.abs,
               { left: useBand ? video.x : left, right: useBand ? size.w - video.x - video.width : right, alignItems: COL[col] },
@@ -297,7 +297,7 @@ export function SubtitleOverlay({ doc, time, playing, rate = 1, offset = 0, aspe
             {ordered.map((b) => (
               <OutlinedBlock key={b.key} block={b} fonts={fonts} maxWidth={safeR - safeL} />
             ))}
-          </Animated.View>
+          </View>
         );
       })}
     </View>

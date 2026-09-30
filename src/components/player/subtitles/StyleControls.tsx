@@ -57,7 +57,9 @@ export function Swatches({ colors, value, onPick }: { colors: readonly { label: 
   return (
     <View style={styles.wrap}>
       {colors.map((c) => {
-        const on = c.value.toLowerCase() === value.toLowerCase();
+        // A local, not `c.value` in the style: Reanimated's Babel plugin flags `.value` in inline styles.
+        const hex = c.value;
+        const on = hex.toLowerCase() === value.toLowerCase();
         return (
           <Pressable
             key={c.value}
@@ -67,8 +69,8 @@ export function Swatches({ colors, value, onPick }: { colors: readonly { label: 
             accessibilityState={{ selected: on }}
             hitSlop={4}
             style={[styles.swatch, on && styles.swatchOn]}>
-            <View style={[styles.swatchDot, { backgroundColor: c.value }]}>
-              {on && <Ionicons name="checkmark" size={16} color={isLight(c.value) ? '#000' : '#fff'} />}
+            <View style={[styles.swatchDot, { backgroundColor: hex }]}>
+              {on && <Ionicons name="checkmark" size={16} color={isLight(hex) ? '#000' : '#fff'} />}
             </View>
           </Pressable>
         );

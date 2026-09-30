@@ -466,6 +466,7 @@ export function Player({
           offset={subs.offset}
           aspect={aspect}
           reserveBottom={controls && !locked ? bottomOffset + 8 : 0}
+          reserveTop={controls && !locked ? (full ? Math.max(insets.top, S.md) : 0) + 48 : 0}
           insets={full ? insets : undefined}
         />
       )}
