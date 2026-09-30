@@ -41,3 +41,6 @@ example
 # generated native folders
 /ios
 /android
+
+# Bare worklet bundle (npm run build:worklet, runs on postinstall)
+src/p2p/worklet.bundle.js
