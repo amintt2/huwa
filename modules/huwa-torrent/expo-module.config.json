@@ -1,0 +1,9 @@
+{
+  "platforms": ["apple", "android"],
+  "apple": {
+    "modules": ["HuwaTorrentModule"]
+  },
+  "android": {
+    "modules": ["expo.modules.huwatorrent.HuwaTorrentModule"]
+  }
+}

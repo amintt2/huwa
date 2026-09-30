@@ -1,7 +1,10 @@
 // `bare` implementation of the P2P contract: a thin RPC client of the Bare worklet
 // (src/p2p/worklet/, bundled into src/p2p/worklet.bundle.js by `npm run build:worklet`).
 // The UI never touches cores: every method is one `bare-rpc` request {m, a} -> {ok, v | e}.
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { AppState, type AppStateStatus } from 'react-native';
+
+import { migrateLegacy, type LegacyState } from '@/social/migrate';
 
 import type {
   BackupState,
@@ -31,6 +34,8 @@ const TIMEOUTS: Record<string, number> = {
   getProfile: 20_000,
 };
 const MAX_RESTARTS = 5;
+const LEGACY_KEY = 'huwa/state/v1';
+const MIGRATED_KEY = 'huwa/p2p/bare/migrated';
 
 type Bytes = Uint8Array;
 type IncomingMessage = { command: number; data: Bytes | null };
@@ -176,7 +181,11 @@ export class BareP2P implements P2P {
       return;
     }
     if (msg.ev === 'status') this.setStatus(msg.data as P2PStatus);
-    else if (msg.ev === 'me') this.meValue = (msg.data as Profile | null) ?? undefined;
+    else if (msg.ev === 'me') {
+      this.meValue = (msg.data as Profile | null) ?? undefined;
+      // `useMe()` re-reads `me()` on status notifications.
+      this.setStatus(this.current);
+    }
     else if (msg.ev === 'sub' && typeof msg.sid === 'number') this.subs.get(msg.sid)?.cb(msg.data as never);
   }
 
@@ -214,6 +223,19 @@ export class BareP2P implements P2P {
     };
   }
 
+  /** Import the pre-P2P local history (finished episodes/chapters, comments) into the journal once. */
+  private async migrate(profile: Profile) {
+    if (await AsyncStorage.getItem(MIGRATED_KEY)) return;
+    const raw = await AsyncStorage.getItem(LEGACY_KEY);
+    if (raw) {
+      const m = migrateLegacy(JSON.parse(raw) as LegacyState, { key: profile.key, name: profile.name });
+      // Legacy comments stay on this device: republishing them would hit the rooms' rate limit
+      // with backdated timestamps. Their activity still counts through the journal.
+      for (const e of m.journal) await this.appendJournal(e).catch(() => {});
+    }
+    await AsyncStorage.setItem(MIGRATED_KEY, String(Date.now()));
+  }
+
   // ---- diagnostics (spike) ---------------------------------------------------
 
   /** Hyperbee put/get round-trip inside the worklet. */
@@ -247,6 +269,7 @@ export class BareP2P implements P2P {
   async createIdentity(name: string) {
     const r = await this.call<{ profile: Profile; phrase: string[] }>('createIdentity', [name]);
     this.meValue = r.profile;
+    this.migrate(r.profile).catch((err) => console.warn('[huwa] migration', err));
     return r;
   }
   async restoreIdentity(phrase: string[]) {

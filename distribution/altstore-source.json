@@ -1,0 +1,54 @@
+{
+  "name": "Huwa",
+  "subtitle": "Anime et manhwa, pont épisode ↔ chapitre",
+  "description": "Source officielle de Huwa. L'app ne fournit aucun contenu : elle lit un catalogue public (AniList) et les addons de flux que vous ajoutez vous-même. Commentaires et progression restent sur votre appareil.",
+  "iconURL": "https://HOST_A_RENSEIGNER/altstore/icon.png",
+  "headerURL": "https://HOST_A_RENSEIGNER/altstore/header.png",
+  "website": "https://HOST_A_RENSEIGNER",
+  "tintColor": "#2F6BEB",
+  "nsfw": false,
+  "featuredApps": ["com.huwa.app"],
+  "apps": [
+    {
+      "name": "Huwa",
+      "bundleIdentifier": "com.huwa.app",
+      "developerName": "NOM_DEVELOPPEUR_A_RENSEIGNER",
+      "subtitle": "Regarder, lire, reprendre au bon chapitre",
+      "localizedDescription": "Huwa relie les épisodes d'un anime aux chapitres du manhwa correspondant et mémorise votre progression. Catalogue AniList, lecteur vidéo (HLS/HTTP via vos addons), lecture verticale, commentaires locaux.\n\nHuwa n'héberge, n'indexe ni ne recommande aucun contenu. Voir les conditions d'utilisation : https://HOST_A_RENSEIGNER/legal",
+      "iconURL": "https://HOST_A_RENSEIGNER/altstore/icon.png",
+      "tintColor": "#2F6BEB",
+      "category": "entertainment",
+      "screenshots": [
+        "https://HOST_A_RENSEIGNER/altstore/screenshots/01-home.png",
+        "https://HOST_A_RENSEIGNER/altstore/screenshots/02-bridge.png",
+        "https://HOST_A_RENSEIGNER/altstore/screenshots/03-player.png"
+      ],
+      "appPermissions": {
+        "entitlements": [],
+        "privacy": {}
+      },
+      "versions": [
+        {
+          "version": "1.0.0",
+          "buildVersion": "1",
+          "date": "2026-01-01",
+          "localizedDescription": "Première version publique.",
+          "downloadURL": "https://github.com/ORG_A_RENSEIGNER/huwa/releases/download/v1.0.0/Huwa-1.0.0.ipa",
+          "size": 0,
+          "minOSVersion": "16.0"
+        }
+      ]
+    }
+  ],
+  "news": [
+    {
+      "title": "Huwa 1.0 est disponible",
+      "identifier": "huwa-1-0",
+      "caption": "Première version sideload pour iOS.",
+      "date": "2026-01-01",
+      "tintColor": "#2F6BEB",
+      "notify": true,
+      "appID": "com.huwa.app"
+    }
+  ]
+}

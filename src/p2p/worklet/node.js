@@ -107,8 +107,10 @@ class HuwaNode {
   // ---- lifecycle ----------------------------------------------------------
 
   async ready() {
+    const t0 = Date.now()
     await this.store.ready()
     await this.local.ready()
+    const tStore = Date.now()
     this.swarm = new Hyperswarm({ bootstrap: this.bootstrap })
     this.swarm.on('connection', (conn, info) => this._onconnection(conn, info))
     this.swarm.on('update', () => this._emitStatus())
@@ -120,6 +122,7 @@ class HuwaNode {
 
     this.state = 'ready'
     this._emitStatus()
+    this.log('ready: corestore', tStore - t0, 'ms, identity/base perso', Date.now() - tStore, 'ms')
   }
 
   status() {
@@ -174,11 +177,22 @@ class HuwaNode {
 
   _join(topic, { server = true, client = true } = {}) {
     if (!this.swarm) return null
-    return this.swarm.join(topic, { server, client })
+    const discovery = this.swarm.join(topic, { server, client })
+    // Two peers joining at the same moment can miss each other (each lookup runs before the
+    // other's announce lands) and Hyperswarm only refreshes every few minutes: look again soon.
+    if (client) {
+      for (const ms of [3000, 10000, 30000]) {
+        later(() => {
+          if (!this.closed && !this.suspended && !discovery.destroyed) discovery.refresh().catch(noop)
+        }, ms)
+      }
+    }
+    return discovery
   }
 
   _onconnection(conn) {
-    conn.on('error', noop)
+    this.log('connection', conn.rawStream ? conn.rawStream.remoteHost + ':' + conn.rawStream.remotePort : '')
+    conn.on('error', (err) => this.log('connection error', err.message))
     const stream = this.store.replicate(conn)
     this.wakeup.addStream(stream)
     const mux = Protomux.from(conn)
@@ -196,7 +210,10 @@ class HuwaNode {
       this.channels.add(channel)
       channel.open()
     }
-    conn.on('close', () => this._emitStatus())
+    conn.on('close', () => {
+      this.log('connection closed')
+      this._emitStatus()
+    })
     this._emitStatus()
   }
 
@@ -674,12 +691,14 @@ class HuwaNode {
       const auth = await this._authFor(room.base)
       if (auth) value.auth = auth
       if (!schema.roomNode({ ...value, nonce: 0 }, work)) throw new Error('Commentaire invalide')
-      value.nonce = await pow.solve(pow.powPayload(value, toHex(room.base.local.key)), pow.difficultyFor(stats))
+      const bits = pow.difficultyFor(stats)
+      const t0 = Date.now()
+      value.nonce = await pow.solve(pow.powPayload(value, toHex(room.base.local.key), me), bits)
+      this.log('pow', bits, 'bits, nonce', value.nonce, 'in', Date.now() - t0, 'ms')
       await room.base.append(value, { optimistic: !room.base.writable })
       await room.base.update()
       const stored = await valueOf(room.base.view, 'c/' + body.id)
       if (!stored) throw new Error('Commentaire refusé')
-      this._appendJournalSafe({ type: 'comment', work, ts })
       return { ...stored, likedByMe: false }
     } finally {
       release()
@@ -908,10 +927,6 @@ class HuwaNode {
       if (next && (!head || next.seq > head.seq)) return
     }
     throw new Error('Journal occupé, réessaie')
-  }
-
-  _appendJournalSafe(entry) {
-    this.appendJournal(entry).catch((err) => this.log('journal', err.message))
   }
 
   async journal(key) {

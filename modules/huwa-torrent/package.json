@@ -1,0 +1,8 @@
+{
+  "name": "huwa-torrent",
+  "version": "0.1.0",
+  "description": "Huwa native torrent engine (librqbit) bridge for Expo",
+  "main": "index.ts",
+  "license": "MIT",
+  "private": true
+}

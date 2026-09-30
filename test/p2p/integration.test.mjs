@@ -53,6 +53,7 @@ test('identity, comments, likes, DMs, labels, journal and pairing across nodes',
   const c1 = await alice.postComment({ target: 'ep:9999-e1', text: 'Premier !', spoiler: false })
   assert.equal(c1.author, pa.key)
   const synced = await until(() => bobSeen.length && bobSeen[bobSeen.length - 1].some((c) => c.id === c1.id))
+  if (!synced) console.log('DBG', JSON.stringify(bobSeen), bob.swarm.connections.size, alice.swarm.connections.size, JSON.stringify(await bob.listComments('9999')))
   assert.ok(synced, 'bob sees alice comment')
   console.log('comment sync ms', Date.now() - t0)
 

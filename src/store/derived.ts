@@ -2,10 +2,11 @@ import { useMemo } from 'react';
 
 import { chapterAfterEpisode, continuationChapter } from '@/data/bridge';
 import { getChapter, getEpisode, type Series } from '@/data/catalog';
+import { useComments } from '@/p2p/hooks';
+import { seriesOfTarget } from '@/social/migrate';
 import type { Kind } from '@/theme/tokens';
 
-import { seedComments } from './seed-comments';
-import { useStore, type Comment } from './store';
+import { useStore } from './store';
 
 export type ContinueItem = {
   key: string;
@@ -89,17 +90,7 @@ export function useContinueItems(): ContinueItem[] {
   }, [episodes, chapters]);
 }
 
-/** Seed + user comments for a target, with `liked` resolved. */
+/** Visible comments of a target (P2P room of the work, after local moderation). */
 export function useThread(target: string) {
-  const all = useStore((s) => s.comments);
-  const liked = useStore((s) => s.liked);
-  return useMemo(() => {
-    const mine = all.filter((c) => c.target === target);
-    const list: (Comment & { liked: boolean })[] = [...mine, ...seedComments(target)].map((c) => ({
-      ...c,
-      liked: !!liked[c.id],
-      likes: c.likes + (liked[c.id] ? 1 : 0),
-    }));
-    return list;
-  }, [all, liked, target]);
+  return useComments(seriesOfTarget(target), target).visible;
 }

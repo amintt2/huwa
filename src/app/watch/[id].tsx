@@ -2,13 +2,13 @@ import { useEventListener } from 'expo';
 import { router, useLocalSearchParams } from 'expo-router';
 import { useVideoPlayer, VideoView } from 'expo-video';
 import { useEffect, useRef, useState } from 'react';
-import { Linking, StyleSheet, View } from 'react-native';
+import { StyleSheet, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { isPlayable, type AddonStream } from '@/addons/protocol';
-import { useStreams } from '@/addons/registry';
+import { qualityLabel, useSource } from '@/addons/use-source';
 import { EpisodeBridgeStrip } from '@/components/bridge';
 import { CommentsPanel } from '@/components/comments';
+import { SourceButton, SourcesMenu } from '@/components/sources-menu';
 import { Button, Chip, Cover, IconButton, Press, Txt } from '@/components/ui';
 import { chapterAfterEpisode } from '@/data/bridge';
 import { episodeLabel, getEpisode } from '@/data/catalog';
@@ -34,28 +34,50 @@ function WatchScreen({ id }: { id: string }) {
   const count = useThread(target).length;
   const lastSave = useRef(0);
 
-  const { streams, pending, failed } = useStreams(series.id, episode.number);
-  const [picked, setPicked] = useState<AddonStream | undefined>();
-  const source = picked ?? streams.find(isPlayable);
+  // ---- Source: auto (first that works, then better quality) or manual via the menu ----
+  const src = useSource(series.id, episode.number);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [notice, setNotice] = useState('');
+  const currentRef = useRef(src.currentKey);
+  useEffect(() => {
+    currentRef.current = src.currentKey;
+  }, [src.currentKey]);
+  const loadedQuality = useRef<number | null | undefined>(undefined);
   const resumed = useRef(false);
 
   const player = useVideoPlayer(null, (p) => {
     p.timeUpdateEventInterval = 1;
   });
 
-  const headers = source?.behaviorHints?.proxyHeaders?.request;
-  const headersKey = JSON.stringify(headers ?? {});
+  // Playback failure → next source in the ranked list.
+  useEventListener(player, 'statusChange', ({ status, error }) => {
+    if (status === 'error' && currentRef.current) src.markBad(currentRef.current, error?.message ?? 'Lecture impossible');
+  });
+
+  const headersKey = JSON.stringify(src.headers ?? {});
   useEffect(() => {
-    if (!source?.url) return;
+    if (!src.url) return;
+    // Switching source mid-episode (quality upgrade, fallback, manual pick) keeps the position.
+    const at = resumed.current ? player.currentTime : undefined;
+    const upgradedFrom = loadedQuality.current;
+    const quality = src.quality;
     resumed.current = false;
-    player.replaceAsync({ uri: source.url, headers }).then(() => {
+    player.replaceAsync({ uri: src.url, headers: src.headers }).then(() => {
       const saved = getState().episodes[id];
-      if (!resumed.current && saved && !saved.done && saved.position > 5) player.currentTime = saved.position;
+      if (at != null && at > 1) player.currentTime = at;
+      else if (saved && !saved.done && saved.position > 5) player.currentTime = saved.position;
       resumed.current = true;
       player.play();
-    }).catch(() => {});
+      if (upgradedFrom !== undefined && (quality ?? 0) > (upgradedFrom ?? 0)) {
+        setNotice(`Meilleure qualité trouvée : ${qualityLabel(quality)}`);
+        setTimeout(() => setNotice(''), 3500);
+      }
+      loadedQuality.current = quality;
+    }).catch(() => {
+      if (currentRef.current) src.markBad(currentRef.current, 'Lecture impossible');
+    });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [source?.url, headersKey, player, id]);
+  }, [src.url, headersKey, player, id]);
 
   // Persist progress every 5 s and when leaving the screen.
   useEventListener(player, 'timeUpdate', ({ currentTime }) => {
@@ -90,33 +112,7 @@ function WatchScreen({ id }: { id: string }) {
           onPress={() => router.push({ pathname: '/comments', params: { target, kind: 'anime' } })} />
       </View>
 
-      <View style={{ gap: S.sm }}>
-        <Txt v="section">Sources</Txt>
-        {streams.map((st, i) => {
-          const ok = isPlayable(st);
-          const active = ok && st.url === source?.url;
-          return (
-            <Press
-              key={`${st.addonId}-${i}`}
-              disabled={!ok && !st.externalUrl}
-              onPress={() => (ok ? setPicked(st) : st.externalUrl && Linking.openURL(st.externalUrl))}
-              style={[styles.source, active && { backgroundColor: C.accentSoft }, !ok && !st.externalUrl && { opacity: 0.45 }]}>
-              <View style={{ flex: 1, gap: 2 }}>
-                <Txt v="label" numberOfLines={1}>{(st.name ?? 'Flux') + (st.title ? ` · ${st.title.split('\n')[0]}` : '')}</Txt>
-                <Txt v="small" numberOfLines={1}>
-                  {st.addonName}{ok ? '' : st.infoHash ? ' · torrent (non supporté)' : st.externalUrl ? ' · ouvre le navigateur' : ''}
-                </Txt>
-              </View>
-              {active && <Chip kind="accent" label="EN COURS" />}
-            </Press>
-          );
-        })}
-        {pending > 0 && <Txt v="small">Recherche de sources… ({pending})</Txt>}
-        {pending === 0 && streams.length === 0 && (
-          <Txt v="small">Aucune source. Active ou installe un addon dans Profil → Addons.</Txt>
-        )}
-        {failed.length > 0 && <Txt v="small">Injoignable : {failed.join(', ')}</Txt>}
-      </View>
+      <SourceButton src={src} onOpen={() => setMenuOpen(true)} />
 
       {next && (
         <Press onPress={() => router.replace(`/watch/${next.id}`)} style={styles.next} accessibilityLabel={`Suivant : ${episodeLabel(next)}`}>
@@ -156,7 +152,13 @@ function WatchScreen({ id }: { id: string }) {
           allowsPictureInPicture
           contentFit="contain"
         />
+        {!!notice && (
+          <View style={styles.notice} pointerEvents="none">
+            <Txt v="small" color={C.white}>{notice}</Txt>
+          </View>
+        )}
       </View>
+      <SourcesMenu src={src} visible={menuOpen} onClose={() => setMenuOpen(false)} />
       <CommentsPanel
         target={target}
         kind="anime"
@@ -174,7 +176,7 @@ function WatchScreen({ id }: { id: string }) {
 const styles = StyleSheet.create({
   topBar: { flexDirection: 'row', alignItems: 'center', gap: S.md, paddingHorizontal: S.md, paddingBottom: S.sm },
   video: { width: '100%', aspectRatio: 16 / 9, backgroundColor: C.black },
-  source: { flexDirection: 'row', alignItems: 'center', gap: S.md, padding: S.md, borderRadius: 14, backgroundColor: C.surface },
+  notice: { position: 'absolute', bottom: S.md, alignSelf: 'center', paddingHorizontal: S.md, paddingVertical: 6, borderRadius: 999, backgroundColor: 'rgba(0,0,0,0.7)' },
   next: { flexDirection: 'row', alignItems: 'center', gap: S.md, padding: 10, borderRadius: 16, backgroundColor: C.surface },
   nextPlay: { borderRadius: 20, overflow: 'hidden', backgroundColor: C.accent },
 });

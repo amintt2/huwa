@@ -68,7 +68,7 @@ async function roomStep(view, node, writer, work) {
   const stats = await get(view, 'a/' + author)
 
   if (v.t === 'comment') {
-    if (!pow.check(pow.powPayload(v, writer.w), v.nonce, pow.difficultyFor(stats))) return false
+    if (!pow.check(pow.powPayload(v, writer.w, author), v.nonce, pow.difficultyFor(stats))) return false
     if (b.id !== commentId(author, v.ts, b.target, b.text)) return false
     if (await get(view, 'c/' + b.id)) return false
     if (b.parentId && !(await get(view, 'c/' + b.parentId))) return false

@@ -1,0 +1,45 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: typecheck · lint · tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      - name: Typecheck
+        run: npx tsc --noEmit
+
+      - name: Lint
+        run: npx expo lint -- --max-warnings=0
+
+      - name: Config Expo (sanity)
+        run: npx expo config --type public > /dev/null
+
+      - name: Tests (si un script `test` existe)
+        run: |
+          if node -e "process.exit(require('./package.json').scripts?.test ? 0 : 1)"; then
+            npm test
+          else
+            echo "Pas de script test : étape ignorée."
+          fi
+
+      - name: Empreinte runtime (informatif)
+        run: npx expo-updates fingerprint:generate --platform android | head -c 400 || true

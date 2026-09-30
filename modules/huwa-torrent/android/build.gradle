@@ -1,0 +1,35 @@
+plugins {
+  id 'com.android.library'
+  id 'expo-module-gradle-plugin'
+}
+
+group = 'app.huwa'
+version = '0.1.0'
+
+// The Rust library (libhuwa_torrent_core.so) is packaged only when the build flag is on AND the
+// jniLibs exist: HUWA_TORRENT=1 in the environment, or `huwa.torrent=1` in gradle.properties
+// (written by plugins/with-huwa-torrent.js). Otherwise System.loadLibrary fails at runtime and
+// the module reports isAvailable() == false.
+def huwaTorrentFlag = System.getenv('HUWA_TORRENT') == '1' || (findProperty('huwa.torrent')?.toString() == '1')
+def huwaJniLibs = file("${projectDir}/../../../native/huwa-torrent-core/dist/jniLibs")
+def huwaLinkRust = huwaTorrentFlag && huwaJniLibs.isDirectory()
+
+if (huwaTorrentFlag && !huwaLinkRust) {
+  logger.warn("[HuwaTorrent] HUWA_TORRENT=1 but ${huwaJniLibs} is missing. Run scripts/build-torrent.sh android. Building WITHOUT the torrent engine.")
+}
+
+android {
+  namespace 'expo.modules.huwatorrent'
+  defaultConfig {
+    versionCode 1
+    versionName '0.1.0'
+  }
+  if (huwaLinkRust) {
+    sourceSets {
+      main {
+        // dist/jniLibs/<abi>/libhuwa_torrent_core.so, produced by cargo-ndk.
+        jniLibs.srcDirs += huwaJniLibs.absolutePath
+      }
+    }
+  }
+}

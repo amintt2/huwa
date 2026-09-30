@@ -7,6 +7,23 @@
     "icon": "./assets/images/icon.png",
     "scheme": "huwa",
     "userInterfaceStyle": "dark",
+    "runtimeVersion": {
+      "policy": "fingerprint"
+    },
+    "updates": {
+      "enabled": true,
+      "url": "https://OTA_HOST_A_RENSEIGNER/manifest",
+      "checkAutomatically": "ON_ERROR_RECOVERY",
+      "fallbackToCacheTimeout": 0,
+      "codeSigningCertificate": "./certs/certificate.pem",
+      "codeSigningMetadata": {
+        "keyid": "main",
+        "alg": "rsa-v1_5-sha256"
+      },
+      "requestHeaders": {
+        "expo-channel-name": "production"
+      }
+    },
     "ios": {
       "icon": "./assets/expo.icon",
       "bundleIdentifier": "com.huwa.app"
@@ -36,7 +53,24 @@
         }
       ],
       "expo-video",
-      "./plugins/with-scene-lifecycle"
+      "./plugins/with-scene-lifecycle",
+      [
+        "expo-secure-store",
+        {
+          "faceIDPermission": false
+        }
+      ],
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "Huwa utilise la caméra uniquement pour scanner le QR code d’appairage d’un autre appareil.",
+          "microphonePermission": false,
+          "recordAudioAndroid": false
+        }
+      ],
+      "expo-sharing",
+      "expo-notifications",
+      "./plugins/with-huwa-torrent"
     ],
     "experiments": {
       "typedRoutes": true,

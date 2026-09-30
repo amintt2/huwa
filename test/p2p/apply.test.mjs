@@ -73,7 +73,7 @@ const tick = (ms) => (clock += ms)
 async function node(user, writerKey, t, room, body, { bits, withAuth = true, ts = tick(RATE.minIntervalMs), nonce } = {}) {
   const value = { v: 1, t, room, ts, body }
   if (withAuth) value.auth = makeAuth({ device: user.device, proof: user.proof, writerKey, homeKey: user.home })
-  if (bits !== undefined) value.nonce = nonce ?? (await powMod.solve(powMod.powPayload(value, toHex(writerKey)), bits))
+  if (bits !== undefined) value.nonce = nonce ?? (await powMod.solve(powMod.powPayload(value, toHex(writerKey), user.identity), bits))
   return { value, from: { key: writerKey }, optimistic: true }
 }
 
@@ -85,7 +85,7 @@ function commentBody(user, ts, text = 'hello', extra = {}) {
 async function comment(user, writerKey, opts = {}) {
   const ts = tick(opts.gap ?? RATE.minIntervalMs)
   const body = commentBody(user, ts, opts.text, opts.extra)
-  return node(user, writerKey, 'comment', 'work:77', body, { bits: opts.bits ?? 18, ts, withAuth: opts.withAuth ?? true, nonce: opts.nonce })
+  return node(user, writerKey, 'comment', 'work:77', body, { bits: opts.bits ?? 16, ts, withAuth: opts.withAuth ?? true, nonce: opts.nonce })
 }
 
 // ---- proof of work ---------------------------------------------------------
@@ -108,12 +108,11 @@ test('pow: solve/check, binding to writer, difficulty table', async () => {
   assert.ok(!powMod.check(payload, 2 ** 32, 1))
   assert.equal(powMod.leadingZeroBits(b4a.from([0, 0, 0x10])), 19)
   assert.equal(powMod.leadingZeroBits(b4a.from([0x80])), 0)
-  assert.equal(powMod.difficultyFor(null), powMod.DIFFICULTY.unknown)
-  assert.equal(powMod.difficultyFor({ n: 2, vouched: false }), powMod.DIFFICULTY.newcomer)
-  assert.equal(powMod.difficultyFor({ n: 5, vouched: false }), powMod.DIFFICULTY.established)
-  assert.equal(powMod.difficultyFor({ n: 0, vouched: true }), powMod.DIFFICULTY.vouched)
-  assert.ok(powMod.DIFFICULTY.unknown > powMod.DIFFICULTY.newcomer)
-  assert.ok(powMod.DIFFICULTY.newcomer > powMod.DIFFICULTY.established)
+  assert.equal(powMod.difficultyFor(null), 16)
+  assert.equal(powMod.difficultyFor({ n: 2, vouched: false }), 16)
+  assert.equal(powMod.difficultyFor({ n: 5, vouched: false }), 12)
+  assert.equal(powMod.difficultyFor({ n: 0, vouched: true }), 14)
+  assert.equal(powMod.difficultyFor({ n: 60, vouched: true }), 8)
 })
 
 // ---- comment rooms ---------------------------------------------------------
@@ -147,7 +146,8 @@ test('room: rejects bad PoW, forged id, duplicates, unknown writer, foreign auth
   const weak = await comment(alice, w, { bits: 4 })
   // Find a nonce that satisfies 4 bits but (almost surely) not 18.
   let nonce = 0
-  while (!powMod.check(powMod.powPayload(weak.value, toHex(w)), nonce, 4) || powMod.check(powMod.powPayload(weak.value, toHex(w)), nonce, 18)) nonce++
+  const wp = powMod.powPayload(weak.value, toHex(w), alice.identity)
+  while (!powMod.check(wp, nonce, 4) || powMod.check(wp, nonce, 16)) nonce++
   weak.value.nonce = nonce
   await apply([weak], view, null)
   assert.equal(view.map.size, 0, 'PoW too weak for an unknown key')
@@ -245,7 +245,7 @@ test('room: same linearized nodes give byte-identical views (determinism)', asyn
   nodes.push(await comment(alice, wa))
   nodes.push(await comment(bob, wb))
   nodes.push(await node(bob, wb, 'like', 'work:77', { id: nodes[0].value.body.id, on: true }, { bits: 8, withAuth: false }))
-  nodes.push(await comment(alice, wa, { gap: 1000, bits: 16, withAuth: false })) // rate limited
+  nodes.push(await comment(alice, wa, { gap: 1000, bits: 16, withAuth: false, text: 'fast' })) // rate limited
   nodes.push({ value: null, from: { key: wa } }) // ack node
   nodes.push({ value: { garbage: true }, from: { key: wb } })
   const v1 = new FakeView()

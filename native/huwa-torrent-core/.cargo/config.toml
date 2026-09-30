@@ -1,0 +1,11 @@
+# Rust's LLVM is newer than Xcode's: bitcode embedded in the staticlib objects is unreadable by
+# Apple's toolchain (nm fails with "Unknown attribute kind", ld does not resolve our C symbols).
+# Bitcode is useless for iOS anyway (Apple dropped it in Xcode 14).
+[target.aarch64-apple-ios]
+rustflags = ["-C", "embed-bitcode=no"]
+
+[target.aarch64-apple-ios-sim]
+rustflags = ["-C", "embed-bitcode=no"]
+
+[target.x86_64-apple-ios]
+rustflags = ["-C", "embed-bitcode=no"]
