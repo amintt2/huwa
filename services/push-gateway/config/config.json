@@ -1,0 +1,8 @@
+{
+  "certPath": "../secrets/service-account.json",
+  "notification": {
+    "title": "Huwa",
+    "body": "Nouveau message"
+  },
+  "apnsTopic": "com.huwa.app"
+}

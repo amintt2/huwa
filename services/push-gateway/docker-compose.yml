@@ -1,0 +1,25 @@
+# Passerelle push Holepunch : reçoit des pings opaques du blind peer et les relaie via FCM.
+# Vérifié dans blind-push-gateway-cli@0.2.0 (POC, « breaking changes possible till V1 ») :
+#   blind-push-gateway run --config <config.json> --storage <path> [--dry-run] [--trusted-peer <clé>]
+#                          [--bootstrap '<json>'] [--scraper-*]
+# lib/fcm.js utilise UNIQUEMENT firebase-admin (`cert(certPath)` + `messaging.send`).
+# => iOS passe par FCM : la clé APNs .p8 est téléversée dans la console Firebase
+#    (Paramètres du projet → Cloud Messaging → Apple), pas montée ici.
+#    Seul le compte de service Firebase (JSON) est monté en secret.
+# La clé publique du service est journalisée au démarrage (« Public key: … ») : à donner
+# au blind peer (--push-gateway-key) et à l'app.
+
+services:
+  push-gateway:
+    build: .
+    restart: unless-stopped
+    network_mode: host
+    volumes:
+      - ./config:/config:ro            # config.json (commité, sans secret)
+      - ./secrets:/secrets:ro          # service-account.json (git-ignoré)
+      - ./data:/data                   # corestore : la paire de clés du service en dérive
+    command: ["blind-push-gateway", "run", "--config", "/config/config.json", "--storage", "/data"]
+    deploy:
+      resources:
+        limits:
+          memory: 512M

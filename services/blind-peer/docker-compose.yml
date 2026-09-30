@@ -1,0 +1,30 @@
+# Blind peer Holepunch : réplique des blocs Hypercore chiffrés pour livrer les MP hors-ligne.
+# Options vérifiées dans blind-peer-cli@1.15.1/bin.js (paquet npm `blind-peer-cli`, binaire `blind-peer`) :
+#   --storage|-s <path>        (défaut ./blind-peer)
+#   --port|-p <int>            port DHT (défaut aléatoire) — le fixer pour le pare-feu
+#   --max-storage|-m <Mo>      (défaut 100000)
+#   --trusted-peer|-t <clé>    pairs autorisés à demander announce:true (plusieurs fois)
+#   --push-gateway-key <clé>   clé publique d'une passerelle push vers laquelle relayer (plusieurs fois)
+#   --ip-ban-list-key <clé>, --router-key <clé>, --debug, --control-socket <path>, sous-commande readiness-probe
+# Le blind peer expose sa clé publique dans les logs au démarrage ({"msg":"Listening","publicKey":"…"}).
+# Stocker ce keypair : il est dérivé du corestore dans --storage → sauvegarder le volume.
+
+services:
+  blind-peer:
+    build: .
+    restart: unless-stopped
+    network_mode: host
+    env_file: .env
+    volumes:
+      - ./data:/data
+    command: >
+      sh -c 'exec blind-peer
+      --storage /data
+      --port ${PORT:-49738}
+      --max-storage ${MAX_STORAGE_MB:-20000}
+      ${PUSH_GATEWAY_KEY:+--push-gateway-key $PUSH_GATEWAY_KEY}
+      ${TRUSTED_PEER:+--trusted-peer $TRUSTED_PEER}'
+    deploy:
+      resources:
+        limits:
+          memory: 1G
