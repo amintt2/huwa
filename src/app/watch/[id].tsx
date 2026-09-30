@@ -1,16 +1,14 @@
 import { useEventListener } from 'expo';
-import { router, useLocalSearchParams, type Href } from 'expo-router';
+import { router, useLocalSearchParams } from 'expo-router';
 import { useVideoPlayer, VideoView } from 'expo-video';
-import { useEffect, useMemo, useRef, useState } from 'react';
-import { Linking, StyleSheet, View } from 'react-native';
+import { useEffect, useRef, useState } from 'react';
+import { StyleSheet, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { isPlayable, isTorrent, type AddonStream } from '@/addons/protocol';
-import { detectQuality, rankStreams, streamKey } from '@/addons/quality';
-import { useAddonPrefs, useAddons, useStreams } from '@/addons/registry';
-import { resolveTorrent, useCachedHashes, useTorrentResolver } from '@/debrid/resolve';
+import { qualityLabel, useSource } from '@/addons/use-source';
 import { EpisodeBridgeStrip } from '@/components/bridge';
 import { CommentsPanel } from '@/components/comments';
+import { SourceButton, SourcesMenu } from '@/components/sources-menu';
 import { Button, Chip, Cover, IconButton, Press, Txt } from '@/components/ui';
 import { chapterAfterEpisode } from '@/data/bridge';
 import { episodeLabel, getEpisode } from '@/data/catalog';
@@ -36,55 +34,15 @@ function WatchScreen({ id }: { id: string }) {
   const count = useThread(target).length;
   const lastSave = useRef(0);
 
-  // ---- Stream selection: ranked list, debrid resolution for torrents, auto-fallback on error ----
-  const { streams, pending, failed } = useStreams(series.id, episode.number);
-  const prefs = useAddonPrefs();
-  const addonList = useAddons();
-  const resolverLabel = useTorrentResolver();
-  const cached = useCachedHashes(streams.filter(isTorrent).map((s) => s.infoHash!));
-  const ranked = useMemo(
-    () => rankStreams(streams, {
-      preferred: prefs.preferredQuality,
-      addonOrder: addonList.map((a) => a.manifest.id),
-      canResolveTorrents: !!resolverLabel,
-      cached,
-    }),
-    [streams, prefs.preferredQuality, addonList, resolverLabel, cached],
-  );
-  const usable = (s: AddonStream) => isPlayable(s) || (isTorrent(s) && !!resolverLabel);
-  const [picked, setPicked] = useState<string | undefined>();
-  const [bad, setBad] = useState<string[]>([]);
-  const [resolved, setResolved] = useState<Record<string, { url?: string; via?: string; error?: string }>>({});
-  const current =
-    (picked ? ranked.find((s) => streamKey(s) === picked) : undefined) ??
-    ranked.find((s) => usable(s) && !bad.includes(streamKey(s)));
-  const currentKey = current ? streamKey(current) : undefined;
-  const currentRef = useRef(currentKey);
+  // ---- Source: auto (first that works, then better quality) or manual via the menu ----
+  const src = useSource(series.id, episode.number);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [notice, setNotice] = useState('');
+  const currentRef = useRef(src.currentKey);
   useEffect(() => {
-    currentRef.current = currentKey;
-  }, [currentKey]);
-  const sourceUrl = current ? (isPlayable(current) ? current.url : resolved[currentKey!]?.url) : undefined;
-  const markBad = (k: string, error?: string) => {
-    setBad((b) => (b.includes(k) ? b : [...b, k]));
-    if (error) setResolved((r) => ({ ...r, [k]: { ...r[k], error } }));
-    setPicked((p) => (p === k ? undefined : p));
-  };
-
-  // Torrent → HTTPS through the debrid service (or a registered native resolver).
-  useEffect(() => {
-    if (!current || !currentKey || !isTorrent(current) || !resolverLabel || resolved[currentKey]) return;
-    const ctrl = new AbortController();
-    resolveTorrent(
-      { infoHash: current.infoHash!, fileIdx: current.fileIdx, filename: current.behaviorHints?.filename, sources: current.sources, episode: episode.number },
-      ctrl.signal,
-    )
-      .then(({ url, via }) => setResolved((r) => ({ ...r, [currentKey]: { url, via } })))
-      .catch((e) => {
-        if (!ctrl.signal.aborted) markBad(currentKey, e instanceof Error ? e.message : 'Échec');
-      });
-    return () => ctrl.abort();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [currentKey, resolverLabel]);
+    currentRef.current = src.currentKey;
+  }, [src.currentKey]);
+  const loadedQuality = useRef<number | null | undefined>(undefined);
   const resumed = useRef(false);
 
   const player = useVideoPlayer(null, (p) => {
@@ -93,24 +51,33 @@ function WatchScreen({ id }: { id: string }) {
 
   // Playback failure → next source in the ranked list.
   useEventListener(player, 'statusChange', ({ status, error }) => {
-    if (status === 'error' && currentRef.current) markBad(currentRef.current, error?.message ?? 'Lecture impossible');
+    if (status === 'error' && currentRef.current) src.markBad(currentRef.current, error?.message ?? 'Lecture impossible');
   });
 
-  const headers = current?.behaviorHints?.proxyHeaders?.request;
-  const headersKey = JSON.stringify(headers ?? {});
+  const headersKey = JSON.stringify(src.headers ?? {});
   useEffect(() => {
-    if (!sourceUrl) return;
+    if (!src.url) return;
+    // Switching source mid-episode (quality upgrade, fallback, manual pick) keeps the position.
+    const at = resumed.current ? player.currentTime : undefined;
+    const upgradedFrom = loadedQuality.current;
+    const quality = src.quality;
     resumed.current = false;
-    player.replaceAsync({ uri: sourceUrl, headers }).then(() => {
+    player.replaceAsync({ uri: src.url, headers: src.headers }).then(() => {
       const saved = getState().episodes[id];
-      if (!resumed.current && saved && !saved.done && saved.position > 5) player.currentTime = saved.position;
+      if (at != null && at > 1) player.currentTime = at;
+      else if (saved && !saved.done && saved.position > 5) player.currentTime = saved.position;
       resumed.current = true;
       player.play();
+      if (upgradedFrom !== undefined && (quality ?? 0) > (upgradedFrom ?? 0)) {
+        setNotice(`Meilleure qualité trouvée : ${qualityLabel(quality)}`);
+        setTimeout(() => setNotice(''), 3500);
+      }
+      loadedQuality.current = quality;
     }).catch(() => {
-      if (currentRef.current) markBad(currentRef.current, 'Lecture impossible');
+      if (currentRef.current) src.markBad(currentRef.current, 'Lecture impossible');
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sourceUrl, headersKey, player, id]);
+  }, [src.url, headersKey, player, id]);
 
   // Persist progress every 5 s and when leaving the screen.
   useEventListener(player, 'timeUpdate', ({ currentTime }) => {
@@ -145,57 +112,7 @@ function WatchScreen({ id }: { id: string }) {
           onPress={() => router.push({ pathname: '/comments', params: { target, kind: 'anime' } })} />
       </View>
 
-      <View style={{ gap: S.sm }}>
-        <Txt v="section">Sources</Txt>
-        {ranked.map((st) => {
-          const k = streamKey(st);
-          const torrent = isTorrent(st);
-          const ok = usable(st);
-          const active = k === currentKey;
-          const r = resolved[k];
-          const failedHere = bad.includes(k);
-          const q = detectQuality(st);
-          const cachedHere = torrent ? cached[st.infoHash!.toLowerCase()] : undefined;
-          const detail = failedHere
-            ? ` · échec${r?.error ? ` : ${r.error}` : ''}`
-            : torrent
-              ? resolverLabel
-                ? ` · torrent via ${resolverLabel}${cachedHere ? ' · en cache' : cachedHere === false ? ' · pas en cache' : ''}${active && !r?.url ? ' · résolution…' : ''}`
-                : ' · torrent · configure un service débrid'
-              : !ok && st.externalUrl
-                ? ' · ouvre le navigateur'
-                : '';
-          return (
-            <Press
-              key={k}
-              disabled={!ok && !st.externalUrl && !torrent}
-              onPress={() => {
-                if (ok) {
-                  setBad((b) => b.filter((x) => x !== k));
-                  setResolved((m) => (m[k]?.error ? { ...m, [k]: {} } : m));
-                  setPicked(k);
-                } else if (torrent) router.push('/debrid' as Href);
-                else if (st.externalUrl) Linking.openURL(st.externalUrl);
-              }}
-              style={[styles.source, active && { backgroundColor: C.accentSoft }, (!ok || failedHere) && { opacity: 0.45 }]}>
-              <View style={{ flex: 1, gap: 2 }}>
-                <Txt v="label" numberOfLines={1}>{(st.name ?? 'Flux').replace(/\n/g, ' ') + (st.title ? ` · ${st.title.split('\n')[0]}` : '')}</Txt>
-                <Txt v="small" numberOfLines={1}>{st.addonName}{detail}</Txt>
-              </View>
-              {q && <Chip kind="neutral" label={q === 2160 ? '4K' : `${q}p`} />}
-              {active && <Chip kind="accent" label={r?.url || isPlayable(st) ? 'EN COURS' : '…'} />}
-            </Press>
-          );
-        })}
-        {!resolverLabel && streams.some(isTorrent) && (
-          <Button small variant="soft" icon="flash-outline" label="Lire les torrents via un service débrid" onPress={() => router.push('/debrid' as Href)} />
-        )}
-        {pending > 0 && <Txt v="small">Recherche de sources… ({pending})</Txt>}
-        {pending === 0 && streams.length === 0 && (
-          <Txt v="small">Aucune source. Active ou installe un addon dans Profil → Addons.</Txt>
-        )}
-        {failed.length > 0 && <Txt v="small">Injoignable : {failed.join(', ')}</Txt>}
-      </View>
+      <SourceButton src={src} onOpen={() => setMenuOpen(true)} />
 
       {next && (
         <Press onPress={() => router.replace(`/watch/${next.id}`)} style={styles.next} accessibilityLabel={`Suivant : ${episodeLabel(next)}`}>
@@ -235,7 +152,13 @@ function WatchScreen({ id }: { id: string }) {
           allowsPictureInPicture
           contentFit="contain"
         />
+        {!!notice && (
+          <View style={styles.notice} pointerEvents="none">
+            <Txt v="small" color={C.white}>{notice}</Txt>
+          </View>
+        )}
       </View>
+      <SourcesMenu src={src} visible={menuOpen} onClose={() => setMenuOpen(false)} />
       <CommentsPanel
         target={target}
         kind="anime"
@@ -253,7 +176,7 @@ function WatchScreen({ id }: { id: string }) {
 const styles = StyleSheet.create({
   topBar: { flexDirection: 'row', alignItems: 'center', gap: S.md, paddingHorizontal: S.md, paddingBottom: S.sm },
   video: { width: '100%', aspectRatio: 16 / 9, backgroundColor: C.black },
-  source: { flexDirection: 'row', alignItems: 'center', gap: S.md, padding: S.md, borderRadius: 14, backgroundColor: C.surface },
+  notice: { position: 'absolute', bottom: S.md, alignSelf: 'center', paddingHorizontal: S.md, paddingVertical: 6, borderRadius: 999, backgroundColor: 'rgba(0,0,0,0.7)' },
   next: { flexDirection: 'row', alignItems: 'center', gap: S.md, padding: 10, borderRadius: 16, backgroundColor: C.surface },
   nextPlay: { borderRadius: 20, overflow: 'hidden', backgroundColor: C.accent },
 });
