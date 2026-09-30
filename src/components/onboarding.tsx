@@ -5,18 +5,26 @@ import { useRef, useState } from 'react';
 import { ScrollView, StyleSheet, View, useWindowDimensions } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
+import * as WebBrowser from 'expo-web-browser';
+
+import { EXTENSIONS_SITE } from '@/addons/recommended';
+import { isStoreBuild } from '@/config/channel';
 import { useT, type Key } from '@/i18n';
 import { setSetting, useSettings } from '@/settings/settings';
 import { BRIDGE, C, S } from '@/theme/tokens';
 
+import { RecommendedExtensions } from './recommended-extensions';
 import { FilterChip } from './states';
 import { Button, Txt, type IconName } from './ui';
 
-const PAGES: { icon: IconName; title: Key; body: Key }[] = [
+type Page = { icon: IconName; title: Key; body: Key; extensions?: boolean };
+const BASE: Page[] = [
   { icon: 'swap-horizontal', title: 'onb.1.title', body: 'onb.1.body' },
   { icon: 'calendar-outline', title: 'onb.2.title', body: 'onb.2.body' },
   { icon: 'shield-checkmark-outline', title: 'onb.3.title', body: 'onb.3.body' },
 ];
+// AltStore PAL / sideload builds end on "add your extensions"; the App Store build does not.
+const PAGES: Page[] = isStoreBuild ? BASE : [...BASE, { icon: 'extension-puzzle-outline', title: 'onb.4.title', body: 'onb.4.body', extensions: true }];
 
 export function Onboarding() {
   const { width } = useWindowDimensions();
@@ -58,6 +66,12 @@ export function Onboarding() {
             </LinearGradient>
             <Txt v="display" style={{ fontSize: 28, textAlign: 'center' }} accessibilityRole="header">{t(p.title)}</Txt>
             <Txt v="body" style={{ textAlign: 'center', fontSize: 16, lineHeight: 23, maxWidth: 340 }}>{t(p.body)}</Txt>
+            {p.extensions && (
+              <View style={{ alignSelf: 'stretch', gap: S.md, marginTop: S.sm }}>
+                <RecommendedExtensions />
+                <Button small variant="ghost" icon="open-outline" label={t('onb.4.more')} onPress={() => WebBrowser.openBrowserAsync(EXTENSIONS_SITE)} />
+              </View>
+            )}
           </View>
         ))}
       </ScrollView>

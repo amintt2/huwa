@@ -19,5 +19,7 @@ module.exports = ({ config }) => {
     delete updates.codeSigningCertificate;
     delete updates.codeSigningMetadata;
   }
-  return { ...config, updates };
+  // Build flavor read by src/config/channel.ts.
+  const channel = process.env.HUWA_LITE === '1' ? 'store' : 'full';
+  return { ...config, updates, extra: { ...config.extra, channel } };
 };
