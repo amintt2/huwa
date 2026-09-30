@@ -15,8 +15,9 @@ type Resolution = { url?: string; via?: string; error?: string };
 
 export type SourceState = 'playing' | 'resolving' | 'failed' | 'ready' | 'needs-debrid' | 'external' | 'unusable';
 
-export function useSource(seriesId: string, episode: number) {
-  const { streams, pending, failed } = useStreams(seriesId, episode);
+/** `enabled: false` = idle (used to prefetch the next episode only once armed). */
+export function useSource(seriesId: string, episode: number, { enabled = true }: { enabled?: boolean } = {}) {
+  const { streams, pending, failed } = useStreams(seriesId, episode, enabled);
   const prefs = useAddonPrefs();
   const addonList = useAddons();
   const resolverLabel = useTorrentResolver();
@@ -67,7 +68,7 @@ export function useSource(seriesId: string, episode: number) {
 
   // Torrent → HTTPS through the debrid service (or the native engine once registered).
   useEffect(() => {
-    if (!current || !currentKey || !isTorrent(current) || !resolverLabel || resolved[currentKey]) return;
+    if (!enabled || !current || !currentKey || !isTorrent(current) || !resolverLabel || resolved[currentKey]) return;
     const ctrl = new AbortController();
     resolveTorrent(
       { infoHash: current.infoHash!, fileIdx: current.fileIdx, filename: current.behaviorHints?.filename, sources: current.sources, episode },
@@ -79,7 +80,7 @@ export function useSource(seriesId: string, episode: number) {
       });
     return () => ctrl.abort();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [currentKey, resolverLabel]);
+  }, [currentKey, resolverLabel, enabled]);
 
   const pick = (s: AddonStream | 'auto') => {
     if (s === 'auto') return setManual(undefined);

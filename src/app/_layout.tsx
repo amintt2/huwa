@@ -4,6 +4,7 @@ import { StatusBar } from 'expo-status-bar';
 import { useEffect, useState } from 'react';
 
 import { hydrateAddons } from '@/addons/registry';
+import { registerNativeTorrentEngine } from '@/torrent/register';
 import { Onboarding } from '@/components/onboarding';
 import { OfflineBanner } from '@/components/states';
 import { loadCatalog } from '@/data/anilist';
@@ -39,6 +40,7 @@ export default function RootLayout() {
   const [catalogReady, setCatalogReady] = useState(false);
   useEffect(() => {
     hydrateAddons();
+    registerNativeTorrentEngine();
   }, []);
   useEffect(() => {
     const timeout = setTimeout(() => setCatalogReady(true), 6000);

@@ -9,7 +9,9 @@ import { qualityLabel, useSource } from '@/addons/use-source';
 import { EpisodeBridgeStrip } from '@/components/bridge';
 import { CommentsPanel } from '@/components/comments';
 import { Player, type ExternalSubtitle, type PlayerHandle } from '@/components/player/Player';
+import { PrefetchNext } from '@/components/player/prefetch-next';
 import { SourceButton, SourcesMenu } from '@/components/sources-menu';
+import { useStreamPolicy } from '@/settings/network';
 import { Button, Chip, Cover, IconButton, Press, Txt } from '@/components/ui';
 import { chapterAfterEpisode } from '@/data/bridge';
 import { episodeLabel, getEpisode } from '@/data/catalog';
@@ -52,6 +54,8 @@ function WatchScreen({ id }: { id: string }) {
   // ---- Source: auto (first that works, then better quality) or manual via the menu ----
   const src = useSource(series.id, episode.number);
   const [menuOpen, setMenuOpen] = useState(false);
+  const [prefetchArmed, setPrefetchArmed] = useState(false);
+  const streamPolicy = useStreamPolicy();
   const [notice, setNotice] = useState('');
   const currentRef = useRef(src.currentKey);
   useEffect(() => {
@@ -142,7 +146,11 @@ function WatchScreen({ id }: { id: string }) {
             const saved = getState().episodes[id];
             return saved && !saved.done ? saved.position : undefined;
           }}
-          onProgress={(position, duration) => saveEpisodeProgress(id, position, duration)}
+          onProgress={(position, duration) => {
+            saveEpisodeProgress(id, position, duration);
+            // Preload the next episode from mid-episode (or the last 5 minutes of a long one).
+            if (!prefetchArmed && duration > 0 && (position / duration > 0.5 || duration - position < 300)) setPrefetchArmed(true);
+          }}
           onEnd={() => markEpisodeDone(id)}
           onError={(message) => {
             if (currentRef.current) src.markBad(currentRef.current, message);
@@ -164,6 +172,7 @@ function WatchScreen({ id }: { id: string }) {
         />
       </View>
       <SourcesMenu src={src} visible={menuOpen} onClose={() => setMenuOpen(false)} />
+      {next && <PrefetchNext seriesId={series.id} episode={next.number} armed={prefetchArmed} buffer={streamPolicy.allowed} />}
       {/* Hidden, not unmounted, in fullscreen: keeps the comment draft and scroll position. */}
       <View style={{ flex: 1, display: full ? 'none' : 'flex' }}>
         <CommentsPanel

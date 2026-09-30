@@ -160,16 +160,26 @@ type Agg<T> = { key: string; items: T[]; done: number; failed: string[] };
  * Queries every enabled addon serving `resource` in parallel; results appear as each answers.
  * Waits for the id mapping first (AniList → Kitsu / MAL / IMDb).
  */
+// Answers shared across screens: a prefetch of the next episode (see `useSource` with
+// `enabled`) fills this cache, so opening that episode shows its sources immediately.
+const aggCache = new Map<string, { agg: Agg<unknown>; at: number }>();
+const AGG_TTL = 20 * 60e3;
+const cachedAgg = <T,>(key: string) => {
+  const hit = aggCache.get(key);
+  return hit && Date.now() - hit.at < AGG_TTL ? (hit.agg as Agg<T>) : undefined;
+};
+
 function useAggregate<T>(
   resource: Resource,
   seriesId: string,
   episode: number,
   load: (a: InstalledAddon, req: AddonRequest) => Promise<T[]>,
+  enabled = true,
 ) {
   const list = useAddons();
   const ids = useAnimeIds(seriesId);
   const idsReady = ids !== undefined;
-  const jobs = idsReady
+  const jobs = idsReady && enabled
     ? list
         .filter((a) => a.enabled)
         .map((a) => ({ a, req: a.baseUrl === builtin.baseUrl ? { type: 'series', id: videoId(seriesId, episode) } : requestFor(a.manifest, resource, seriesId, episode, ids ?? null) }))
@@ -181,21 +191,23 @@ function useAggregate<T>(
 
   useEffect(() => {
     let cancelled = false;
+    // Complete fresh answer already fetched (e.g. prefetched while watching the previous episode).
+    const hit = cachedAgg<T>(key);
+    if (hit && hit.done >= jobs.length) return;
+    const update = (fn: (base: Agg<T>) => Agg<T>) =>
+      setRes((p) => {
+        const base = p.key === key ? p : { key, items: [], done: 0, failed: [] };
+        const next = fn(base);
+        aggCache.set(key, { agg: next as Agg<unknown>, at: Date.now() });
+        return next;
+      });
     for (const { a, req } of jobs) {
       load(a, req)
         .then((items) => {
-          if (cancelled) return;
-          setRes((p) => {
-            const base = p.key === key ? p : { key, items: [], done: 0, failed: [] };
-            return { ...base, items: [...base.items, ...items], done: base.done + 1 };
-          });
+          if (!cancelled) update((base) => ({ ...base, items: [...base.items, ...items], done: base.done + 1 }));
         })
         .catch(() => {
-          if (cancelled) return;
-          setRes((p) => {
-            const base = p.key === key ? p : { key, items: [], done: 0, failed: [] };
-            return { ...base, done: base.done + 1, failed: [...base.failed, a.manifest.name] };
-          });
+          if (!cancelled) update((base) => ({ ...base, done: base.done + 1, failed: [...base.failed, a.manifest.name] }));
         });
     }
     return () => {
@@ -204,26 +216,26 @@ function useAggregate<T>(
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [key]);
 
-  const cur = res.key === key ? res : { items: [] as T[], done: 0, failed: [] as string[] };
-  return { items: cur.items, pending: idsReady ? jobs.length - cur.done : 1, failed: cur.failed };
+  const cur = (res.key === key ? res : cachedAgg<T>(key)) ?? { items: [] as T[], done: 0, failed: [] as string[] };
+  return { items: cur.items, pending: idsReady ? Math.max(0, jobs.length - cur.done) : enabled ? 1 : 0, failed: cur.failed };
 }
 
 /** Streams for an episode, unsorted (see `rankStreams`). */
-export function useStreams(seriesId: string, episode: number) {
+export function useStreams(seriesId: string, episode: number, enabled = true) {
   const r = useAggregate<AddonStream>('stream', seriesId, episode, async (a, req) => {
     const items = a.baseUrl === builtin.baseUrl ? DEMO_STREAMS : await fetchStreams(a.baseUrl, req.type, req.id);
     return items.map((s) => ({ ...s, addonId: a.manifest.id, addonName: a.manifest.name }));
-  });
+  }, enabled);
   return { streams: r.items, pending: r.pending, failed: r.failed };
 }
 
 export type Subtitle = { url: string; lang: string; addonName: string; id?: string };
 
 /** Subtitles from every installed addon with the `subtitles` resource (e.g. OpenSubtitles v3). */
-export function useSubtitles(seriesId: string, episode: number): Subtitle[] {
+export function useSubtitles(seriesId: string, episode: number, enabled = true): Subtitle[] {
   return useAggregate<Subtitle>('subtitles', seriesId, episode, async (a, req) =>
     (await fetchSubtitles(a.baseUrl, req.type, req.id)).map((s) => ({ url: s.url, lang: s.lang, id: s.id, addonName: a.manifest.name })),
-  ).items;
+  enabled).items;
 }
 
 // ---------- catalogs (Découvrir) ----------

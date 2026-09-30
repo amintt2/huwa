@@ -14,13 +14,13 @@ let settings: TorrentSettings = defaults;
 let hydrated: Promise<void> | undefined;
 const listeners = new Set<() => void>();
 
-const subscribe = (l: () => void) => {
+export const subscribeTorrentSettings = (l: () => void) => {
   listeners.add(l);
   return () => listeners.delete(l);
 };
 
 export function useTorrentSettings() {
-  return useSyncExternalStore(subscribe, () => settings, () => settings);
+  return useSyncExternalStore(subscribeTorrentSettings, () => settings, () => settings);
 }
 
 export const getTorrentSettings = () => settings;
