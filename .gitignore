@@ -50,8 +50,12 @@ example
 # generated native folders
 /ios
 /android
+
 !services/**/secrets/.gitkeep
 
 # Claude agent worktrees
 .claude/worktrees/
 modules/huwa-torrent/ios/HuwaTorrentCore.xcframework/
+
+# Bare worklet bundle (npm run build:worklet, runs on postinstall)
+src/p2p/worklet.bundle.js
