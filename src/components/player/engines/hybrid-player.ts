@@ -3,8 +3,10 @@
 // expo-video (AVPlayer / ExoPlayer) or libmpv (modules/huwa-mpv). The engine is chosen per source
 // (policy.ts) and switches to mpv when the native engine fails on a source.
 import type { EventEmitter } from 'expo-modules-core/types';
-import type { AudioTrack, SubtitleTrack, VideoPlayer, VideoPlayerEvents, VideoPlayerStatus, VideoSource } from 'expo-video';
+import type { AudioTrack, SubtitleTrack, VideoPlayer, VideoPlayerEvents, VideoPlayerStatus, VideoSource, VideoTrack } from 'expo-video';
 import { Platform } from 'react-native';
+
+import { getSettings } from '@/settings/settings';
 
 import HuwaMpv, { getMpvNativeView, type MpvLoadedEvent, type MpvProgressEvent, type MpvStateEvent, type MpvTrack, type MpvViewHandle } from '../../../../modules/huwa-mpv';
 
@@ -77,10 +79,11 @@ type MpvState = {
   subs: SubtitleTrack[];
   audioTrack: AudioTrack | null;
   subtitleTrack: SubtitleTrack | null;
+  videoTrack: VideoTrack | null;
 };
 const freshMpv = (): MpvState => ({
   status: 'loading', time: 0, duration: 0, buffered: 0, paused: true, buffering: false,
-  audio: [], subs: [], audioTrack: null, subtitleTrack: null,
+  audio: [], subs: [], audioTrack: null, subtitleTrack: null, videoTrack: null,
 });
 
 export class HybridPlayer implements EventEmitter<VideoPlayerEvents> {
@@ -230,6 +233,9 @@ export class HybridPlayer implements EventEmitter<VideoPlayerEvents> {
   }
   get availableSubtitleTracks(): SubtitleTrack[] {
     return this.engine === 'mpv' ? this.m.subs : this.native.availableSubtitleTracks;
+  }
+  get videoTrack(): VideoTrack | null {
+    return this.engine === 'mpv' ? this.m.videoTrack : this.native.videoTrack;
   }
   get audioTrack(): AudioTrack | null {
     return this.engine === 'mpv' ? this.m.audioTrack : this.native.audioTrack;
@@ -428,6 +434,7 @@ export class HybridPlayer implements EventEmitter<VideoPlayerEvents> {
       const tracks = parseTracks(e.nativeEvent.tracks);
       this.m.duration = duration;
       this.applyTracks(tracks);
+      this.pickDefaultAudio(tracks);
       this.setDetail(videoCodec, hwdec);
       this.emit('sourceLoad', {
         videoSource: (this.src ?? null) as VideoSource,
@@ -458,6 +465,14 @@ export class HybridPlayer implements EventEmitter<VideoPlayerEvents> {
         if (this.m.status !== 'error' && this.m.status !== 'idle') this.setStatus(s.buffering ? 'loading' : 'readyToPlay');
       }
       if (s.hwdec != null) this.setDetail(s.videoCodec ?? '', s.hwdec);
+      if (s.width && s.height) {
+        const old = this.m.videoTrack;
+        this.m.videoTrack = {
+          id: 'mpv:video', url: null, size: { width: s.width, height: s.height }, mimeType: null, isSupported: true,
+          bitrate: null, averageBitrate: null, peakBitrate: null, frameRate: null, videoRange: 'sdr',
+        };
+        this.emit('videoTrackChange', { videoTrack: this.m.videoTrack, oldVideoTrack: old });
+      }
     },
     onTracks: (e: { nativeEvent: { tracks: string } }) => this.applyTracks(parseTracks(e.nativeEvent.tracks)),
     onEnd: () => {
@@ -473,6 +488,24 @@ export class HybridPlayer implements EventEmitter<VideoPlayerEvents> {
       this.setStatus('error', message);
     },
   };
+
+  /**
+   * Default audio track from the language settings (Réglages → Langues): in "VF" mode the first
+   * dub language found, otherwise the file's default track (usually the original version).
+   * Subtitles are chosen by the subtitle controller of the Player, as for the native engine.
+   */
+  private pickDefaultAudio(tracks: MpvTrack[]) {
+    const audio = tracks.filter((t) => t.type === 'audio');
+    if (audio.length < 2) return;
+    const { watchMode, dubLangs } = getSettings();
+    if (watchMode !== 'dub') return;
+    for (const lang of dubLangs) {
+      const t = audio.find((a) => normLang(a.lang) === lang);
+      if (!t) continue;
+      if (!t.selected) this.audioTrack = toTrack(t);
+      return;
+    }
+  }
 
   private setDetail(codec: string, hwdec: string) {
     if (!codec) return;

@@ -203,7 +203,10 @@ final class MpvCore {
         // hwdec-current is only known once the decoder is up.
         let hw = getString(ctx, "hwdec-current") ?? "no"
         let codec = getString(ctx, "current-tracks/video/codec") ?? ""
-        main { $0.mpvState(["hwdec": hw, "videoCodec": codec]) }
+        // Display size (after pixel aspect), for the subtitle overlay placement in JS.
+        let w = getDouble(ctx, "video-params/dw") ?? 0
+        let h = getDouble(ctx, "video-params/dh") ?? 0
+        main { $0.mpvState(["hwdec": hw, "videoCodec": codec, "width": w, "height": h]) }
       case MPV_EVENT_END_FILE:
         if let data = ev.data {
           let end = data.assumingMemoryBound(to: mpv_event_end_file.self).pointee

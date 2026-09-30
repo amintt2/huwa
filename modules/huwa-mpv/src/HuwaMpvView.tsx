@@ -17,7 +17,16 @@ export type MpvTrack = {
 /** `tracks`: JSON array of MpvTrack. */
 export type MpvLoadedEvent = { duration: number; tracks: string; videoCodec: string; hwdec: string };
 export type MpvProgressEvent = { time: number; duration: number; buffered: number; paused: boolean };
-export type MpvStateEvent = { paused?: boolean; buffering?: boolean; seeking?: boolean; hwdec?: string; videoCodec?: string };
+export type MpvStateEvent = {
+  paused?: boolean;
+  buffering?: boolean;
+  seeking?: boolean;
+  hwdec?: string;
+  videoCodec?: string;
+  /** Display size of the video (after reconfig). */
+  width?: number;
+  height?: number;
+};
 
 /** Imperative API of the native view (ref). All calls are fire-and-forget on the mpv queue. */
 export type MpvViewHandle = {

@@ -62,7 +62,7 @@ export const en: Record<Key, string> = {
   'media.CANCELLED': 'Cancelled',
 
   'calendar.title': 'Calendar',
-  'calendar.subtitle': 'Episodes airing in the next 7 days',
+  'calendar.subtitle': '🇯🇵 Original Japanese releases, in your time zone. Dubs and subs often come later.',
   'calendar.today': 'Today',
   'calendar.tomorrow': 'Tomorrow',
   'calendar.inMyList': 'In your list',
@@ -167,6 +167,8 @@ export const en: Record<Key, string> = {
   'onb.2.body': 'Add series, sort them into lists and follow the calendar of new episodes.',
   'onb.3.title': 'Everything stays with you',
   'onb.3.body': 'No account, no ads, no tracking. Pick your sources through add-ons. Huwa hosts no content.',
+  'onb.prefs.title': 'Your preferences',
+  'onb.prefs.body': 'Huwa will pick the right sources and subtitles for you.',
   'onb.4.title': 'Add your extensions',
   'onb.4.body': 'Huwa plays what your extensions provide. Start with the essentials; you can add more at any time.',
   'onb.4.more': 'More extensions',

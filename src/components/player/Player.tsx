@@ -1,5 +1,5 @@
 // Huwa video player: expo-video (or libmpv for what it cannot play, see ./engines) + custom controls.
-// - external SRT/VTT subtitles drawn as an overlay (expo-video has no sidecar subtitle API)
+// - external subtitles (ASS/SSA, SRT, WebVTT) drawn by ./subtitles (expo-video has no sidecar subtitle API)
 // - embedded audio / subtitle tracks (player.audioTrack / player.subtitleTrack), speed
 // - AniSkip opening / ending / recap segments: skip buttons during the segment, markers on the bar,
 //   "Épisode suivant" during the ending + cancellable countdown (fallbacks: +85 s, last 90 s)
@@ -17,7 +17,7 @@ import {
   type SubtitleTrack,
   type VideoView,
 } from 'expo-video';
-import { useEffect, useImperativeHandle, useMemo, useRef, useState, type ReactNode, type Ref } from 'react';
+import { useEffect, useImperativeHandle, useRef, useState, type ReactNode, type Ref } from 'react';
 import { ActivityIndicator, BackHandler, Platform, Pressable, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
 import Animated, { FadeIn, FadeOut, SlideInLeft, SlideInRight, SlideOutLeft, SlideOutRight } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -28,10 +28,11 @@ import { C, F, R, S } from '@/theme/tokens';
 import { useSkipTimes, type Segment } from './aniskip';
 import { EngineView, useEnginePlayer, type EnginePlayer as VideoPlayer } from './engines';
 import { GestureLayer, type Hud } from './GestureLayer';
+import { AUTO_NEXT_SECONDS, NextCard, Pill } from './overlays';
 import { PlayerSettings, type Option } from './PlayerSettings';
-import { SUBTITLE_SIZES, getPrefs, setPrefs, usePrefs } from './prefs';
+import { getPrefs, setPrefs, usePrefs } from './prefs';
 import { formatTime, SeekBar } from './SeekBar';
-import { cueAt, useCues, type ExternalSubtitle } from './subtitles';
+import { SubtitleOverlay, SubtitleSheet, useSubtitleController, type ExternalSubtitle } from './subtitles';
 
 export type { ExternalSubtitle } from './subtitles';
 
@@ -52,8 +53,10 @@ export type PlayerProps = {
   title: string;
   subtitle?: string;
   artwork?: string;
-  /** External subtitle files (SRT or VTT). */
+  /** External subtitle files (ASS/SSA, SRT, WebVTT; gzip and legacy encodings handled). */
   subtitles?: ExternalSubtitle[];
+  /** Stable id of what is playing (episode id): the subtitle sync offset is remembered per id. */
+  mediaKey?: string;
   /** Resume position in seconds, read when the first source finishes loading. */
   startAt?: () => number | undefined;
   /** Throttled (5 s) and on leave. */
@@ -83,7 +86,6 @@ export type PlayerProps = {
   timedComments?: TimedComment[];
 };
 
-const AUTO_NEXT_SECONDS = 10;
 const INTRO_WINDOW = 180;
 const NEXT_WINDOW = 90;
 const LIVE_COMMENT_SECONDS = 7;
@@ -108,32 +110,12 @@ function Ctl({ icon, label, onPress, size = 22, big, active }: { icon: IconName;
   );
 }
 
-function Pill({ icon, label, onPress, primary }: { icon: IconName; label: string; onPress: () => void; primary?: boolean }) {
-  return (
-    <Pressable
-      onPress={onPress}
-      accessibilityRole="button"
-      accessibilityLabel={label}
-      style={({ pressed }) => [styles.pill, primary && { backgroundColor: C.accent }, pressed && { opacity: 0.8 }]}>
-      <Ionicons name={icon} size={14} color={primary ? C.white : C.bg} />
-      <Text style={[styles.pillText, primary && { color: C.white }]}>{label}</Text>
-    </Pressable>
-  );
-}
-
 /** Imperative player writes (kept out of render so the React Compiler treats `player` as opaque). */
 function setProp<K extends 'currentTime' | 'playbackRate' | 'subtitleTrack' | 'audioTrack' | 'volume'>(p: VideoPlayer, k: K, v: VideoPlayer[K]) {
   p[k] = v;
 }
 
 const lockOrientation = (lock: ScreenOrientation.OrientationLock) => ScreenOrientation.lockAsync(lock).catch(() => {});
-
-const subKeyOf = {
-  external: (s: ExternalSubtitle) => `ext:${s.url}`,
-  embedded: (i: number) => `emb:${i}`,
-};
-
-const sameLang = (a?: string, b?: string) => !!a && !!b && a.slice(0, 2).toLowerCase() === b.slice(0, 2).toLowerCase();
 
 export function Player({
   ref,
@@ -142,6 +124,7 @@ export function Player({
   subtitle,
   artwork,
   subtitles = [],
+  mediaKey,
   startAt,
   onProgress,
   onEnd,
@@ -181,7 +164,8 @@ export function Player({
   const [audioTracks, setAudioTracks] = useState<AudioTrack[]>([]);
   const [audioTrack, setAudioTrack] = useState<AudioTrack | null>(null);
   const [embedded, setEmbedded] = useState<SubtitleTrack[]>([]);
-  const [userSub, setUserSub] = useState<string | undefined>();
+  const [aspect, setAspect] = useState<number | undefined>();
+  const [subSheet, setSubSheet] = useState(false);
   const [controls, setControls] = useState(true);
   const [touch, setTouch] = useState(0);
   const [settings, setSettings] = useState(false);
@@ -256,6 +240,11 @@ export function Player({
     setAudioTracks(e.availableAudioTracks);
     setEmbedded(e.availableSubtitleTracks);
     setAudioTrack(player.audioTrack);
+    const size = (player.videoTrack ?? e.availableVideoTracks[0])?.size;
+    setAspect(size && size.width > 0 && size.height > 0 ? size.width / size.height : undefined);
+  });
+  useEventListener(player, 'videoTrackChange', ({ videoTrack }) => {
+    if (videoTrack?.size.width && videoTrack.size.height) setAspect(videoTrack.size.width / videoTrack.size.height);
   });
   useEventListener(player, 'statusChange', ({ status: s, error: err }) => {
     if (s === 'readyToPlay' && isFinite(player.duration)) setDuration(player.duration);
@@ -327,17 +316,8 @@ export function Player({
   }, [player, prefs.rate]);
 
   // ---------- subtitles ----------
-  const autoSub = useMemo(() => {
-    if (prefs.subLang === 'off') return 'off';
-    const ext = subtitles.find((s) => sameLang(s.lang, prefs.subLang));
-    if (ext) return subKeyOf.external(ext);
-    const i = embedded.findIndex((s) => sameLang(s.language, prefs.subLang));
-    return i >= 0 ? subKeyOf.embedded(i) : 'off';
-  }, [prefs.subLang, subtitles, embedded]);
-  const subKey = userSub ?? autoSub;
-  const extUrl = subKey.startsWith('ext:') ? subKey.slice(4) : undefined;
-  const embIndex = subKey.startsWith('emb:') ? Number(subKey.slice(4)) : -1;
-
+  const subs = useSubtitleController({ external: subtitles, embedded, mediaKey });
+  const embIndex = subs.embeddedIndex;
   useEffect(() => {
     try {
       setProp(player, 'subtitleTrack', embedded[embIndex] ?? null);
@@ -345,21 +325,6 @@ export function Player({
       // not supported on this platform
     }
   }, [player, embedded, embIndex]);
-
-  const { cues, loading: cuesLoading, error: cuesError } = useCues(extUrl);
-  const line = extUrl ? cueAt(cues, time.t) : null;
-
-  const subOptions: Option[] = [
-    { key: 'off', label: 'Désactivés' },
-    ...subtitles.map((s) => ({ key: subKeyOf.external(s), label: s.label, hint: `${s.lang.toUpperCase()} · externe` })),
-    ...embedded.map((s, i) => ({ key: subKeyOf.embedded(i), label: s.label || s.name || s.language, hint: `${(s.language || '?').toUpperCase()} · intégré` })),
-  ];
-  const pickSub = (k: string) => {
-    setUserSub(k);
-    if (k === 'off') return setPrefs({ subLang: 'off' });
-    const lang = k.startsWith('ext:') ? subtitles.find((s) => subKeyOf.external(s) === k)?.lang : embedded[Number(k.slice(4))]?.language;
-    if (lang) setPrefs({ subLang: lang });
-  };
 
   const audioOptions: Option[] = audioTracks.map((a, i) => ({ key: String(i), label: a.label || a.name || a.language, hint: a.language?.toUpperCase() }));
   const audioKey = String(Math.max(0, audioTracks.findIndex((a) => (a.id && a.id === audioTrack?.id) || (a.label === audioTrack?.label && a.language === audioTrack?.language))));
@@ -446,7 +411,6 @@ export function Player({
   const pipOk = Platform.OS !== 'web' && isPictureInPictureSupported();
   const loading = !!source?.uri && (status === 'loading' || (status === 'idle' && !ended));
   const remaining = duration - t;
-  const subSize = SUBTITLE_SIZES[prefs.subSize] * (full ? 1.3 : 1);
   const sideInset = full ? Math.max(insets.left, insets.right, S.lg) : S.md;
   const panelW = Math.min(420, window.width * 0.42);
   const panelLeft = prefs.commentsSide === 'left';
@@ -479,10 +443,18 @@ export function Player({
         onHud={setHud}
       />
 
-      {!!line && !pip && (
-        <View pointerEvents="none" style={[styles.subWrap, { bottom: bottomOffset }]}>
-          <Text style={[styles.sub, { fontSize: subSize, lineHeight: subSize * 1.28 }]}>{line}</Text>
-        </View>
+      {!pip && (
+        <SubtitleOverlay
+          doc={subs.doc}
+          time={time.t}
+          playing={isPlaying}
+          rate={prefs.rate}
+          offset={subs.offset}
+          aspect={aspect}
+          reserveBottom={controls && !locked ? bottomOffset + 8 : 0}
+          reserveTop={controls && !locked ? (full ? Math.max(insets.top, S.md) : 0) + 48 : 0}
+          insets={full ? insets : undefined}
+        />
       )}
 
       {!source?.uri && (
@@ -585,6 +557,7 @@ export function Player({
                 <VideoAirPlayButton tint={C.white} activeTint={C.accentText} prioritizeVideoDevices style={{ width: 26, height: 26 }} />
               </View>
             )}
+            <Ctl icon="text" label="Sous-titres" active={subs.selectedKey !== 'off'} onPress={() => { setSubSheet(true); wake(); }} size={20} />
             {pipOk && <Ctl icon="albums-outline" label="Image dans l’image" onPress={() => view.current?.startPictureInPicture().catch(() => {})} />}
             <Ctl icon="settings-outline" label="Réglages de lecture" onPress={() => { setSettings(true); wake(); }} />
           </View>
@@ -623,22 +596,8 @@ export function Player({
       )}
 
       {next && countdown !== null && (
-        <View style={[styles.nextCard, { right: sideInset, bottom: full ? Math.max(insets.bottom, S.lg) + 8 : S.md }]}>
-          <Txt v="caption" color={C.accentText}>ÉPISODE SUIVANT DANS {countdown} S</Txt>
-          <Txt v="label" numberOfLines={1}>{next.label}</Txt>
-          <View style={styles.countTrack}>
-            <View style={[styles.countFill, { width: `${(1 - countdown / AUTO_NEXT_SECONDS) * 100}%` }]} />
-          </View>
-          <View style={{ flexDirection: 'row', gap: S.sm }}>
-            <Pressable style={[styles.cardBtn, { backgroundColor: C.elevated }]} onPress={() => setCountdown(null)} accessibilityRole="button">
-              <Text style={[styles.pillText, { color: C.text }]}>Annuler</Text>
-            </Pressable>
-            <Pressable style={[styles.cardBtn, { backgroundColor: C.accent }]} onPress={() => next.onPlay()} accessibilityRole="button">
-              <Ionicons name="play" size={14} color={C.white} />
-              <Text style={[styles.pillText, { color: C.white }]}>Lire maintenant</Text>
-            </Pressable>
-          </View>
-        </View>
+        <NextCard label={next.label} countdown={countdown} onCancel={() => setCountdown(null)} onPlay={() => next.onPlay()}
+          style={{ right: sideInset, bottom: full ? Math.max(insets.bottom, S.lg) + 8 : S.md }} />
       )}
 
       {/* Comments over the video (landscape) */}
@@ -672,12 +631,7 @@ export function Player({
           const tr = audioTracks[Number(k)];
           if (tr) setProp(player, 'audioTrack', tr);
         }}
-        subtitles={subOptions}
-        subtitleKey={subKey}
-        onSubtitle={pickSub}
-        subtitleNote={cuesLoading ? 'Chargement des sous-titres…' : cuesError ? 'Sous-titres injoignables.' : subOptions.length === 1 ? 'Aucun sous-titre pour cette source.' : undefined}
-        size={prefs.subSize}
-        onSize={(s) => setPrefs({ subSize: s })}
+        onOpenSubtitles={() => { setSettings(false); setSubSheet(true); }}
         autoNext={prefs.autoNext}
         onAutoNext={(autoNext) => setPrefs({ autoNext })}
         commentsSide={prefs.commentsSide}
@@ -685,6 +639,7 @@ export function Player({
         liveComments={prefs.liveComments}
         onLiveComments={(liveComments) => setPrefs({ liveComments })}
       />
+      <SubtitleSheet visible={subSheet} onClose={() => { setSubSheet(false); wake(); }} ctl={subs} />
     </View>
   );
 }
@@ -708,30 +663,11 @@ const styles = StyleSheet.create({
     borderRadius: R.pill, backgroundColor: 'rgba(255,255,255,0.12)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.16)',
   },
   chipText: { color: C.white, fontSize: 12, ...F.semibold },
-  subWrap: { position: 'absolute', left: S.lg, right: S.lg, alignItems: 'center' },
-  sub: {
-    color: C.white, textAlign: 'center', ...F.semibold, backgroundColor: 'rgba(0,0,0,0.45)',
-    paddingHorizontal: 8, paddingVertical: 2, borderRadius: 6, overflow: 'hidden', ...shadow,
-  },
   pillWrap: { position: 'absolute', flexDirection: 'row', gap: S.sm },
-  pill: {
-    flexDirection: 'row', alignItems: 'center', gap: 6, paddingVertical: 9, paddingHorizontal: 14,
-    borderRadius: R.control, borderCurve: 'continuous', backgroundColor: C.white,
-  },
   pillText: { color: C.bg, fontSize: 13, ...F.bold },
   unlock: {
     flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 10, paddingHorizontal: 16,
     borderRadius: R.pill, backgroundColor: C.white,
-  },
-  nextCard: {
-    position: 'absolute', maxWidth: 320, gap: 6, padding: S.md,
-    borderRadius: R.card, borderCurve: 'continuous', backgroundColor: 'rgba(12,17,28,0.94)', borderWidth: 1, borderColor: C.border,
-  },
-  countTrack: { height: 3, borderRadius: 2, backgroundColor: C.elevated, overflow: 'hidden' },
-  countFill: { height: 3, backgroundColor: C.accent },
-  cardBtn: {
-    flexDirection: 'row', alignItems: 'center', gap: 6, paddingVertical: 8, paddingHorizontal: 12,
-    borderRadius: R.control, borderCurve: 'continuous', marginTop: 4,
   },
   flash: {
     position: 'absolute', top: 0, bottom: 0, width: '32%', alignItems: 'center', justifyContent: 'center', gap: 4,

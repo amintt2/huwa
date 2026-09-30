@@ -1,5 +1,6 @@
 // Stream ranking: playable first, then closest to the preferred quality, then addon priority.
 import { isExternal, isPlayable, isTorrent, isYouTube, type AddonStream } from './protocol';
+import { webPlayerUrl, type MediaGuess } from './web-player';
 
 export type Quality = 2160 | 1080 | 720 | 480;
 export const QUALITIES: Quality[] = [2160, 1080, 720, 480];
@@ -28,10 +29,15 @@ export type RankContext = {
   canResolveTorrents: boolean;
   /** hash → cached on the debrid service (when known). */
   cached?: Record<string, boolean>;
+  /** Language fit (lower is better, see ./audio). Sorted right after playability. */
+  lang?: (s: AddonStream) => number;
+  /** url → what probing its headers found (see `useProbedUrls`). */
+  probed?: Record<string, MediaGuess>;
 };
 
-/** 0 direct · 1 cached torrent · 2 torrent (unknown cache) · 3 YouTube / external · 4 unusable */
+/** 0 direct · 1 cached torrent · 2 torrent (unknown cache) · 2.8 web player · 3 YouTube / external · 4 unusable */
 export function playTier(s: AddonStream, ctx: RankContext) {
+  if (webPlayerUrl(s, ctx.probed)) return 2.8;
   if (isPlayable(s)) return 0;
   if (isTorrent(s) && ctx.canResolveTorrents) {
     const c = ctx.cached?.[s.infoHash!.toLowerCase()];
@@ -47,8 +53,8 @@ export function rankStreams(streams: AddonStream[], ctx: RankContext): AddonStre
     return i < 0 ? 99 : i;
   };
   return streams
-    .map((s, i) => ({ s, i, t: playTier(s, ctx), q: qualityScore(detectQuality(s), ctx.preferred), o: order(s.addonId) }))
-    .sort((a, b) => a.t - b.t || a.q - b.q || a.o - b.o || a.i - b.i)
+    .map((s, i) => ({ s, i, t: playTier(s, ctx), l: ctx.lang ? ctx.lang(s) : 0, q: qualityScore(detectQuality(s), ctx.preferred), o: order(s.addonId) }))
+    .sort((a, b) => a.t - b.t || a.l - b.l || a.q - b.q || a.o - b.o || a.i - b.i)
     .map((x) => x.s);
 }
 

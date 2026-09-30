@@ -4,6 +4,7 @@ import { useState } from 'react';
 import { ActivityIndicator, Alert, ScrollView, StyleSheet, Switch, TextInput, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
+import { LanguagePrefs } from '@/components/language-prefs';
 import { EngineSetting } from '@/components/player/engines/EngineSetting';
 import { FilterChip, Group, Row, ScreenHeader } from '@/components/states';
 import { Button, Txt } from '@/components/ui';
@@ -11,11 +12,10 @@ import { useT } from '@/i18n';
 import { enableNotifications, notificationsSupported } from '@/notifications/episodes';
 import { importAniList, loginWithAniList, oauthAvailable } from '@/settings/anilist-sync';
 import { clearCache, exportData, pickBackup, restoreBackup } from '@/settings/backup';
-import { setSetting, SUBTITLE_FONT, useSettings, type Quality, type SubtitleSize } from '@/settings/settings';
+import { setSetting, useSettings, type Quality } from '@/settings/settings';
 import { C, F, R, S } from '@/theme/tokens';
 
 const QUALITIES: Quality[] = ['auto', '1080p', '720p', '480p'];
-const SUB_SIZES: SubtitleSize[] = ['small', 'medium', 'large'];
 
 export default function Settings() {
   const insets = useSafeAreaInsets();
@@ -127,6 +127,12 @@ export default function Settings() {
           />
         </Group>
 
+        <Group title="LANGUES">
+          <View style={{ padding: S.md }}>
+            <LanguagePrefs />
+          </View>
+        </Group>
+
         <Group title={t('settings.playback')}>
           <Row
             icon="wifi-outline"
@@ -143,17 +149,7 @@ export default function Settings() {
               ))}
             </View>
           </View>
-          <View style={[styles.block, { borderBottomWidth: 0 }]}>
-            <Txt v="label">{t('settings.subtitleSize')}</Txt>
-            <View style={styles.inline}>
-              {SUB_SIZES.map((z) => (
-                <FilterChip key={z} label={t(`settings.subtitle.${z}`)} selected={s.subtitleSize === z} onPress={() => setSetting('subtitleSize', z)} />
-              ))}
-            </View>
-            <View style={styles.preview} accessibilityElementsHidden importantForAccessibility="no-hide-descendants">
-              <Txt style={[styles.sub, { fontSize: SUBTITLE_FONT[s.subtitleSize] }]}>{t('settings.subtitlePreview')}</Txt>
-            </View>
-          </View>
+          <Row icon="text" label="Sous-titres" hint="Langues, police, taille, contour, style ASS" onPress={() => router.push('/settings/subtitles')} last />
         </Group>
 
         <Group title={t('settings.notifications')}>
@@ -230,8 +226,6 @@ export default function Settings() {
 const styles = StyleSheet.create({
   inline: { flexDirection: 'row', flexWrap: 'wrap', gap: S.sm },
   block: { gap: S.md, padding: S.lg, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: C.border },
-  preview: { height: 90, borderRadius: R.control, backgroundColor: C.black, alignItems: 'center', justifyContent: 'flex-end', paddingBottom: 12 },
-  sub: { color: C.white, ...F.semibold, textShadowColor: 'rgba(0,0,0,0.9)', textShadowRadius: 4, textShadowOffset: { width: 0, height: 1 } },
   input: {
     minHeight: 44, paddingHorizontal: S.md, borderRadius: R.control, borderCurve: 'continuous',
     backgroundColor: C.elevated, borderWidth: 1, borderColor: C.border, color: C.text, ...F.medium, fontSize: 15,
