@@ -52,7 +52,8 @@ export function SourcesMenu({ src, visible, onClose }: { src: Source; visible: b
   };
 
   return (
-    <Modal visible={visible} animationType="slide" presentationStyle="pageSheet" onRequestClose={onClose}>
+    <Modal visible={visible} animationType="slide" presentationStyle="pageSheet" onRequestClose={onClose}
+      supportedOrientations={['portrait', 'landscape-left', 'landscape-right']}>
       <View style={{ flex: 1, backgroundColor: C.surface }}>
         <View style={styles.header}>
           <Txt v="section" style={{ flex: 1 }}>Sources</Txt>
