@@ -101,6 +101,7 @@ export default function RootLayout() {
           <Stack.Screen name="rank" />
           <Stack.Screen name="settings/index" />
           <Stack.Screen name="settings/general" />
+          <Stack.Screen name="settings/subtitles" />
           <Stack.Screen name="settings/security" />
           <Stack.Screen name="settings/phrase" />
           <Stack.Screen name="settings/pair" options={SHEET} />

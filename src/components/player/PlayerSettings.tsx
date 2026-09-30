@@ -7,6 +7,8 @@ import { C, R, S } from '@/theme/tokens';
 
 import { SPEEDS, SUBTITLE_SIZES, type SubtitleSize } from './prefs';
 
+const SIZE_LABELS: Record<SubtitleSize, string> = { S: 'Petite', M: 'Moyenne', L: 'Grande', XL: 'Très grande' };
+
 export type Option = { key: string; label: string; hint?: string };
 
 function Row({ title, options, value, onPick }: { title: string; options: Option[]; value: string; onPick: (k: string) => void }) {
@@ -47,6 +49,7 @@ export function PlayerSettings({
   subtitleNote,
   size,
   onSize,
+  onOpenSubtitles,
   autoNext,
   onAutoNext,
   commentsSide,
@@ -61,12 +64,15 @@ export function PlayerSettings({
   audio: Option[];
   audioKey: string;
   onAudio: (k: string) => void;
-  subtitles: Option[];
-  subtitleKey: string;
-  onSubtitle: (k: string) => void;
+  /** Simple subtitle list (players without the full subtitle sheet). */
+  subtitles?: Option[];
+  subtitleKey?: string;
+  onSubtitle?: (k: string) => void;
   subtitleNote?: string;
-  size: SubtitleSize;
-  onSize: (s: SubtitleSize) => void;
+  size?: SubtitleSize;
+  onSize?: (s: SubtitleSize) => void;
+  /** Opens the subtitle sheet (tracks, sync, style) instead of the simple list. */
+  onOpenSubtitles?: () => void;
   autoNext: boolean;
   onAutoNext: (v: boolean) => void;
   commentsSide: 'left' | 'right';
@@ -93,10 +99,22 @@ export function PlayerSettings({
         <ScrollView contentContainerStyle={{ gap: S.lg, paddingBottom: S.sm }}>
           <Row title="Vitesse" value={String(rate)} onPick={(k) => onRate(Number(k))}
             options={SPEEDS.map((s) => ({ key: String(s), label: s === 1 ? 'Normale' : `${String(s).replace('.', ',')}×` }))} />
-          <Row title="Sous-titres" value={subtitleKey} onPick={onSubtitle} options={subtitles} />
+          {onOpenSubtitles && (
+            <Pressable onPress={onOpenSubtitles} accessibilityRole="button" style={({ pressed }) => [styles.linkRow, pressed && { opacity: 0.6 }]}>
+              <Ionicons name="text" size={18} color={C.accentText} />
+              <View style={{ flex: 1, gap: 2 }}>
+                <Txt v="label" style={{ fontSize: 14 }}>Sous-titres</Txt>
+                <Txt v="small" style={{ fontSize: 12 }}>Piste, synchronisation, police et style</Txt>
+              </View>
+              <Ionicons name="chevron-forward" size={16} color={C.text2} />
+            </Pressable>
+          )}
+          {subtitles && subtitleKey !== undefined && onSubtitle && <Row title="Sous-titres" value={subtitleKey} onPick={onSubtitle} options={subtitles} />}
           {subtitleNote ? <Txt v="small">{subtitleNote}</Txt> : null}
-          <Row title="Taille des sous-titres" value={size} onPick={(k) => onSize(k as SubtitleSize)}
-            options={(Object.keys(SUBTITLE_SIZES) as SubtitleSize[]).map((k) => ({ key: k, label: { S: 'Petite', M: 'Moyenne', L: 'Grande', XL: 'Très grande' }[k] }))} />
+          {size && onSize && (
+            <Row title="Taille des sous-titres" value={size} onPick={(k) => onSize(k as SubtitleSize)}
+              options={(Object.keys(SUBTITLE_SIZES) as SubtitleSize[]).map((k) => ({ key: k, label: SIZE_LABELS[k] }))} />
+          )}
           {audio.length > 1 && <Row title="Audio" value={audioKey} onPick={onAudio} options={audio} />}
           <View style={styles.switchRow}>
             <View style={{ flex: 1, gap: 2 }}>
@@ -133,4 +151,8 @@ const styles = StyleSheet.create({
     borderCurve: 'continuous', backgroundColor: C.elevated, borderWidth: 1, borderColor: C.border,
   },
   switchRow: { flexDirection: 'row', alignItems: 'center', gap: S.md, paddingTop: S.xs },
+  linkRow: {
+    flexDirection: 'row', alignItems: 'center', gap: S.md, minHeight: 52, paddingHorizontal: 14, borderRadius: R.control,
+    borderCurve: 'continuous', backgroundColor: C.elevated, borderWidth: 1, borderColor: C.border,
+  },
 });
