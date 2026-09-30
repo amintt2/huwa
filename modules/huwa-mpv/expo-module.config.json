@@ -1,0 +1,9 @@
+{
+  "platforms": ["apple", "android"],
+  "apple": {
+    "modules": ["HuwaMpvModule"]
+  },
+  "android": {
+    "modules": ["expo.modules.huwampv.HuwaMpvModule"]
+  }
+}

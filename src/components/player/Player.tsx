@@ -1,4 +1,4 @@
-// Huwa video player: expo-video + custom controls (nativeControls off).
+// Huwa video player: expo-video (or libmpv for what it cannot play, see ./engines) + custom controls.
 // - external SRT/VTT subtitles drawn as an overlay (expo-video has no sidecar subtitle API)
 // - embedded audio / subtitle tracks (player.audioTrack / player.subtitleTrack), speed
 // - AniSkip opening / ending / recap segments: skip buttons during the segment, markers on the bar,
@@ -12,12 +12,10 @@ import * as ScreenOrientation from 'expo-screen-orientation';
 import { StatusBar } from 'expo-status-bar';
 import {
   isPictureInPictureSupported,
-  useVideoPlayer,
   VideoAirPlayButton,
-  VideoView,
   type AudioTrack,
   type SubtitleTrack,
-  type VideoPlayer,
+  type VideoView,
 } from 'expo-video';
 import { useEffect, useImperativeHandle, useMemo, useRef, useState, type ReactNode, type Ref } from 'react';
 import { ActivityIndicator, BackHandler, Platform, Pressable, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
@@ -28,6 +26,7 @@ import { Txt, type IconName } from '@/components/ui';
 import { C, F, R, S } from '@/theme/tokens';
 
 import { useSkipTimes, type Segment } from './aniskip';
+import { EngineView, useEnginePlayer, type EnginePlayer as VideoPlayer } from './engines';
 import { GestureLayer, type Hud } from './GestureLayer';
 import { PlayerSettings, type Option } from './PlayerSettings';
 import { SUBTITLE_SIZES, getPrefs, setPrefs, usePrefs } from './prefs';
@@ -171,7 +170,7 @@ export function Player({
     cb.current = { startAt, onProgress, onEnd, onError, next, onFullscreenChange };
   });
 
-  const player = useVideoPlayer(null, (p) => {
+  const player = useEnginePlayer(null, (p) => {
     p.timeUpdateEventInterval = 0.25;
     p.allowsExternalPlayback = true;
     p.showNowPlayingNotification = true;
@@ -456,7 +455,7 @@ export function Player({
   return (
     <View style={full ? styles.full : styles.inline}>
       {full && <StatusBar hidden animated />}
-      <VideoView
+      <EngineView
         ref={view}
         player={player}
         style={StyleSheet.absoluteFill}

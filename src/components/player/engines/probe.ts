@@ -1,0 +1,83 @@
+// Source probing for the engine policy: URL extension, then one `Range: bytes=0-4095` request
+// (Content-Type + magic bytes + MP4 sample entries). Results are cached per URL.
+import { conclusiveWithoutSniff, containerFromMime, containerFromUrl, sniff, type Probe } from './policy';
+
+const PROBE_BYTES = 4096;
+const TIMEOUT_MS = 3500;
+const MAX_CACHE = 200;
+
+const cache = new Map<string, Probe>();
+
+function remember(url: string, p: Probe): Probe {
+  cache.delete(url);
+  cache.set(url, p);
+  if (cache.size > MAX_CACHE) cache.delete(cache.keys().next().value!);
+  return p;
+}
+
+export function cachedProbe(url: string): Probe | undefined {
+  return cache.get(url);
+}
+
+type Head = { status: number; contentType: string | null; bytes: Uint8Array | null };
+
+/**
+ * XMLHttpRequest rather than fetch: RN's fetch only resolves once the whole body is read, so a
+ * server that ignores `Range` would make us download the entire video. Here the request is
+ * aborted as soon as the headers show a non-206 answer.
+ */
+function readHead(url: string, headers: Record<string, string> | undefined): Promise<Head> {
+  return new Promise((resolve) => {
+    const xhr = new XMLHttpRequest();
+    let done = false;
+    const finish = (h: Head) => {
+      if (done) return;
+      done = true;
+      clearTimeout(timer);
+      resolve(h);
+    };
+    const timer = setTimeout(() => {
+      xhr.abort();
+      finish({ status: 0, contentType: null, bytes: null });
+    }, TIMEOUT_MS);
+    xhr.open('GET', url);
+    xhr.responseType = 'arraybuffer';
+    for (const [k, v] of Object.entries(headers ?? {})) xhr.setRequestHeader(k, v);
+    xhr.setRequestHeader('Range', `bytes=0-${PROBE_BYTES - 1}`);
+    xhr.onreadystatechange = () => {
+      if (xhr.readyState === 2 && xhr.status !== 206) {
+        // Full-body answer (or error): keep the Content-Type, drop the body.
+        const contentType = xhr.getResponseHeader('Content-Type');
+        const status = xhr.status;
+        xhr.abort();
+        finish({ status, contentType, bytes: null });
+      }
+    };
+    xhr.onload = () => {
+      const buf = xhr.response as ArrayBuffer | null;
+      finish({ status: xhr.status, contentType: xhr.getResponseHeader('Content-Type'), bytes: buf ? new Uint8Array(buf) : null });
+    };
+    xhr.onerror = () => finish({ status: 0, contentType: null, bytes: null });
+    xhr.send();
+  });
+}
+
+/** Never throws; `{ container: 'unknown' }` when nothing could be learned. */
+export async function probeSource(url: string, headers?: Record<string, string>): Promise<Probe> {
+  const hit = cache.get(url);
+  if (hit) return hit;
+
+  const fromExt: Probe = { container: containerFromUrl(url), codecs: [], via: 'ext' };
+  if (conclusiveWithoutSniff(fromExt)) return remember(url, fromExt);
+  if (!/^https?:/i.test(url)) return fromExt;
+
+  const head = await readHead(url, headers);
+  if (head.bytes && head.bytes.length) {
+    const s = sniff(head.bytes);
+    if (s.container !== 'unknown') return remember(url, s);
+  }
+  const mime = containerFromMime(head.contentType);
+  if (mime !== 'unknown') return remember(url, { container: mime, codecs: [], via: 'mime' });
+  // Unreachable/unknown: not cached, the next attempt may do better.
+  return fromExt.container !== 'unknown' ? fromExt : { container: 'unknown', codecs: [], via: 'none' };
+}

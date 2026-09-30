@@ -8,11 +8,18 @@ import { useVideoPlayer } from 'expo-video';
 import { useSubtitles } from '@/addons/registry';
 import { useSource } from '@/addons/use-source';
 
+import { useNativeWarmup } from './engines';
+
 export function PrefetchNext({ seriesId, episode, armed, buffer }: { seriesId: string; episode: number; armed: boolean; buffer: boolean }) {
   const src = useSource(seriesId, episode, { enabled: armed });
   useSubtitles(seriesId, episode, armed);
   if (!armed || !buffer || !src.url) return null;
-  return <Warm key={src.url} uri={src.url} headers={src.headers} />;
+  return <MaybeWarm key={src.url} uri={src.url} headers={src.headers} />;
+}
+
+/** Sources that will play with mpv are only probed (cached), not buffered by a native player. */
+function MaybeWarm({ uri, headers }: { uri: string; headers?: Record<string, string> }) {
+  return useNativeWarmup(uri, headers) ? <Warm uri={uri} headers={headers} /> : null;
 }
 
 function Warm({ uri, headers }: { uri: string; headers?: Record<string, string> }) {

@@ -1,0 +1,17 @@
+plugins {
+  id 'com.android.library'
+  id 'expo-module-gradle-plugin'
+}
+
+group = 'app.huwa'
+version = '0.1.0'
+
+// Android: libmpv is NOT wired yet (see ../README.md, section Android). The module compiles,
+// reports isAvailable() == false and the JS policy keeps ExoPlayer (which already plays MKV/WebM).
+android {
+  namespace 'expo.modules.huwampv'
+  defaultConfig {
+    versionCode 1
+    versionName '0.1.0'
+  }
+}
