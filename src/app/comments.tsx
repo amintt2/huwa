@@ -20,7 +20,9 @@ export default function CommentsSheet() {
   // The header lives inside the panel's ScrollView: in an iOS form sheet the ScrollView is pinned to
   // the sheet's edges, so a sibling header above it ends up drawn underneath the list.
   const header = (
-    <View style={{ flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between', paddingHorizontal: S.lg, paddingTop: S.xl + S.sm, paddingBottom: S.md }}>
+    <>
+    <View style={{ alignSelf: 'center', width: 36, height: 5, borderRadius: 3, backgroundColor: C.borderStrong, marginTop: S.sm }} />
+    <View style={{ flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between', paddingHorizontal: S.lg, paddingTop: S.md, paddingBottom: S.md }}>
       <View style={{ gap: 6, flex: 1 }}>
         <View style={{ flexDirection: 'row', alignItems: 'baseline', gap: S.sm }}>
           <Txt v="title" style={{ fontSize: 20 }}>Commentaires</Txt>
@@ -33,6 +35,7 @@ export default function CommentsSheet() {
       </View>
       <IconButton icon="close" label="Fermer" tone="solid" onPress={() => router.back()} />
     </View>
+    </>
   );
 
   return (

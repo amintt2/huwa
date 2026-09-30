@@ -91,7 +91,9 @@ export default function RootLayout() {
           <Stack.Screen name="manhwa/[id]" />
           <Stack.Screen name="watch/[id]" options={{ contentStyle: { backgroundColor: C.black } }} />
           <Stack.Screen name="read/[id]" options={{ contentStyle: { backgroundColor: C.black } }} />
-          <Stack.Screen name="comments" options={SHEET} />
+          {/* Card modal, not a detent form sheet: in a detent sheet the scrollable thread and its header
+              got broken heights (overlap, then an empty sheet). Swipe down still closes it. */}
+          <Stack.Screen name="comments" options={{ presentation: 'modal', contentStyle: { backgroundColor: C.surface } }} />
           <Stack.Screen name="u/[key]" />
           <Stack.Screen name="profile-edit" options={SHEET} />
           <Stack.Screen name="messages" />
