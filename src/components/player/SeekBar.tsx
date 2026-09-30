@@ -10,12 +10,15 @@ export function SeekBar({
   buffered,
   onSeek,
   onScrubStart,
+  markers = [],
 }: {
   position: number;
   duration: number;
   buffered: number;
   onSeek: (t: number) => void;
   onScrubStart?: () => void;
+  /** Highlighted ranges (opening / ending) drawn on the track. */
+  markers?: { start: number; end: number }[];
 }) {
   const box = useRef<View>(null);
   const frame = useRef({ x: 0, w: 1 });
@@ -58,6 +61,16 @@ export function SeekBar({
       <View style={{ height: scrub !== null ? 6 : 4, borderRadius: 3, backgroundColor: 'rgba(255,255,255,0.22)', overflow: 'hidden' }}>
         <View style={{ position: 'absolute', left: 0, top: 0, bottom: 0, width: `${buf * 100}%`, backgroundColor: 'rgba(255,255,255,0.35)' }} />
         <View style={{ position: 'absolute', left: 0, top: 0, bottom: 0, width: `${shown * 100}%`, backgroundColor: C.accent }} />
+        {ok && markers.map((m) => (
+          <View
+            key={`${m.start}-${m.end}`}
+            pointerEvents="none"
+            style={{
+              position: 'absolute', top: 0, bottom: 0, left: `${(m.start / duration) * 100}%`,
+              width: `${(Math.max(0, Math.min(duration, m.end) - m.start) / duration) * 100}%`, backgroundColor: 'rgba(255,200,87,0.85)',
+            }}
+          />
+        ))}
       </View>
       <View
         pointerEvents="none"

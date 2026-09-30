@@ -1,8 +1,11 @@
-// Huwa video player: expo-video with custom controls.
+// Huwa video player: expo-video + custom controls (nativeControls off).
 // - external SRT/VTT subtitles drawn as an overlay (expo-video has no sidecar subtitle API)
-// - embedded audio / subtitle tracks (player.audioTrack / player.subtitleTrack)
-// - speed, "Passer l'intro", auto next episode with countdown, PiP, AirPlay, landscape fullscreen
-// - resume position: `startAt()` is read when a source is loaded, `onProgress` is throttled (5 s)
+// - embedded audio / subtitle tracks (player.audioTrack / player.subtitleTrack), speed
+// - AniSkip opening / ending / recap segments: skip buttons during the segment, markers on the bar,
+//   "Épisode suivant" during the ending + cancellable countdown (fallbacks: +85 s, last 90 s)
+// - landscape: rotating the phone (or the button) goes fullscreen; double-tap ±10 s, vertical drag
+//   = brightness (left) / volume (right), screen lock, comments panel over the video, live comments
+// - PiP, AirPlay, resume position (`startAt`), progress saved every 5 s (`onProgress`)
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { useEvent, useEventListener } from 'expo';
 import * as ScreenOrientation from 'expo-screen-orientation';
@@ -16,13 +19,17 @@ import {
   type SubtitleTrack,
   type VideoPlayer,
 } from 'expo-video';
-import { useEffect, useImperativeHandle, useMemo, useRef, useState, type Ref } from 'react';
-import { ActivityIndicator, BackHandler, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
+import { useEffect, useImperativeHandle, useMemo, useRef, useState, type ReactNode, type Ref } from 'react';
+import { ActivityIndicator, BackHandler, Platform, Pressable, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
+import { GestureHandlerRootView } from 'react-native-gesture-handler';
+import Animated, { FadeIn, FadeOut, SlideInLeft, SlideInRight, SlideOutLeft, SlideOutRight } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { Txt, type IconName } from '@/components/ui';
 import { C, F, R, S } from '@/theme/tokens';
 
+import { useSkipTimes, type Segment } from './aniskip';
+import { GestureLayer, type Hud } from './GestureLayer';
 import { PlayerSettings, type Option } from './PlayerSettings';
 import { SUBTITLE_SIZES, getPrefs, setPrefs, usePrefs } from './prefs';
 import { formatTime, SeekBar } from './SeekBar';
@@ -39,6 +46,8 @@ export type PlayerHandle = {
   pause: () => void;
 };
 
+export type TimedComment = { id: string; author: string; text: string; timestamp: number };
+
 export type PlayerProps = {
   ref?: Ref<PlayerHandle>;
   source?: PlayerSource | null;
@@ -47,25 +56,42 @@ export type PlayerProps = {
   artwork?: string;
   /** External subtitle files (SRT or VTT). */
   subtitles?: ExternalSubtitle[];
-  /** Resume position in seconds, read each time a source finishes loading. */
+  /** Resume position in seconds, read when the first source finishes loading. */
   startAt?: () => number | undefined;
   /** Throttled (5 s) and on leave. */
   onProgress?: (position: number, duration: number) => void;
   onEnd?: () => void;
+  /** Playback failed on the current source (the parent can try another one). */
+  onError?: (message: string) => void;
   next?: { label: string; onPlay: () => void } | null;
-  /** Seconds skipped by "Passer l'intro". */
+  /** MyAnimeList id + episode number → AniSkip timestamps. */
+  malId?: number | null;
+  episodeNumber?: number;
+  /** Seconds skipped by "Passer l'intro" when AniSkip has no data. */
   introSkip?: number;
   /** Text shown when there is no source yet. */
   emptyText?: string;
+  /** Short message over the video (e.g. "better quality found"). */
+  notice?: string;
   /** The parent should hide everything else and give the player the whole screen while `true`. */
   onFullscreenChange?: (full: boolean) => void;
+  /** Sources menu, reachable from the fullscreen controls. */
+  onOpenSources?: () => void;
+  sourceLabel?: string;
+  /** Content of the landscape comments panel. */
+  renderComments?: () => ReactNode;
+  commentCount?: number;
+  /** Time-anchored comments shown over the video when their moment comes. */
+  timedComments?: TimedComment[];
 };
 
-const AUTO_NEXT_SECONDS = 8;
+const AUTO_NEXT_SECONDS = 10;
 const INTRO_WINDOW = 180;
+const NEXT_WINDOW = 90;
+const LIVE_COMMENT_SECONDS = 7;
 const hitSlop = 10;
 
-function Ctl({ icon, label, onPress, size = 22, big }: { icon: IconName; label: string; onPress: () => void; size?: number; big?: boolean }) {
+function Ctl({ icon, label, onPress, size = 22, big, active }: { icon: IconName; label: string; onPress: () => void; size?: number; big?: boolean; active?: boolean }) {
   const d = big ? 64 : 40;
   return (
     <Pressable
@@ -76,24 +102,40 @@ function Ctl({ icon, label, onPress, size = 22, big }: { icon: IconName; label: 
       style={({ pressed }) => [
         { width: d, height: d, borderRadius: d / 2, alignItems: 'center', justifyContent: 'center' },
         big && { backgroundColor: 'rgba(5,7,13,0.45)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.14)' },
+        active && { backgroundColor: C.accentSoft },
         pressed && { opacity: 0.6, transform: [{ scale: 0.94 }] },
       ]}>
-      <Ionicons name={icon} size={big ? 30 : size} color={C.white} />
+      <Ionicons name={icon} size={big ? 30 : size} color={active ? C.accentText : C.white} />
     </Pressable>
   );
 }
+
+function Pill({ icon, label, onPress, primary }: { icon: IconName; label: string; onPress: () => void; primary?: boolean }) {
+  return (
+    <Pressable
+      onPress={onPress}
+      accessibilityRole="button"
+      accessibilityLabel={label}
+      style={({ pressed }) => [styles.pill, primary && { backgroundColor: C.accent }, pressed && { opacity: 0.8 }]}>
+      <Ionicons name={icon} size={14} color={primary ? C.white : C.bg} />
+      <Text style={[styles.pillText, primary && { color: C.white }]}>{label}</Text>
+    </Pressable>
+  );
+}
+
+/** Imperative player writes (kept out of render so the React Compiler treats `player` as opaque). */
+function setProp<K extends 'currentTime' | 'playbackRate' | 'subtitleTrack' | 'audioTrack' | 'volume'>(p: VideoPlayer, k: K, v: VideoPlayer[K]) {
+  p[k] = v;
+}
+
+const lockOrientation = (lock: ScreenOrientation.OrientationLock) => ScreenOrientation.lockAsync(lock).catch(() => {});
 
 const subKeyOf = {
   external: (s: ExternalSubtitle) => `ext:${s.url}`,
   embedded: (i: number) => `emb:${i}`,
 };
 
-/** Imperative player writes (kept out of render so the React Compiler treats `player` as opaque). */
-function setProp<K extends 'currentTime' | 'playbackRate' | 'subtitleTrack' | 'audioTrack'>(p: VideoPlayer, k: K, v: VideoPlayer[K]) {
-  p[k] = v;
-}
-
-const sameLang =(a?: string, b?: string) => !!a && !!b && a.slice(0, 2).toLowerCase() === b.slice(0, 2).toLowerCase();
+const sameLang = (a?: string, b?: string) => !!a && !!b && a.slice(0, 2).toLowerCase() === b.slice(0, 2).toLowerCase();
 
 export function Player({
   ref,
@@ -105,18 +147,29 @@ export function Player({
   startAt,
   onProgress,
   onEnd,
+  onError,
   next,
+  malId,
+  episodeNumber = 1,
   introSkip = 85,
   emptyText = 'Choisis une source pour lancer la lecture.',
+  notice,
   onFullscreenChange,
+  onOpenSources,
+  sourceLabel,
+  renderComments,
+  commentCount,
+  timedComments = [],
 }: PlayerProps) {
   const insets = useSafeAreaInsets();
+  const window = useWindowDimensions();
   const prefs = usePrefs();
   const view = useRef<VideoView>(null);
   const lastSave = useRef(0);
-  const cb = useRef({ startAt, onProgress, onEnd, next, onFullscreenChange });
+  const loadedOnce = useRef(false);
+  const cb = useRef({ startAt, onProgress, onEnd, onError, next, onFullscreenChange });
   useEffect(() => {
-    cb.current = { startAt, onProgress, onEnd, next, onFullscreenChange };
+    cb.current = { startAt, onProgress, onEnd, onError, next, onFullscreenChange };
   });
 
   const player = useVideoPlayer(null, (p) => {
@@ -134,8 +187,12 @@ export function Player({
   const [controls, setControls] = useState(true);
   const [touch, setTouch] = useState(0);
   const [settings, setSettings] = useState(false);
-  const [full, setFull] = useState(false);
-  const [introDone, setIntroDone] = useState(false);
+  const [locked, setLocked] = useState(false);
+  const [unlockHint, setUnlockHint] = useState(false);
+  const [commentsOpen, setCommentsOpen] = useState(false);
+  const [hud, setHud] = useState<Hud | null>(null);
+  const [flash, setFlash] = useState<{ side: 'left' | 'right'; n: number } | null>(null);
+  const [skipped, setSkipped] = useState<string[]>([]);
   const [ended, setEnded] = useState(false);
   const [countdown, setCountdown] = useState<number | null>(null);
   const [pip, setPip] = useState(false);
@@ -143,22 +200,53 @@ export function Player({
   const { isPlaying } = useEvent(player, 'playingChange', { isPlaying: player.playing });
   const { status, error } = useEvent(player, 'statusChange', { status: player.status, error: undefined });
 
+  // ---------- fullscreen = landscape ----------
+  const full = window.width > window.height;
+  useEffect(() => {
+    cb.current.onFullscreenChange?.(full);
+  }, [full]);
+  useEffect(() => {
+    // Rotation is allowed on this screen only; portrait again when leaving.
+    lockOrientation(ScreenOrientation.OrientationLock.DEFAULT);
+    return () => {
+      lockOrientation(ScreenOrientation.OrientationLock.PORTRAIT_UP);
+    };
+  }, []);
+  const enterFull = () => lockOrientation(ScreenOrientation.OrientationLock.LANDSCAPE);
+  // Leaving with the button pins portrait (the phone may still be held sideways).
+  const exitFull = () => {
+    setCommentsOpen(false);
+    setLocked(false);
+    lockOrientation(ScreenOrientation.OrientationLock.PORTRAIT_UP);
+  };
+  useEffect(() => {
+    if (!full) return;
+    const sub = BackHandler.addEventListener('hardwareBackPress', () => {
+      exitFull();
+      return true;
+    });
+    return () => sub.remove();
+  }, [full]);
+
   // ---------- source & resume ----------
   const headersKey = JSON.stringify(source?.headers ?? {});
   useEffect(() => {
     if (!source?.uri) return;
     let alive = true;
+    // Switching source mid-episode (quality upgrade, fallback, manual pick) keeps the position.
+    const keep = loadedOnce.current ? player.currentTime : undefined;
     player
       .replaceAsync({ uri: source.uri, headers: source.headers, metadata: { title, artist: subtitle, artwork } })
       .then(() => {
         if (!alive) return;
+        const at = keep != null && keep > 1 ? keep : cb.current.startAt?.();
+        if (at && at > 1) setProp(player, 'currentTime', at);
+        loadedOnce.current = true;
         setEnded(false);
         setCountdown(null);
-        const at = cb.current.startAt?.();
-        if (at && at > 5) setProp(player, 'currentTime', at);
         player.play();
       })
-      .catch(() => {});
+      .catch((e: unknown) => cb.current.onError?.(e instanceof Error ? e.message : 'Lecture impossible'));
     return () => {
       alive = false;
     };
@@ -171,15 +259,32 @@ export function Player({
     setEmbedded(e.availableSubtitleTracks);
     setAudioTrack(player.audioTrack);
   });
-  useEventListener(player, 'statusChange', ({ status: s }) => {
+  useEventListener(player, 'statusChange', ({ status: s, error: err }) => {
     if (s === 'readyToPlay' && isFinite(player.duration)) setDuration(player.duration);
+    if (s === 'error') cb.current.onError?.(err?.message ?? 'Lecture impossible');
   });
   useEventListener(player, 'availableAudioTracksChange', (e) => setAudioTracks(e.availableAudioTracks));
   useEventListener(player, 'availableSubtitleTracksChange', (e) => setEmbedded(e.availableSubtitleTracks));
   useEventListener(player, 'audioTrackChange', (e) => setAudioTrack(e.audioTrack));
 
+  // ---------- AniSkip segments ----------
+  const { segments, loaded: skipLoaded } = useSkipTimes(malId, episodeNumber, duration);
+  const intro = segments.find((s) => s.kind === 'intro');
+  const outro = segments.find((s) => s.kind === 'outro');
+  const segRef = useRef<{ outro?: Segment; countdownFired: boolean }>({ countdownFired: false });
+  useEffect(() => {
+    segRef.current.outro = outro;
+  }, [outro]);
+
   useEventListener(player, 'timeUpdate', ({ currentTime, bufferedPosition }) => {
     setTime({ t: currentTime, buffered: bufferedPosition });
+    // The ending started: offer the next episode with a cancellable countdown (once).
+    const o = segRef.current.outro;
+    if (o && !segRef.current.countdownFired && currentTime >= o.start && currentTime < o.end && cb.current.next && getPrefs().autoNext) {
+      segRef.current.countdownFired = true;
+      setCountdown(AUTO_NEXT_SECONDS);
+      setControls(false);
+    }
     if (Date.now() - lastSave.current < 5000) return;
     lastSave.current = Date.now();
     cb.current.onProgress?.(currentTime, player.duration);
@@ -189,10 +294,13 @@ export function Player({
     setEnded(true);
     setControls(true);
     cb.current.onEnd?.();
-    if (cb.current.next && getPrefs().autoNext) setCountdown(AUTO_NEXT_SECONDS);
+    if (cb.current.next && getPrefs().autoNext && !segRef.current.countdownFired) {
+      segRef.current.countdownFired = true;
+      setCountdown(AUTO_NEXT_SECONDS);
+    }
   });
 
-  // Save on leave; put the app back in portrait.
+  // Save on leave.
   useEffect(
     () => () => {
       try {
@@ -200,7 +308,6 @@ export function Player({
       } catch {
         // player already released
       }
-      ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.PORTRAIT_UP).catch(() => {});
     },
     [player],
   );
@@ -266,9 +373,19 @@ export function Player({
   };
   useEffect(() => {
     if (!controls || !isPlaying || settings) return;
-    const t = setTimeout(() => setControls(false), 60000);
+    const t = setTimeout(() => setControls(false), 4000);
     return () => clearTimeout(t);
   }, [controls, isPlaying, settings, touch]);
+  useEffect(() => {
+    if (!unlockHint) return;
+    const t = setTimeout(() => setUnlockHint(false), 2500);
+    return () => clearTimeout(t);
+  }, [unlockHint]);
+  useEffect(() => {
+    if (!flash) return;
+    const t = setTimeout(() => setFlash(null), 650);
+    return () => clearTimeout(t);
+  }, [flash]);
 
   // ---------- actions ----------
   const seekTo = (t: number) => {
@@ -295,34 +412,51 @@ export function Player({
     [player],
   );
 
-  const toggleFull = (on: boolean) => {
-    setFull(on);
-    cb.current.onFullscreenChange?.(on);
-    wake();
-    ScreenOrientation.lockAsync(on ? ScreenOrientation.OrientationLock.LANDSCAPE : ScreenOrientation.OrientationLock.PORTRAIT_UP).catch(() => {});
+  const onTap = () => {
+    if (locked) return setUnlockHint(true);
+    if (controls) setControls(false);
+    else wake();
+  };
+  const onDoubleTap = (side: 'left' | 'right') => {
+    seekTo(time.t + (side === 'left' ? -10 : 10));
+    setFlash((f) => ({ side, n: f?.side === side ? f.n + 1 : 1 }));
   };
 
-  // Android back button leaves fullscreen first.
-  useEffect(() => {
-    if (!full) return;
-    const sub = BackHandler.addEventListener('hardwareBackPress', () => {
-      setFull(false);
-      cb.current.onFullscreenChange?.(false);
-      ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.PORTRAIT_UP).catch(() => {});
-      return true;
-    });
-    return () => sub.remove();
-  }, [full]);
+  // ---------- skip buttons ----------
+  const t = time.t;
+  const inSeg = (s?: Segment) => !!s && t >= s.start && t < s.end - 1;
+  const recap = segments.find((s) => s.kind === 'recap');
+  const skipBtn: { key: string; label: string; to: number } | null = (() => {
+    if (ended) return null;
+    if (intro && inSeg(intro) && !skipped.includes('intro')) return { key: 'intro', label: 'Passer l’intro', to: intro.end };
+    if (recap && inSeg(recap) && !skipped.includes('recap')) return { key: 'recap', label: 'Passer le récap', to: recap.end };
+    if (outro && inSeg(outro) && !skipped.includes('outro') && outro.end < duration - 3) return { key: 'outro', label: 'Passer le générique', to: outro.end };
+    // Fallback while AniSkip has nothing: +85 s during the first 3 minutes.
+    if (skipLoaded && !intro && !skipped.includes('intro') && t >= 2 && t < INTRO_WINDOW && (duration === 0 || duration > introSkip + 60)) {
+      return { key: 'intro', label: 'Passer l’intro', to: t + introSkip };
+    }
+    return null;
+  })();
+  const showNext = !!next && !ended && countdown === null && duration > 60 && (outro ? t >= outro.start : duration - t <= NEXT_WINDOW);
+  const markers = segments.filter((s) => s.kind !== 'recap');
+
+  // ---------- live comments ----------
+  const live = full && prefs.liveComments && !commentsOpen
+    ? timedComments.filter((c) => c.timestamp <= t && t - c.timestamp < LIVE_COMMENT_SECONDS).slice(-3)
+    : [];
 
   const pipOk = Platform.OS !== 'web' && isPictureInPictureSupported();
   const loading = !!source?.uri && (status === 'loading' || (status === 'idle' && !ended));
-  const remaining = duration - time.t;
-  const showIntro = !introDone && !ended && time.t >= 2 && time.t < INTRO_WINDOW && (duration === 0 || duration > introSkip + 60);
-  const showNextSoon = !!next && !ended && duration > 60 && remaining > 0 && remaining <= 30;
+  const remaining = duration - t;
   const subSize = SUBTITLE_SIZES[prefs.subSize] * (full ? 1.3 : 1);
+  const sideInset = full ? Math.max(insets.left, insets.right, S.lg) : S.md;
+  const panelW = Math.min(420, window.width * 0.42);
+  const panelLeft = prefs.commentsSide === 'left';
+  const bottomOffset = controls ? (full ? 76 + Math.max(insets.bottom - 8, 0) : 52) : full ? 24 : 12;
 
-  const stage = (isFull: boolean) => (
-    <View style={StyleSheet.absoluteFill}>
+  return (
+    <GestureHandlerRootView style={full ? styles.full : styles.inline}>
+      {full && <StatusBar hidden animated />}
       <VideoView
         ref={view}
         player={player}
@@ -335,15 +469,20 @@ export function Player({
         onPictureInPictureStop={() => setPip(false)}
       />
 
-      {/* Tap anywhere to show / hide the controls */}
-      <Pressable
-        style={StyleSheet.absoluteFill}
-        onPress={() => (controls ? setControls(false) : wake())}
-        accessibilityLabel={controls ? 'Masquer les commandes' : 'Afficher les commandes'}
+      <GestureLayer
+        width={window.width}
+        height={full ? window.height : (window.width * 9) / 16}
+        adjust={full && !locked && !settings}
+        seekEnabled={!locked && duration > 0}
+        onTap={onTap}
+        onDoubleTap={onDoubleTap}
+        getVolume={() => player.volume}
+        setVolume={(v) => setProp(player, 'volume', v)}
+        onHud={setHud}
       />
 
       {!!line && !pip && (
-        <View pointerEvents="none" style={[styles.subWrap, { bottom: controls ? (isFull ? 84 : 58) : isFull ? 28 : 12 }]}>
+        <View pointerEvents="none" style={[styles.subWrap, { bottom: bottomOffset }]}>
           <Text style={[styles.sub, { fontSize: subSize, lineHeight: subSize * 1.28 }]}>{line}</Text>
         </View>
       )}
@@ -362,18 +501,83 @@ export function Player({
         </View>
       )}
 
-      {controls && (
+      {/* Double-tap feedback */}
+      {flash && (
+        <Animated.View entering={FadeIn.duration(90)} exiting={FadeOut.duration(200)} pointerEvents="none"
+          style={[styles.flash, flash.side === 'left' ? { left: 0, borderTopRightRadius: 999, borderBottomRightRadius: 999 } : { right: 0, borderTopLeftRadius: 999, borderBottomLeftRadius: 999 }]}>
+          <Ionicons name={flash.side === 'left' ? 'play-back' : 'play-forward'} size={26} color={C.white} />
+          <Text style={styles.flashText}>{flash.side === 'left' ? '-' : '+'}{10 * flash.n} s</Text>
+        </Animated.View>
+      )}
+
+      {/* Brightness / volume indicator */}
+      {hud && (
+        <View pointerEvents="none" style={styles.hud}>
+          <Ionicons
+            name={hud.kind === 'brightness' ? 'sunny' : hud.value === 0 ? 'volume-mute' : hud.value < 0.5 ? 'volume-low' : 'volume-high'}
+            size={20}
+            color={C.white}
+          />
+          <View style={styles.hudTrack}>
+            <View style={[styles.hudFill, { width: `${Math.round(hud.value * 100)}%` }]} />
+          </View>
+          <Text style={styles.hudText}>{Math.round(hud.value * 100)}</Text>
+        </View>
+      )}
+
+      {!!notice && (
+        <View pointerEvents="none" style={[styles.notice, { top: full ? S.lg : S.sm }]}>
+          <Txt v="small" color={C.white}>{notice}</Txt>
+        </View>
+      )}
+
+      {/* Live time-anchored comments */}
+      {live.length > 0 && (
+        <View pointerEvents="none" style={[styles.live, { bottom: bottomOffset + 8 }, panelLeft ? { right: sideInset } : { left: sideInset }]}>
+          {live.map((c) => (
+            <Animated.View key={c.id} entering={FadeIn.duration(220)} exiting={FadeOut.duration(220)} style={styles.liveRow}>
+              <Text style={styles.liveAuthor}>{c.author}</Text>
+              <Text style={styles.liveText} numberOfLines={2}>{c.text}</Text>
+            </Animated.View>
+          ))}
+        </View>
+      )}
+
+      {locked ? (
+        unlockHint && (
+          <View pointerEvents="box-none" style={styles.center}>
+            <Pressable onPress={() => { setLocked(false); wake(); }} style={styles.unlock} accessibilityRole="button" accessibilityLabel="Déverrouiller l’écran">
+              <Ionicons name="lock-open" size={18} color={C.bg} />
+              <Text style={styles.pillText}>Déverrouiller</Text>
+            </Pressable>
+          </View>
+        )
+      ) : controls ? (
         <View style={StyleSheet.absoluteFill} pointerEvents="box-none">
           <View pointerEvents="none" style={[StyleSheet.absoluteFill, { backgroundColor: 'rgba(0,0,0,0.42)' }]} />
 
-          <View pointerEvents="box-none" style={[styles.topRow, isFull && { paddingTop: S.md, paddingHorizontal: Math.max(insets.left, insets.right, S.lg) }]}>
-            {isFull ? (
+          <View pointerEvents="box-none" style={[styles.topRow, full && { paddingTop: Math.max(insets.top, S.md), paddingHorizontal: sideInset }]}>
+            {full ? (
               <>
-                <Ctl icon="chevron-down" label="Quitter le plein écran" onPress={() => toggleFull(false)} />
+                <Ctl icon="chevron-down" label="Quitter le plein écran" onPress={exitFull} />
                 <View style={{ flex: 1, gap: 1 }}>
                   <Txt v="label" numberOfLines={1}>{title}</Txt>
                   {!!subtitle && <Txt v="small" numberOfLines={1}>{subtitle}</Txt>}
                 </View>
+                {onOpenSources && (
+                  <Pressable onPress={onOpenSources} style={styles.chipBtn} accessibilityRole="button" accessibilityLabel="Sources">
+                    <Ionicons name="layers-outline" size={16} color={C.white} />
+                    <Text style={styles.chipText} numberOfLines={1}>{sourceLabel ?? 'Sources'}</Text>
+                  </Pressable>
+                )}
+                {renderComments && (
+                  <Pressable onPress={() => { setCommentsOpen((o) => !o); wake(); }} style={[styles.chipBtn, commentsOpen && { backgroundColor: C.accentSoft }]}
+                    accessibilityRole="button" accessibilityLabel="Commentaires">
+                    <Ionicons name="chatbubbles-outline" size={16} color={C.white} />
+                    {commentCount != null && <Text style={styles.chipText}>{commentCount}</Text>}
+                  </Pressable>
+                )}
+                <Ctl icon="lock-closed-outline" label="Verrouiller l’écran" onPress={() => { setLocked(true); setControls(false); setCommentsOpen(false); }} />
               </>
             ) : (
               <View style={{ flex: 1 }} />
@@ -387,8 +591,8 @@ export function Player({
             <Ctl icon="settings-outline" label="Réglages de lecture" onPress={() => { setSettings(true); wake(); }} />
           </View>
 
-          <View pointerEvents="box-none" style={styles.middle}>
-            <Ctl icon="play-back" label="Reculer de 10 secondes" onPress={() => { seekTo(time.t - 10); wake(); }} size={26} />
+          <View pointerEvents="box-none" style={[styles.middle, full && { gap: 72 }]}>
+            <Ctl icon="play-back" label="Reculer de 10 secondes" onPress={() => { seekTo(t - 10); wake(); }} size={26} />
             {loading ? (
               <View style={{ width: 64, height: 64, alignItems: 'center', justifyContent: 'center' }}><ActivityIndicator color={C.white} size="large" /></View>
             ) : ended ? (
@@ -397,41 +601,36 @@ export function Player({
               <Ctl big icon={isPlaying ? 'pause' : 'play'} label={isPlaying ? 'Pause' : 'Lecture'}
                 onPress={() => { if (isPlaying) player.pause(); else player.play(); wake(); }} />
             )}
-            <Ctl icon="play-forward" label="Avancer de 10 secondes" onPress={() => { seekTo(time.t + 10); wake(); }} size={26} />
+            <Ctl icon="play-forward" label="Avancer de 10 secondes" onPress={() => { seekTo(t + 10); wake(); }} size={26} />
           </View>
 
-          <View pointerEvents="box-none" style={[styles.bottomRow, isFull && { paddingBottom: Math.max(insets.bottom, S.md), paddingHorizontal: Math.max(insets.left, insets.right, S.lg) }]}>
-            <Text style={styles.time}>{formatTime(time.t)}</Text>
-            <SeekBar position={time.t} duration={duration} buffered={time.buffered} onScrubStart={wake} onSeek={(t) => { seekTo(t); wake(); }} />
+          <View pointerEvents="box-none" style={[styles.bottomRow, full && { paddingBottom: Math.max(insets.bottom, S.md), paddingHorizontal: sideInset }]}>
+            <Text style={styles.time}>{formatTime(t)}</Text>
+            <SeekBar position={t} duration={duration} buffered={time.buffered} markers={markers} onScrubStart={wake} onSeek={(x) => { seekTo(x); wake(); }} />
             <Text style={styles.time}>{duration > 0 ? `-${formatTime(Math.max(0, remaining))}` : '--:--'}</Text>
             {prefs.rate !== 1 && <Text style={[styles.time, { color: C.accentText }]}>{String(prefs.rate).replace('.', ',')}×</Text>}
-            <Ctl icon={isFull ? 'contract' : 'expand'} label={isFull ? 'Quitter le plein écran' : 'Plein écran'} onPress={() => toggleFull(!isFull)} size={20} />
+            <Ctl icon={full ? 'contract' : 'expand'} label={full ? 'Quitter le plein écran' : 'Plein écran'} onPress={() => (full ? exitFull() : enterFull())} size={20} />
           </View>
         </View>
-      )}
+      ) : null}
 
-      {(showIntro || showNextSoon) && (
-        <View pointerEvents="box-none" style={[styles.pillWrap, { bottom: controls ? (isFull ? 84 : 52) : isFull ? 28 : 12, right: isFull ? Math.max(insets.right, S.lg) : S.md }]}>
-          {showIntro && (
-            <Pressable style={styles.pill} accessibilityRole="button" accessibilityLabel="Passer l’intro"
-              onPress={() => { seekTo(time.t + introSkip); setIntroDone(true); }}>
-              <Ionicons name="play-skip-forward" size={14} color={C.bg} />
-              <Text style={styles.pillText}>Passer l’intro</Text>
-            </Pressable>
+      {!locked && (skipBtn || showNext) && (
+        <View pointerEvents="box-none" style={[styles.pillWrap, { bottom: bottomOffset, right: sideInset }]}>
+          {skipBtn && (
+            <Pill icon="play-skip-forward" label={skipBtn.label}
+              onPress={() => { seekTo(skipBtn.to); setSkipped((s) => [...s, skipBtn.key]); }} />
           )}
-          {showNextSoon && (
-            <Pressable style={styles.pill} accessibilityRole="button" accessibilityLabel={`Épisode suivant : ${next!.label}`} onPress={() => next!.onPlay()}>
-              <Ionicons name="play-skip-forward" size={14} color={C.bg} />
-              <Text style={styles.pillText}>Épisode suivant</Text>
-            </Pressable>
-          )}
+          {showNext && <Pill primary icon="play-skip-forward" label="Épisode suivant" onPress={() => next!.onPlay()} />}
         </View>
       )}
 
-      {ended && next && countdown !== null && (
-        <View style={styles.nextCard}>
+      {next && countdown !== null && (
+        <View style={[styles.nextCard, { right: sideInset, bottom: full ? Math.max(insets.bottom, S.lg) + 8 : S.md }]}>
           <Txt v="caption" color={C.accentText}>ÉPISODE SUIVANT DANS {countdown} S</Txt>
           <Txt v="label" numberOfLines={1}>{next.label}</Txt>
+          <View style={styles.countTrack}>
+            <View style={[styles.countFill, { width: `${(1 - countdown / AUTO_NEXT_SECONDS) * 100}%` }]} />
+          </View>
           <View style={{ flexDirection: 'row', gap: S.sm }}>
             <Pressable style={[styles.cardBtn, { backgroundColor: C.elevated }]} onPress={() => setCountdown(null)} accessibilityRole="button">
               <Text style={[styles.pillText, { color: C.text }]}>Annuler</Text>
@@ -444,6 +643,26 @@ export function Player({
         </View>
       )}
 
+      {/* Comments over the video (landscape) */}
+      {full && commentsOpen && renderComments && (
+        <Animated.View
+          entering={(panelLeft ? SlideInLeft : SlideInRight).duration(240)}
+          exiting={(panelLeft ? SlideOutLeft : SlideOutRight).duration(200)}
+          style={[styles.panel, { width: panelW + (panelLeft ? insets.left : insets.right) }, panelLeft ? { left: 0, paddingLeft: insets.left } : { right: 0, paddingRight: insets.right }]}>
+          <View style={styles.panelHead}>
+            <Txt v="section" style={{ fontSize: 15, flex: 1 }}>Commentaires</Txt>
+            <Pressable onPress={() => setPrefs({ commentsSide: panelLeft ? 'right' : 'left' })} hitSlop={10} accessibilityRole="button"
+              accessibilityLabel={panelLeft ? 'Mettre le panneau à droite' : 'Mettre le panneau à gauche'}>
+              <Ionicons name="swap-horizontal" size={20} color={C.text2} />
+            </Pressable>
+            <Pressable onPress={() => setCommentsOpen(false)} hitSlop={10} accessibilityRole="button" accessibilityLabel="Fermer les commentaires">
+              <Ionicons name="close" size={22} color={C.text} />
+            </Pressable>
+          </View>
+          <View style={{ flex: 1 }}>{renderComments()}</View>
+        </Animated.View>
+      )}
+
       <PlayerSettings
         visible={settings}
         onClose={() => { setSettings(false); wake(); }}
@@ -452,28 +671,23 @@ export function Player({
         audio={audioOptions}
         audioKey={audioKey}
         onAudio={(k) => {
-          const t = audioTracks[Number(k)];
-          if (t) setProp(player, 'audioTrack', t);
+          const tr = audioTracks[Number(k)];
+          if (tr) setProp(player, 'audioTrack', tr);
         }}
         subtitles={subOptions}
         subtitleKey={subKey}
         onSubtitle={pickSub}
         subtitleNote={cuesLoading ? 'Chargement des sous-titres…' : cuesError ? 'Sous-titres injoignables.' : subOptions.length === 1 ? 'Aucun sous-titre pour cette source.' : undefined}
         size={prefs.subSize}
-        onSize={(subSize) => setPrefs({ subSize })}
+        onSize={(s) => setPrefs({ subSize: s })}
         autoNext={prefs.autoNext}
         onAutoNext={(autoNext) => setPrefs({ autoNext })}
+        commentsSide={prefs.commentsSide}
+        onCommentsSide={(commentsSide) => setPrefs({ commentsSide })}
+        liveComments={prefs.liveComments}
+        onLiveComments={(liveComments) => setPrefs({ liveComments })}
       />
-    </View>
-  );
-
-  // Fullscreen = the same view grown to fill the screen (the parent hides its other content via
-  // `onFullscreenChange`) + landscape lock. Keeping one VideoView avoids a remount / black frame.
-  return (
-    <View style={full ? styles.full : styles.inline}>
-      {full && <StatusBar hidden animated />}
-      {stage(full)}
-    </View>
+    </GestureHandlerRootView>
   );
 }
 
@@ -491,6 +705,11 @@ const styles = StyleSheet.create({
     paddingLeft: S.md, paddingRight: S.xs, paddingBottom: 2,
   },
   time: { color: C.white, fontSize: 12, fontVariant: ['tabular-nums'], ...F.semibold, ...shadow },
+  chipBtn: {
+    flexDirection: 'row', alignItems: 'center', gap: 6, height: 34, maxWidth: 180, paddingHorizontal: 12,
+    borderRadius: R.pill, backgroundColor: 'rgba(255,255,255,0.12)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.16)',
+  },
+  chipText: { color: C.white, fontSize: 12, ...F.semibold },
   subWrap: { position: 'absolute', left: S.lg, right: S.lg, alignItems: 'center' },
   sub: {
     color: C.white, textAlign: 'center', ...F.semibold, backgroundColor: 'rgba(0,0,0,0.45)',
@@ -502,12 +721,40 @@ const styles = StyleSheet.create({
     borderRadius: R.control, borderCurve: 'continuous', backgroundColor: C.white,
   },
   pillText: { color: C.bg, fontSize: 13, ...F.bold },
+  unlock: {
+    flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 10, paddingHorizontal: 16,
+    borderRadius: R.pill, backgroundColor: C.white,
+  },
   nextCard: {
-    position: 'absolute', right: S.md, bottom: S.md, maxWidth: 320, gap: 6, padding: S.md,
+    position: 'absolute', maxWidth: 320, gap: 6, padding: S.md,
     borderRadius: R.card, borderCurve: 'continuous', backgroundColor: 'rgba(12,17,28,0.94)', borderWidth: 1, borderColor: C.border,
   },
+  countTrack: { height: 3, borderRadius: 2, backgroundColor: C.elevated, overflow: 'hidden' },
+  countFill: { height: 3, backgroundColor: C.accent },
   cardBtn: {
     flexDirection: 'row', alignItems: 'center', gap: 6, paddingVertical: 8, paddingHorizontal: 12,
     borderRadius: R.control, borderCurve: 'continuous', marginTop: 4,
   },
+  flash: {
+    position: 'absolute', top: 0, bottom: 0, width: '32%', alignItems: 'center', justifyContent: 'center', gap: 4,
+    backgroundColor: 'rgba(255,255,255,0.12)',
+  },
+  flashText: { color: C.white, fontSize: 13, ...F.bold, ...shadow },
+  hud: {
+    position: 'absolute', top: S.xl, alignSelf: 'center', flexDirection: 'row', alignItems: 'center', gap: 10,
+    paddingVertical: 8, paddingHorizontal: 14, borderRadius: R.pill, backgroundColor: 'rgba(5,7,13,0.75)',
+  },
+  hudTrack: { width: 120, height: 4, borderRadius: 2, backgroundColor: 'rgba(255,255,255,0.25)', overflow: 'hidden' },
+  hudFill: { height: 4, backgroundColor: C.white },
+  hudText: { color: C.white, fontSize: 12, width: 26, textAlign: 'right', fontVariant: ['tabular-nums'], ...F.semibold },
+  notice: { position: 'absolute', alignSelf: 'center', paddingHorizontal: S.md, paddingVertical: 6, borderRadius: R.pill, backgroundColor: 'rgba(0,0,0,0.7)' },
+  live: { position: 'absolute', maxWidth: 360, gap: 6 },
+  liveRow: { paddingVertical: 6, paddingHorizontal: 10, borderRadius: 12, backgroundColor: 'rgba(5,7,13,0.62)', gap: 1 },
+  liveAuthor: { color: C.accentText, fontSize: 11, ...F.bold },
+  liveText: { color: C.white, fontSize: 13, ...F.medium },
+  panel: {
+    position: 'absolute', top: 0, bottom: 0, backgroundColor: 'rgba(8,11,18,0.82)',
+    borderColor: 'rgba(255,255,255,0.08)', borderLeftWidth: 1, borderRightWidth: 1,
+  },
+  panelHead: { flexDirection: 'row', alignItems: 'center', gap: S.md, paddingHorizontal: S.lg, paddingTop: S.lg, paddingBottom: S.sm },
 });

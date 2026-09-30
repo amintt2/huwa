@@ -1,0 +1,145 @@
+# Release Android : APK signé construit localement (expo prebuild + Gradle, sans serveur EAS),
+# attaché à la GitHub Release du tag `v*`.
+#
+# Secrets à définir dans le dépôt (Settings → Secrets and variables → Actions) :
+#   HUWA_KEYSTORE_B64        keystore de release encodé en base64 (`base64 -i huwa-release.keystore`)
+#   HUWA_KEYSTORE_PASSWORD   mot de passe du keystore
+#   HUWA_KEY_ALIAS           alias de la clé (ex. huwa)
+#   HUWA_KEY_PASSWORD        mot de passe de la clé
+# Le certificat OTA public (certs/certificate.pem) doit être commité : expo prebuild le lit.
+# Aucune variable EXPO_TOKEN n'est nécessaire (pas d'appel à EAS).
+#
+# Variante EAS local (commentée en bas) : `eas build --local` exige un compte Expo + EXPO_TOKEN
+# et le projet lié (`extra.eas.projectId`) ; la voie Gradle n'en dépend pas.
+
+name: Release Android
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  apk:
+    name: APK sideload
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      HUWA_LITE: "0"
+      HUWA_TORRENT: "1"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - uses: android-actions/setup-android@v3
+
+      - run: npm ci
+
+      - name: Version depuis le tag
+        id: ver
+        run: |
+          TAG="${GITHUB_REF_NAME#v}"
+          [ "${GITHUB_EVENT_NAME}" = "workflow_dispatch" ] && TAG="$(node -p "require('./app.json').expo.version")-manual"
+          echo "version=$TAG" >> "$GITHUB_OUTPUT"
+
+      - name: Vérifier que le certificat OTA est présent
+        run: test -f certs/certificate.pem || { echo "certs/certificate.pem manquant (voir services/ota/README.md)"; exit 1; }
+
+      - name: Prebuild Android (CNG)
+        run: npx expo prebuild --platform android --clean --no-install
+
+      - name: Restaurer le keystore
+        run: |
+          mkdir -p android/keystores
+          echo "${{ secrets.HUWA_KEYSTORE_B64 }}" | base64 -d > android/keystores/release.keystore
+          test -s android/keystores/release.keystore
+
+      - name: Injecter la signature de release dans Gradle
+        # On ne modifie pas build.gradle généré à la main : on ajoute un fichier d'init Gradle
+        # qui configure signingConfigs.release depuis l'environnement.
+        run: |
+          mkdir -p ~/.gradle/init.d
+          cat > ~/.gradle/init.d/huwa-signing.gradle <<'EOF'
+          allprojects {
+            afterEvaluate { project ->
+              if (project.name == 'app' && project.plugins.hasPlugin('com.android.application')) {
+                project.android {
+                  signingConfigs {
+                    huwaRelease {
+                      storeFile project.rootProject.file('keystores/release.keystore')
+                      storePassword System.getenv('HUWA_KEYSTORE_PASSWORD')
+                      keyAlias System.getenv('HUWA_KEY_ALIAS')
+                      keyPassword System.getenv('HUWA_KEY_PASSWORD')
+                    }
+                  }
+                  buildTypes.release.signingConfig signingConfigs.huwaRelease
+                }
+              }
+            }
+          }
+          EOF
+
+      - name: Gradle assembleRelease
+        working-directory: android
+        env:
+          HUWA_KEYSTORE_PASSWORD: ${{ secrets.HUWA_KEYSTORE_PASSWORD }}
+          HUWA_KEY_ALIAS: ${{ secrets.HUWA_KEY_ALIAS }}
+          HUWA_KEY_PASSWORD: ${{ secrets.HUWA_KEY_PASSWORD }}
+        run: ./gradlew :app:assembleRelease --no-daemon
+
+      - name: Renommer et hacher
+        run: |
+          V="${{ steps.ver.outputs.version }}"
+          mkdir -p dist-apk
+          cp android/app/build/outputs/apk/release/app-release.apk "dist-apk/Huwa-$V.apk"
+          (cd dist-apk && sha256sum "Huwa-$V.apk" > "Huwa-$V.apk.sha256")
+          "$ANDROID_HOME"/build-tools/*/apksigner verify --print-certs "dist-apk/Huwa-$V.apk" | head -5
+
+      - name: Empreinte runtime (pour publier l'OTA correspondante)
+        run: npx expo-updates fingerprint:generate --platform android > dist-apk/fingerprint-android.json
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: huwa-apk
+          path: dist-apk/*
+
+      - name: GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist-apk/*.apk
+            dist-apk/*.sha256
+            dist-apk/fingerprint-android.json
+          generate_release_notes: true
+          body: |
+            APK signé pour installation directe (Obtainium : `obtainium://add/https://github.com/${{ github.repository }}`).
+            Vérifiez le SHA-256 fourni. Huwa ne contient et ne fournit aucun contenu.
+
+  # --- Variante EAS local (à activer si vous préférez les credentials gérés par EAS) ---
+  # apk-eas-local:
+  #   runs-on: ubuntu-latest
+  #   steps:
+  #     - uses: actions/checkout@v4
+  #     - uses: actions/setup-node@v4
+  #       with: { node-version: 22, cache: npm }
+  #     - uses: actions/setup-java@v4
+  #       with: { distribution: temurin, java-version: 17 }
+  #     - uses: android-actions/setup-android@v3
+  #     - run: npm ci
+  #     - run: echo '${{ secrets.HUWA_CREDENTIALS_JSON }}' > credentials.json   # format : distribution/ANDROID.md
+  #     - run: echo "${{ secrets.HUWA_KEYSTORE_B64 }}" | base64 -d > huwa-release.keystore
+  #     - run: npx eas-cli@latest build --platform android --profile sideload-android --local --non-interactive --output Huwa.apk
+  #       env: { EXPO_TOKEN: "${{ secrets.EXPO_TOKEN }}" }

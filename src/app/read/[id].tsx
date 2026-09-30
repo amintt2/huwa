@@ -220,7 +220,7 @@ function Reader({ id }: { id: string }) {
         : `Téléchargement ${download.saved}/${download.total}, annuler`;
   const onDownload = () => {
     if (!download || download.status === 'error') downloadChapter(id, series.id);
-    else if (download.status === 'done') router.push('/downloads');
+    else if (download.status === 'done') router.push('/offline');
     else cancelDownload(id);
   };
 

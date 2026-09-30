@@ -1,0 +1,78 @@
+{
+  "cli": {
+    "version": ">= 16.0.0",
+    "appVersionSource": "remote",
+    "promptToConfigurePushNotifications": false
+  },
+  "build": {
+    "base": {
+      "node": "22.12.0",
+      "env": {
+        "HUWA_LITE": "0",
+        "HUWA_TORRENT": "1"
+      }
+    },
+    "development": {
+      "extends": "base",
+      "developmentClient": true,
+      "distribution": "internal",
+      "env": {
+        "HUWA_LITE": "0",
+        "HUWA_TORRENT": "1",
+        "DISABLE_CODE_SIGNING": "true"
+      },
+      "android": {
+        "buildType": "apk",
+        "gradleCommand": ":app:assembleDebug"
+      },
+      "ios": {
+        "simulator": true
+      }
+    },
+    "sideload-android": {
+      "extends": "base",
+      "distribution": "internal",
+      "credentialsSource": "local",
+      "android": {
+        "buildType": "apk"
+      }
+    },
+    "adhoc-ios": {
+      "extends": "base",
+      "distribution": "internal",
+      "ios": {
+        "simulator": false
+      }
+    },
+    "altstore-ios": {
+      "extends": "base",
+      "distribution": "store",
+      "ios": {
+        "simulator": false
+      }
+    },
+    "store": {
+      "extends": "base",
+      "distribution": "store",
+      "autoIncrement": true,
+      "env": {
+        "HUWA_LITE": "1",
+        "HUWA_TORRENT": "0"
+      },
+      "android": {
+        "buildType": "app-bundle"
+      },
+      "ios": {
+        "simulator": false
+      }
+    }
+  },
+  "submit": {
+    "store": {
+      "android": {
+        "track": "internal"
+      },
+      "ios": {}
+    }
+  }
+}

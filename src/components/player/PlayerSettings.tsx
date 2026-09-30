@@ -49,6 +49,10 @@ export function PlayerSettings({
   onSize,
   autoNext,
   onAutoNext,
+  commentsSide,
+  onCommentsSide,
+  liveComments,
+  onLiveComments,
 }: {
   visible: boolean;
   onClose: () => void;
@@ -65,6 +69,10 @@ export function PlayerSettings({
   onSize: (s: SubtitleSize) => void;
   autoNext: boolean;
   onAutoNext: (v: boolean) => void;
+  commentsSide: 'left' | 'right';
+  onCommentsSide: (side: 'left' | 'right') => void;
+  liveComments: boolean;
+  onLiveComments: (v: boolean) => void;
 }) {
   const insets = useSafeAreaInsets();
   return (
@@ -97,6 +105,15 @@ export function PlayerSettings({
             </View>
             <Switch value={autoNext} onValueChange={onAutoNext} trackColor={{ true: C.accent, false: C.elevated }} />
           </View>
+          <View style={styles.switchRow}>
+            <View style={{ flex: 1, gap: 2 }}>
+              <Txt v="label" style={{ fontSize: 14 }}>Commentaires sur la vidéo</Txt>
+              <Txt v="small" style={{ fontSize: 12 }}>En plein écran, les commentaires horodatés apparaissent au bon moment.</Txt>
+            </View>
+            <Switch value={liveComments} onValueChange={onLiveComments} trackColor={{ true: C.accent, false: C.elevated }} />
+          </View>
+          <Row title="Panneau des commentaires (paysage)" value={commentsSide} onPick={(k) => onCommentsSide(k as 'left' | 'right')}
+            options={[{ key: 'left', label: 'À gauche' }, { key: 'right', label: 'À droite' }]} />
         </ScrollView>
       </View>
     </Modal>

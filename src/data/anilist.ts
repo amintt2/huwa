@@ -3,13 +3,13 @@
 // Episode ↔ chapter mapping is not published anywhere, so bridges on real series are estimates.
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
-import { makeChapters, makeEpisodes, setCatalog, type Palette, type Series } from './catalog';
+import { hydrateExtraSeries, makeChapters, makeEpisodes, setCatalog, type Palette, type Series } from './catalog';
 
-const ENDPOINT = 'https://graphql.anilist.co';
+export const ENDPOINT = 'https://graphql.anilist.co';
 const CACHE_KEY = 'huwa/catalog/v2';
 const MAX_EPISODES = 200;
 
-const NODE = `id type format status countryOfOrigin episodes chapters averageScore genres seasonYear
+export const NODE = `id type format status countryOfOrigin episodes chapters averageScore genres seasonYear
   title { english userPreferred } description(asHtml: false)
   coverImage { extraLarge color } bannerImage nextAiringEpisode { episode airingAt }`;
 
@@ -20,7 +20,7 @@ const QUERY = `query {
     ${NODE} relations { edges { relationType(version: 2) node { ${NODE} } } } } }
 }`;
 
-type Media = {
+export type Media = {
   id: number;
   type: 'ANIME' | 'MANGA';
   status: 'FINISHED' | 'RELEASING' | 'NOT_YET_RELEASED' | 'CANCELLED' | 'HIATUS' | null;
@@ -47,7 +47,7 @@ const mix = (a: string, b: string, t: number) => {
   const y = hexToRgb(b);
   return rgbToHex(x.map((v, i) => v + (y[i] - v) * t));
 };
-function palette(color: string | null): Palette {
+export function palette(color: string | null): Palette {
   const c = color && /^#[0-9a-f]{6}$/i.test(color) ? color : '#2F6BEB';
   return [mix(c, '#05070D', 0.78), c, mix(c, '#FFFFFF', 0.35)];
 }
@@ -66,11 +66,11 @@ const clean = (html: string | null) =>
 const title = (m: Media) => m.title.english ?? m.title.userPreferred;
 const status = (m: Media): Series['status'] =>
   m.status === 'FINISHED' || m.status === 'CANCELLED' ? 'completed' : m.status === 'NOT_YET_RELEASED' ? 'upcoming' : 'ongoing';
-const episodeCount = (m: Media) =>
+export const episodeCount = (m: Media) =>
   Math.min(MAX_EPISODES, m.episodes ?? (m.nextAiringEpisode ? m.nextAiringEpisode.episode - 1 : 0));
-const isManhwa = (m: Media) => m.type === 'MANGA' && m.countryOfOrigin === 'KR';
+export const isManhwa = (m: Media) => m.type === 'MANGA' && m.countryOfOrigin === 'KR';
 
-function build(anime: Media | null, manhwa: Media | null, trendRank: number): Series | null {
+export function build(anime: Media | null, manhwa: Media | null, trendRank: number): Series | null {
   const lead = anime ?? manhwa!;
   const id = anime ? `al${anime.id}` : `alm${manhwa!.id}`;
   const eps = anime ? episodeCount(anime) : 0;
@@ -142,6 +142,7 @@ async function fetchCatalog(): Promise<Series[]> {
  * keep the offline demo if both fail. Resolves once something real is on screen (or on failure).
  */
 export async function loadCatalog(): Promise<void> {
+  await hydrateExtraSeries();
   let hadCache = false;
   try {
     const raw = await AsyncStorage.getItem(CACHE_KEY);

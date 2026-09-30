@@ -12,10 +12,14 @@ export type PlayerPrefs = {
   subLang: string;
   subSize: SubtitleSize;
   autoNext: boolean;
+  /** Landscape comments panel side. */
+  commentsSide: 'left' | 'right';
+  /** Time-anchored comments pop up over the video in fullscreen. */
+  liveComments: boolean;
 };
 
 const KEY = 'huwa/player-prefs/v1';
-let prefs: PlayerPrefs = { rate: 1, subLang: 'fr', subSize: 'M', autoNext: true };
+let prefs: PlayerPrefs = { rate: 1, subLang: 'fr', subSize: 'M', autoNext: true, commentsSide: 'right', liveComments: true };
 const listeners = new Set<() => void>();
 
 AsyncStorage.getItem(KEY)

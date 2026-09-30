@@ -7,6 +7,23 @@
     "icon": "./assets/images/icon.png",
     "scheme": "huwa",
     "userInterfaceStyle": "dark",
+    "runtimeVersion": {
+      "policy": "fingerprint"
+    },
+    "updates": {
+      "enabled": true,
+      "url": "https://OTA_HOST_A_RENSEIGNER/manifest",
+      "checkAutomatically": "ON_ERROR_RECOVERY",
+      "fallbackToCacheTimeout": 0,
+      "codeSigningCertificate": "./certs/certificate.pem",
+      "codeSigningMetadata": {
+        "keyid": "main",
+        "alg": "rsa-v1_5-sha256"
+      },
+      "requestHeaders": {
+        "expo-channel-name": "production"
+      }
+    },
     "ios": {
       "icon": "./assets/expo.icon",
       "bundleIdentifier": "com.huwa.app",
@@ -54,7 +71,11 @@
           "initialOrientation": "PORTRAIT_UP"
         }
       ],
-      "./plugins/with-scene-lifecycle"
+      "./plugins/with-scene-lifecycle",
+      "expo-secure-store",
+      "expo-sharing",
+      "expo-notifications",
+      "./plugins/with-huwa-torrent"
     ],
     "experiments": {
       "typedRoutes": true,

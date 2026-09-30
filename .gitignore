@@ -29,6 +29,15 @@ yarn-error.*
 # macOS
 .DS_Store
 *.pem
+# expo-updates code signing: the public certificate ships in the app and IS committed;
+# private keys never are (services/ota/keys/, credentials.json, keystores).
+!certs/certificate.pem
+services/ota/keys/
+services/**/secrets/*
+services/**/data/
+services/**/.env
+credentials.json
+*.keystore
 
 # local env files
 .env*.local
@@ -41,3 +50,7 @@ example
 # generated native folders
 /ios
 /android
+!services/**/secrets/.gitkeep
+
+# Claude agent worktrees
+.claude/worktrees/

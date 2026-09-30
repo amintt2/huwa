@@ -50,7 +50,11 @@ export default function Profile() {
         ))}
       </View>
 
+      <Button variant="soft" icon="settings-outline" label="Réglages" onPress={() => router.push('/settings')} />
+
       <Button variant="soft" icon="extension-puzzle-outline" label={`Addons (${addonCount} actifs)`} onPress={() => router.push('/addons' as Href)} />
+
+      <Button variant="soft" icon="download-outline" label="Téléchargements" onPress={() => router.push('/downloads' as Href)} />
 
       <Button
         variant="soft"

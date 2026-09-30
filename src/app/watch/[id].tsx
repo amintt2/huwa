@@ -1,13 +1,15 @@
-import { router, useLocalSearchParams } from 'expo-router';
-import { useRef, useState } from 'react';
-import { Linking, StyleSheet, View } from 'react-native';
+import { router, Stack, useLocalSearchParams } from 'expo-router';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { StyleSheet, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { isPlayable, type AddonStream } from '@/addons/protocol';
-import { useStreams } from '@/addons/registry';
+import { useAnimeIds } from '@/addons/ids';
+import { useSubtitles } from '@/addons/registry';
+import { qualityLabel, useSource } from '@/addons/use-source';
 import { EpisodeBridgeStrip } from '@/components/bridge';
 import { CommentsPanel } from '@/components/comments';
 import { Player, type ExternalSubtitle, type PlayerHandle } from '@/components/player/Player';
+import { SourceButton, SourcesMenu } from '@/components/sources-menu';
 import { Button, Chip, Cover, IconButton, Press, Txt } from '@/components/ui';
 import { chapterAfterEpisode } from '@/data/bridge';
 import { episodeLabel, getEpisode } from '@/data/catalog';
@@ -33,13 +35,42 @@ function WatchScreen({ id }: { id: string }) {
   const count = useThread(target).length;
   const playerRef = useRef<PlayerHandle>(null);
   const [full, setFull] = useState(false);
+  const thread = useThread(target);
+  const timed = useMemo(
+    () => thread.filter((c) => c.timestamp != null && !c.spoiler && !c.parentId)
+      .map((c) => ({ id: c.id, author: c.author, text: c.text, timestamp: c.timestamp! }))
+      .sort((a, b) => a.timestamp - b.timestamp),
+    [thread],
+  );
+  const ids = useAnimeIds(series.id);
+  const addonSubs = useSubtitles(series.id, episode.number);
+  const subtitles = useMemo<ExternalSubtitle[]>(
+    () => addonSubs.map((x, i) => ({ url: x.url, lang: x.lang, label: `${x.lang.toUpperCase()} · ${x.addonName}${addonSubs.filter((y) => y.lang === x.lang).length > 1 ? ` ${i + 1}` : ''}` })),
+    [addonSubs],
+  );
 
-  const { streams, pending, failed } = useStreams(series.id, episode.number);
-  const [picked, setPicked] = useState<AddonStream | undefined>();
-  const source = picked ?? streams.find(isPlayable);
-  // External SRT/VTT files for this episode (wired to useSubtitles when available).
-  const subtitles: ExternalSubtitle[] = [];
-  const headers = source?.behaviorHints?.proxyHeaders?.request;
+  // ---- Source: auto (first that works, then better quality) or manual via the menu ----
+  const src = useSource(series.id, episode.number);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [notice, setNotice] = useState('');
+  const currentRef = useRef(src.currentKey);
+  useEffect(() => {
+    currentRef.current = src.currentKey;
+  }, [src.currentKey]);
+  // "Better quality found" notice when auto mode upgrades the source mid-episode.
+  const loadedQuality = useRef<number | null | undefined>(undefined);
+  const onSourceLoaded = () => {
+    const from = loadedQuality.current;
+    if (from !== undefined && (src.quality ?? 0) > (from ?? 0)) {
+      setNotice(`Meilleure qualité trouvée : ${qualityLabel(src.quality)}`);
+      setTimeout(() => setNotice(''), 3500);
+    }
+    loadedQuality.current = src.quality;
+  };
+  useEffect(() => {
+    if (src.url) onSourceLoaded();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [src.url]);
 
   const header = (
     <View style={{ padding: S.lg, gap: S.lg }}>
@@ -59,33 +90,7 @@ function WatchScreen({ id }: { id: string }) {
           onPress={() => router.push({ pathname: '/comments', params: { target, kind: 'anime' } })} />
       </View>
 
-      <View style={{ gap: S.sm }}>
-        <Txt v="section">Sources</Txt>
-        {streams.map((st, i) => {
-          const ok = isPlayable(st);
-          const active = ok && st.url === source?.url;
-          return (
-            <Press
-              key={`${st.addonId}-${i}`}
-              disabled={!ok && !st.externalUrl}
-              onPress={() => (ok ? setPicked(st) : st.externalUrl && Linking.openURL(st.externalUrl))}
-              style={[styles.source, active && { backgroundColor: C.accentSoft }, !ok && !st.externalUrl && { opacity: 0.45 }]}>
-              <View style={{ flex: 1, gap: 2 }}>
-                <Txt v="label" numberOfLines={1}>{(st.name ?? 'Flux') + (st.title ? ` · ${st.title.split('\n')[0]}` : '')}</Txt>
-                <Txt v="small" numberOfLines={1}>
-                  {st.addonName}{ok ? '' : st.infoHash ? ' · torrent (non supporté)' : st.externalUrl ? ' · ouvre le navigateur' : ''}
-                </Txt>
-              </View>
-              {active && <Chip kind="accent" label="EN COURS" />}
-            </Press>
-          );
-        })}
-        {pending > 0 && <Txt v="small">Recherche de sources… ({pending})</Txt>}
-        {pending === 0 && streams.length === 0 && (
-          <Txt v="small">Aucune source. Active ou installe un addon dans Profil → Addons.</Txt>
-        )}
-        {failed.length > 0 && <Txt v="small">Injoignable : {failed.join(', ')}</Txt>}
-      </View>
+      <SourceButton src={src} onOpen={() => setMenuOpen(true)} />
 
       {next && (
         <Press onPress={() => router.replace(`/watch/${next.id}`)} style={styles.next} accessibilityLabel={`Suivant : ${episodeLabel(next)}`}>
@@ -112,30 +117,53 @@ function WatchScreen({ id }: { id: string }) {
   );
 
   return (
-    <View style={{ flex: 1, backgroundColor: C.bg }}>
+    <View style={{ flex: 1, backgroundColor: full ? C.black : C.bg }}>
+      {/* Fullscreen landscape: system bars hidden. */}
+      <Stack.Screen options={{ statusBarHidden: full, autoHideHomeIndicator: full, gestureEnabled: !full }} />
       <View style={full ? { flex: 1, backgroundColor: C.black } : { paddingTop: insets.top, backgroundColor: C.black }}>
-        {!full && <View style={styles.topBar}>
-          <IconButton icon="chevron-back" label="Retour" onPress={() => router.back()} />
-          <Txt v="small" numberOfLines={1} style={{ flex: 1 }}>{series.title}</Txt>
-        </View>}
+        {!full && (
+          <View style={styles.topBar}>
+            <IconButton icon="chevron-back" label="Retour" onPress={() => router.back()} />
+            <Txt v="small" numberOfLines={1} style={{ flex: 1 }}>{series.title}</Txt>
+          </View>
+        )}
         <Player
           ref={playerRef}
-          source={source?.url ? { uri: source.url, headers } : null}
+          source={src.url ? { uri: src.url, headers: src.headers } : null}
           title={series.title}
           subtitle={episodeLabel(episode)}
           artwork={series.image}
           subtitles={subtitles}
-          emptyText={pending > 0 ? 'Recherche de sources…' : 'Choisis une source ci-dessous.'}
+          malId={ids?.mal}
+          episodeNumber={episode.number}
+          notice={notice}
+          emptyText={src.pending > 0 ? 'Recherche de sources…' : 'Aucune source lisible. Ouvre le menu des sources.'}
           startAt={() => {
             const saved = getState().episodes[id];
             return saved && !saved.done ? saved.position : undefined;
           }}
           onProgress={(position, duration) => saveEpisodeProgress(id, position, duration)}
           onEnd={() => markEpisodeDone(id)}
+          onError={(message) => {
+            if (currentRef.current) src.markBad(currentRef.current, message);
+          }}
           next={next ? { label: episodeLabel(next), onPlay: () => router.replace(`/watch/${next.id}`) } : null}
           onFullscreenChange={setFull}
+          onOpenSources={() => setMenuOpen(true)}
+          sourceLabel={src.current ? `${src.current.name ?? 'Source'} · ${qualityLabel(src.quality)}` : 'Sources'}
+          commentCount={count}
+          timedComments={timed}
+          renderComments={() => (
+            <CommentsPanel
+              target={target}
+              kind="anime"
+              getTime={() => playerRef.current?.getTime() ?? 0}
+              onSeek={(t) => playerRef.current?.seekTo(t)}
+            />
+          )}
         />
       </View>
+      <SourcesMenu src={src} visible={menuOpen} onClose={() => setMenuOpen(false)} />
       {/* Hidden, not unmounted, in fullscreen: keeps the comment draft and scroll position. */}
       <View style={{ flex: 1, display: full ? 'none' : 'flex' }}>
         <CommentsPanel
@@ -152,7 +180,6 @@ function WatchScreen({ id }: { id: string }) {
 
 const styles = StyleSheet.create({
   topBar: { flexDirection: 'row', alignItems: 'center', gap: S.md, paddingHorizontal: S.md, paddingBottom: S.sm },
-  source: { flexDirection: 'row', alignItems: 'center', gap: S.md, padding: S.md, borderRadius: 14, backgroundColor: C.surface },
   next: { flexDirection: 'row', alignItems: 'center', gap: S.md, padding: 10, borderRadius: 16, backgroundColor: C.surface },
   nextPlay: { borderRadius: 20, overflow: 'hidden', backgroundColor: C.accent },
 });

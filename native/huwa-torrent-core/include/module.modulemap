@@ -1,0 +1,4 @@
+module HuwaTorrentCore {
+  header "huwa_torrent.h"
+  export *
+}
