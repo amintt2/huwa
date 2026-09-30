@@ -1,12 +1,14 @@
 import { useEventListener } from 'expo';
-import { router, useLocalSearchParams } from 'expo-router';
+import { router, useLocalSearchParams, type Href } from 'expo-router';
 import { useVideoPlayer, VideoView } from 'expo-video';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Linking, StyleSheet, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { isPlayable, type AddonStream } from '@/addons/protocol';
-import { useStreams } from '@/addons/registry';
+import { isPlayable, isTorrent, type AddonStream } from '@/addons/protocol';
+import { detectQuality, rankStreams, streamKey } from '@/addons/quality';
+import { useAddonPrefs, useAddons, useStreams } from '@/addons/registry';
+import { resolveTorrent, useCachedHashes, useTorrentResolver } from '@/debrid/resolve';
 import { EpisodeBridgeStrip } from '@/components/bridge';
 import { CommentsPanel } from '@/components/comments';
 import { Button, Chip, Cover, IconButton, Press, Txt } from '@/components/ui';
@@ -34,28 +36,81 @@ function WatchScreen({ id }: { id: string }) {
   const count = useThread(target).length;
   const lastSave = useRef(0);
 
+  // ---- Stream selection: ranked list, debrid resolution for torrents, auto-fallback on error ----
   const { streams, pending, failed } = useStreams(series.id, episode.number);
-  const [picked, setPicked] = useState<AddonStream | undefined>();
-  const source = picked ?? streams.find(isPlayable);
+  const prefs = useAddonPrefs();
+  const addonList = useAddons();
+  const resolverLabel = useTorrentResolver();
+  const cached = useCachedHashes(streams.filter(isTorrent).map((s) => s.infoHash!));
+  const ranked = useMemo(
+    () => rankStreams(streams, {
+      preferred: prefs.preferredQuality,
+      addonOrder: addonList.map((a) => a.manifest.id),
+      canResolveTorrents: !!resolverLabel,
+      cached,
+    }),
+    [streams, prefs.preferredQuality, addonList, resolverLabel, cached],
+  );
+  const usable = (s: AddonStream) => isPlayable(s) || (isTorrent(s) && !!resolverLabel);
+  const [picked, setPicked] = useState<string | undefined>();
+  const [bad, setBad] = useState<string[]>([]);
+  const [resolved, setResolved] = useState<Record<string, { url?: string; via?: string; error?: string }>>({});
+  const current =
+    (picked ? ranked.find((s) => streamKey(s) === picked) : undefined) ??
+    ranked.find((s) => usable(s) && !bad.includes(streamKey(s)));
+  const currentKey = current ? streamKey(current) : undefined;
+  const currentRef = useRef(currentKey);
+  useEffect(() => {
+    currentRef.current = currentKey;
+  }, [currentKey]);
+  const sourceUrl = current ? (isPlayable(current) ? current.url : resolved[currentKey!]?.url) : undefined;
+  const markBad = (k: string, error?: string) => {
+    setBad((b) => (b.includes(k) ? b : [...b, k]));
+    if (error) setResolved((r) => ({ ...r, [k]: { ...r[k], error } }));
+    setPicked((p) => (p === k ? undefined : p));
+  };
+
+  // Torrent → HTTPS through the debrid service (or a registered native resolver).
+  useEffect(() => {
+    if (!current || !currentKey || !isTorrent(current) || !resolverLabel || resolved[currentKey]) return;
+    const ctrl = new AbortController();
+    resolveTorrent(
+      { infoHash: current.infoHash!, fileIdx: current.fileIdx, filename: current.behaviorHints?.filename, sources: current.sources, episode: episode.number },
+      ctrl.signal,
+    )
+      .then(({ url, via }) => setResolved((r) => ({ ...r, [currentKey]: { url, via } })))
+      .catch((e) => {
+        if (!ctrl.signal.aborted) markBad(currentKey, e instanceof Error ? e.message : 'Échec');
+      });
+    return () => ctrl.abort();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentKey, resolverLabel]);
   const resumed = useRef(false);
 
   const player = useVideoPlayer(null, (p) => {
     p.timeUpdateEventInterval = 1;
   });
 
-  const headers = source?.behaviorHints?.proxyHeaders?.request;
+  // Playback failure → next source in the ranked list.
+  useEventListener(player, 'statusChange', ({ status, error }) => {
+    if (status === 'error' && currentRef.current) markBad(currentRef.current, error?.message ?? 'Lecture impossible');
+  });
+
+  const headers = current?.behaviorHints?.proxyHeaders?.request;
   const headersKey = JSON.stringify(headers ?? {});
   useEffect(() => {
-    if (!source?.url) return;
+    if (!sourceUrl) return;
     resumed.current = false;
-    player.replaceAsync({ uri: source.url, headers }).then(() => {
+    player.replaceAsync({ uri: sourceUrl, headers }).then(() => {
       const saved = getState().episodes[id];
       if (!resumed.current && saved && !saved.done && saved.position > 5) player.currentTime = saved.position;
       resumed.current = true;
       player.play();
-    }).catch(() => {});
+    }).catch(() => {
+      if (currentRef.current) markBad(currentRef.current, 'Lecture impossible');
+    });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [source?.url, headersKey, player, id]);
+  }, [sourceUrl, headersKey, player, id]);
 
   // Persist progress every 5 s and when leaving the screen.
   useEventListener(player, 'timeUpdate', ({ currentTime }) => {
@@ -92,25 +147,49 @@ function WatchScreen({ id }: { id: string }) {
 
       <View style={{ gap: S.sm }}>
         <Txt v="section">Sources</Txt>
-        {streams.map((st, i) => {
-          const ok = isPlayable(st);
-          const active = ok && st.url === source?.url;
+        {ranked.map((st) => {
+          const k = streamKey(st);
+          const torrent = isTorrent(st);
+          const ok = usable(st);
+          const active = k === currentKey;
+          const r = resolved[k];
+          const failedHere = bad.includes(k);
+          const q = detectQuality(st);
+          const cachedHere = torrent ? cached[st.infoHash!.toLowerCase()] : undefined;
+          const detail = failedHere
+            ? ` · échec${r?.error ? ` : ${r.error}` : ''}`
+            : torrent
+              ? resolverLabel
+                ? ` · torrent via ${resolverLabel}${cachedHere ? ' · en cache' : cachedHere === false ? ' · pas en cache' : ''}${active && !r?.url ? ' · résolution…' : ''}`
+                : ' · torrent · configure un service débrid'
+              : !ok && st.externalUrl
+                ? ' · ouvre le navigateur'
+                : '';
           return (
             <Press
-              key={`${st.addonId}-${i}`}
-              disabled={!ok && !st.externalUrl}
-              onPress={() => (ok ? setPicked(st) : st.externalUrl && Linking.openURL(st.externalUrl))}
-              style={[styles.source, active && { backgroundColor: C.accentSoft }, !ok && !st.externalUrl && { opacity: 0.45 }]}>
+              key={k}
+              disabled={!ok && !st.externalUrl && !torrent}
+              onPress={() => {
+                if (ok) {
+                  setBad((b) => b.filter((x) => x !== k));
+                  setResolved((m) => (m[k]?.error ? { ...m, [k]: {} } : m));
+                  setPicked(k);
+                } else if (torrent) router.push('/debrid' as Href);
+                else if (st.externalUrl) Linking.openURL(st.externalUrl);
+              }}
+              style={[styles.source, active && { backgroundColor: C.accentSoft }, (!ok || failedHere) && { opacity: 0.45 }]}>
               <View style={{ flex: 1, gap: 2 }}>
-                <Txt v="label" numberOfLines={1}>{(st.name ?? 'Flux') + (st.title ? ` · ${st.title.split('\n')[0]}` : '')}</Txt>
-                <Txt v="small" numberOfLines={1}>
-                  {st.addonName}{ok ? '' : st.infoHash ? ' · torrent (non supporté)' : st.externalUrl ? ' · ouvre le navigateur' : ''}
-                </Txt>
+                <Txt v="label" numberOfLines={1}>{(st.name ?? 'Flux').replace(/\n/g, ' ') + (st.title ? ` · ${st.title.split('\n')[0]}` : '')}</Txt>
+                <Txt v="small" numberOfLines={1}>{st.addonName}{detail}</Txt>
               </View>
-              {active && <Chip kind="accent" label="EN COURS" />}
+              {q && <Chip kind="neutral" label={q === 2160 ? '4K' : `${q}p`} />}
+              {active && <Chip kind="accent" label={r?.url || isPlayable(st) ? 'EN COURS' : '…'} />}
             </Press>
           );
         })}
+        {!resolverLabel && streams.some(isTorrent) && (
+          <Button small variant="soft" icon="flash-outline" label="Lire les torrents via un service débrid" onPress={() => router.push('/debrid' as Href)} />
+        )}
         {pending > 0 && <Txt v="small">Recherche de sources… ({pending})</Txt>}
         {pending === 0 && streams.length === 0 && (
           <Txt v="small">Aucune source. Active ou installe un addon dans Profil → Addons.</Txt>
