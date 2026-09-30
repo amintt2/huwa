@@ -43,3 +43,8 @@ codegen-units = 1
 strip = true
 # Keep unwinding so panics never cross the FFI boundary uncaught (see ffi.rs catch_unwind).
 panic = "unwind"
+
+# Upstream 0.7.0 only enables the Apple by-index bind path on macOS, so iOS fails to compile
+# (`bind_device` is Linux-only in socket2). Local copy with a one-line cfg fix; drop when fixed upstream.
+[patch.crates-io]
+librqbit-dualstack-sockets = { path = "../vendor/librqbit-dualstack-sockets" }
