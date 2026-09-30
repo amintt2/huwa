@@ -4,7 +4,12 @@ import { StatusBar } from 'expo-status-bar';
 import { useEffect, useState } from 'react';
 
 import { hydrateAddons } from '@/addons/registry';
+import { Onboarding } from '@/components/onboarding';
+import { OfflineBanner } from '@/components/states';
 import { loadCatalog } from '@/data/anilist';
+import { useEpisodeNotifications } from '@/notifications/episodes';
+import { useSettings, useSettingsHydrated } from '@/settings/settings';
+import { useListsHydrated } from '@/store/lists';
 import { useHydrated } from '@/store/store';
 import { C } from '@/theme/tokens';
 
@@ -17,6 +22,9 @@ const theme = {
 
 export default function RootLayout() {
   const hydrated = useHydrated();
+  const settingsReady = useSettingsHydrated();
+  const listsReady = useListsHydrated();
+  const { onboarded } = useSettings();
   // Hold the splash until the catalog is on screen (cache or network), 6 s max.
   const [catalogReady, setCatalogReady] = useState(false);
   useEffect(() => {
@@ -30,13 +38,22 @@ export default function RootLayout() {
     });
     return () => clearTimeout(timeout);
   }, []);
-  const ready = hydrated && catalogReady;
+  const ready = hydrated && settingsReady && listsReady && catalogReady;
 
   useEffect(() => {
     if (ready) SplashScreen.hideAsync();
   }, [ready]);
 
   if (!ready) return null;
+
+  if (!onboarded) {
+    return (
+      <ThemeProvider value={theme}>
+        <StatusBar style="light" />
+        <Onboarding />
+      </ThemeProvider>
+    );
+  }
 
   return (
     <ThemeProvider value={theme}>
@@ -57,7 +74,31 @@ export default function RootLayout() {
             contentStyle: { backgroundColor: C.surface },
           }}
         />
+        <Stack.Screen name="search" />
+        <Stack.Screen name="calendar" />
+        <Stack.Screen name="settings" />
+        <Stack.Screen name="lists" />
+        <Stack.Screen name="list/[id]" />
+        <Stack.Screen
+          name="list-picker"
+          options={{
+            presentation: 'formSheet',
+            sheetAllowedDetents: [0.7, 1],
+            sheetGrabberVisible: true,
+            sheetCornerRadius: 28,
+            contentStyle: { backgroundColor: C.surface },
+          }}
+        />
+        <Stack.Screen name="anilist-auth" options={{ animation: 'none' }} />
       </Stack>
+      <EpisodeNotifications />
+      <OfflineBanner />
     </ThemeProvider>
   );
+}
+
+/** Schedules new-episode notifications and handles taps (needs the navigator mounted). */
+function EpisodeNotifications() {
+  useEpisodeNotifications();
+  return null;
 }

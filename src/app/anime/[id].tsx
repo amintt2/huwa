@@ -4,6 +4,7 @@ import { ScrollView, StyleSheet, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { BridgeToManhwa } from '@/components/bridge';
+import { ListsButton } from '@/components/lists';
 import { Button, Chip, Cover, IconButton, Press, Progress, Txt } from '@/components/ui';
 import { approx, chapterRangeLabel, resumeEpisode } from '@/data/bridge';
 import { episodeLabel, getSeries } from '@/data/catalog';
@@ -53,6 +54,7 @@ export default function AnimeDetail() {
           <Press onPress={() => toggleMyList(series.id)} style={styles.square} accessibilityLabel={inList ? 'Retirer de ma liste' : 'Ajouter à ma liste'}>
             <Ionicons name={inList ? 'checkmark' : 'add'} size={24} color={C.text} />
           </Press>
+          <ListsButton seriesId={series.id} />
         </View>
 
         <Txt v="body">{series.synopsis}</Txt>

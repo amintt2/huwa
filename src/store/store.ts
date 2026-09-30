@@ -172,3 +172,15 @@ export function seriesIdOfTarget(target: string) {
 }
 
 export const seriesTitleOfTarget = (target: string) => getSeries(seriesIdOfTarget(target))?.title ?? '';
+
+/** Re-read the persisted state, e.g. after importing a backup (Réglages → Importer). */
+export async function rehydrateStore() {
+  clearTimeout(saveTimer);
+  try {
+    const raw = await AsyncStorage.getItem(KEY);
+    state = raw ? { ...initial, ...JSON.parse(raw) } : { ...initial };
+  } catch {
+    state = { ...initial };
+  }
+  listeners.forEach((l) => l());
+}

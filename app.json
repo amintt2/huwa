@@ -54,7 +54,9 @@
       ],
       "expo-video",
       "./plugins/with-scene-lifecycle",
-      "expo-secure-store"
+      "expo-secure-store",
+      "expo-sharing",
+      "expo-notifications"
     ],
     "experiments": {
       "typedRoutes": true,

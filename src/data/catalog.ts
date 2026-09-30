@@ -1,6 +1,7 @@
 // Catalog registry. At launch it holds the offline demo series below; `data/anilist.ts`
 // then replaces them with the real trending anime / manhwa from AniList (posters, scores,
 // airing schedule). Streams and pages stay placeholders until a licensed source is plugged in.
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useSyncExternalStore } from 'react';
 
 export type Palette = readonly [string, string, string];
@@ -182,16 +183,53 @@ export const DEMO_SERIES: Series[] = [
 // ---------- registry ----------
 
 let current: Series[] = DEMO_SERIES;
+/**
+ * Series opened from search, the calendar or an AniList import. They are not part of the
+ * trending catalog (tabs, home rails) but must resolve by id — and survive restarts.
+ */
+let extras = new Map<string, Series>();
 let byId = new Map(current.map((s) => [s.id, s]));
 let version = 0;
 const listeners = new Set<() => void>();
 
+const EXTRA_KEY = 'huwa/catalog/extra/v1';
+const MAX_EXTRAS = 400;
+
+function rebuildIndex() {
+  byId = new Map([...extras.values(), ...current].map((s) => [s.id, s]));
+  version++;
+  listeners.forEach((l) => l());
+}
+
 export function setCatalog(list: Series[]) {
   if (!list.length) return;
   current = list;
-  byId = new Map(list.map((s) => [s.id, s]));
-  version++;
-  listeners.forEach((l) => l());
+  rebuildIndex();
+}
+
+/** Add series found outside the trending catalog (search, calendar, import). Persisted. */
+export function registerSeries(list: Series[]) {
+  if (!list.length) return;
+  for (const s of list) {
+    extras.delete(s.id); // re-insert: most recent last
+    extras.set(s.id, s);
+  }
+  while (extras.size > MAX_EXTRAS) extras.delete(extras.keys().next().value!);
+  rebuildIndex();
+  AsyncStorage.setItem(EXTRA_KEY, JSON.stringify([...extras.values()])).catch(() => {});
+}
+
+/** Restore registered series (called by `loadCatalog` before anything renders). */
+export async function hydrateExtraSeries() {
+  try {
+    const raw = await AsyncStorage.getItem(EXTRA_KEY);
+    if (!raw) return;
+    const list = JSON.parse(raw) as Series[];
+    extras = new Map(list.map((s) => [s.id, s]));
+    rebuildIndex();
+  } catch {
+    // corrupted: start empty
+  }
 }
 
 /** Re-render when the catalog is replaced (returns a version number). */
