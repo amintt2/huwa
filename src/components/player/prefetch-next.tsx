@@ -3,6 +3,8 @@
 // 2. the best source is resolved (debrid link / native torrent engine starts on its first pieces),
 // 3. a hidden, muted, paused player opens it and buffers its first seconds (skipped when the
 //    network policy forbids streaming, e.g. "Wi-Fi seulement" on cellular).
+// Hosted player pages (web player) are never preloaded: only their sources are resolved
+// (`src.url` stays empty for them).
 import { useVideoPlayer } from 'expo-video';
 
 import { useSubtitles } from '@/addons/registry';

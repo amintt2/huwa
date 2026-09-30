@@ -29,6 +29,7 @@ import { C, F, R, S } from '@/theme/tokens';
 
 import { useSkipTimes, type Segment } from './aniskip';
 import { GestureLayer, type Hud } from './GestureLayer';
+import { AUTO_NEXT_SECONDS, NextCard, Pill } from './overlays';
 import { PlayerSettings, type Option } from './PlayerSettings';
 import { SUBTITLE_SIZES, getPrefs, setPrefs, usePrefs } from './prefs';
 import { formatTime, SeekBar } from './SeekBar';
@@ -84,7 +85,6 @@ export type PlayerProps = {
   timedComments?: TimedComment[];
 };
 
-const AUTO_NEXT_SECONDS = 10;
 const INTRO_WINDOW = 180;
 const NEXT_WINDOW = 90;
 const LIVE_COMMENT_SECONDS = 7;
@@ -105,19 +105,6 @@ function Ctl({ icon, label, onPress, size = 22, big, active }: { icon: IconName;
         pressed && { opacity: 0.6, transform: [{ scale: 0.94 }] },
       ]}>
       <Ionicons name={icon} size={big ? 30 : size} color={active ? C.accentText : C.white} />
-    </Pressable>
-  );
-}
-
-function Pill({ icon, label, onPress, primary }: { icon: IconName; label: string; onPress: () => void; primary?: boolean }) {
-  return (
-    <Pressable
-      onPress={onPress}
-      accessibilityRole="button"
-      accessibilityLabel={label}
-      style={({ pressed }) => [styles.pill, primary && { backgroundColor: C.accent }, pressed && { opacity: 0.8 }]}>
-      <Ionicons name={icon} size={14} color={primary ? C.white : C.bg} />
-      <Text style={[styles.pillText, primary && { color: C.white }]}>{label}</Text>
     </Pressable>
   );
 }
@@ -624,22 +611,8 @@ export function Player({
       )}
 
       {next && countdown !== null && (
-        <View style={[styles.nextCard, { right: sideInset, bottom: full ? Math.max(insets.bottom, S.lg) + 8 : S.md }]}>
-          <Txt v="caption" color={C.accentText}>ÉPISODE SUIVANT DANS {countdown} S</Txt>
-          <Txt v="label" numberOfLines={1}>{next.label}</Txt>
-          <View style={styles.countTrack}>
-            <View style={[styles.countFill, { width: `${(1 - countdown / AUTO_NEXT_SECONDS) * 100}%` }]} />
-          </View>
-          <View style={{ flexDirection: 'row', gap: S.sm }}>
-            <Pressable style={[styles.cardBtn, { backgroundColor: C.elevated }]} onPress={() => setCountdown(null)} accessibilityRole="button">
-              <Text style={[styles.pillText, { color: C.text }]}>Annuler</Text>
-            </Pressable>
-            <Pressable style={[styles.cardBtn, { backgroundColor: C.accent }]} onPress={() => next.onPlay()} accessibilityRole="button">
-              <Ionicons name="play" size={14} color={C.white} />
-              <Text style={[styles.pillText, { color: C.white }]}>Lire maintenant</Text>
-            </Pressable>
-          </View>
-        </View>
+        <NextCard label={next.label} countdown={countdown} onCancel={() => setCountdown(null)} onPlay={() => next.onPlay()}
+          style={{ right: sideInset, bottom: full ? Math.max(insets.bottom, S.lg) + 8 : S.md }} />
       )}
 
       {/* Comments over the video (landscape) */}
@@ -715,24 +688,10 @@ const styles = StyleSheet.create({
     paddingHorizontal: 8, paddingVertical: 2, borderRadius: 6, overflow: 'hidden', ...shadow,
   },
   pillWrap: { position: 'absolute', flexDirection: 'row', gap: S.sm },
-  pill: {
-    flexDirection: 'row', alignItems: 'center', gap: 6, paddingVertical: 9, paddingHorizontal: 14,
-    borderRadius: R.control, borderCurve: 'continuous', backgroundColor: C.white,
-  },
   pillText: { color: C.bg, fontSize: 13, ...F.bold },
   unlock: {
     flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 10, paddingHorizontal: 16,
     borderRadius: R.pill, backgroundColor: C.white,
-  },
-  nextCard: {
-    position: 'absolute', maxWidth: 320, gap: 6, padding: S.md,
-    borderRadius: R.card, borderCurve: 'continuous', backgroundColor: 'rgba(12,17,28,0.94)', borderWidth: 1, borderColor: C.border,
-  },
-  countTrack: { height: 3, borderRadius: 2, backgroundColor: C.elevated, overflow: 'hidden' },
-  countFill: { height: 3, backgroundColor: C.accent },
-  cardBtn: {
-    flexDirection: 'row', alignItems: 'center', gap: 6, paddingVertical: 8, paddingHorizontal: 12,
-    borderRadius: R.control, borderCurve: 'continuous', marginTop: 4,
   },
   flash: {
     position: 'absolute', top: 0, bottom: 0, width: '32%', alignItems: 'center', justifyContent: 'center', gap: 4,

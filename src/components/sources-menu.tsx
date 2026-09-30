@@ -7,7 +7,8 @@ import { detectLangs } from '@/addons/audio';
 import { isTorrent, type AddonStream } from '@/addons/protocol';
 import { detectQuality, QUALITIES, streamKey, type Quality } from '@/addons/quality';
 import { qualityLabel, type useSource } from '@/addons/use-source';
-import { Button, Chip, IconButton, Press, Txt } from '@/components/ui';
+import { hostOf } from '@/addons/web-player';
+import { Button, Chip, IconButton, InfoPill, Press, Txt } from '@/components/ui';
 import { YouTubePlayer } from '@/components/youtube-player';
 import { C, R, S } from '@/theme/tokens';
 
@@ -18,6 +19,7 @@ export function SourceButton({ src, onOpen }: { src: Source; onOpen: () => void 
   const { current, quality, auto, pending, ranked } = src;
   const status = !current
     ? pending > 0 ? 'Recherche de sources…' : ranked.length ? 'Aucune source lisible' : 'Aucune source'
+    : src.web ? `${qualityLabel(quality)} · Lecteur web · ${src.web.host}`
     : src.url ? `${qualityLabel(quality)} · ${current.addonName}` : `Préparation · ${current.addonName}`;
   return (
     <Press onPress={onOpen} style={styles.button} accessibilityRole="button" accessibilityLabel={`Sources : ${status}`}>
@@ -69,7 +71,7 @@ export function SourcesMenu({ src, visible, onClose }: { src: Source; visible: b
             <Ionicons name="sparkles-outline" size={20} color={C.accentText} />
             <View style={{ flex: 1, gap: 2 }}>
               <Txt v="label">Automatique</Txt>
-              <Txt v="small">Lance la première source qui marche, puis passe à une meilleure qualité dès qu’elle est trouvée.</Txt>
+              <Txt v="small">Lance la première source qui marche, puis passe à une meilleure qualité dès qu’elle est trouvée. Les lecteurs web ne servent que s’il n’y a pas de lien direct.</Txt>
             </View>
             {auto && <Ionicons name="checkmark" size={20} color={C.accentText} />}
           </Press>
@@ -103,8 +105,10 @@ function SourceRow({ s, src, active, onPress }: { s: AddonStream; src: Source; a
   const st = src.stateOf(s);
   const torrent = isTorrent(s);
   const cached = src.cachedOf(s);
+  const web = src.webOf(s);
   const detail = [
     s.addonName,
+    web && hostOf(web),
     torrent && (src.resolverLabel ? `torrent via ${src.resolverLabel}` : 'torrent · service débrid requis'),
     cached === true && 'en cache',
     cached === false && 'pas en cache',
@@ -118,7 +122,10 @@ function SourceRow({ s, src, active, onPress }: { s: AddonStream; src: Source; a
     <Press onPress={onPress} disabled={st === 'unusable'} style={[styles.row, active && styles.active, dim && { opacity: 0.5 }]}>
       <View style={{ flex: 1, gap: 2 }}>
         <Txt v="label" numberOfLines={1}>{(s.name ?? 'Flux').replace(/\n/g, ' ') + (s.title ? ` · ${s.title.split('\n')[0]}` : '')}</Txt>
-        <Txt v="small" numberOfLines={2}>{detail}</Txt>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: S.sm }}>
+          {!!web && <InfoPill icon="globe-outline" label="Lecteur web" />}
+          <Txt v="small" numberOfLines={2} style={{ flexShrink: 1 }}>{detail}</Txt>
+        </View>
       </View>
       {!!langLabel && <Chip kind="neutral" label={langLabel} />}
       {active && <Chip kind="accent" label={st === 'playing' ? 'EN COURS' : '…'} />}
