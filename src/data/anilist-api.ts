@@ -1,6 +1,9 @@
 // AniList queries beyond the trending catalog: live search, airing calendar, single series,
 // next airings (notifications) and user lists (sync). Public API, no key needed
 // (https://docs.anilist.co). Rate limit is ~30–90 req/min, so callers debounce.
+import { isDemo } from '@/demo/flags';
+import { demoAiring } from '@/demo/seed';
+
 import { build, ENDPOINT, episodeCount, isManhwa, NODE, type Media } from './anilist';
 import { getSeries, registerSeries, type Series } from './catalog';
 
@@ -18,6 +21,7 @@ export async function gql<T>(
   variables: Record<string, unknown> = {},
   opts: { signal?: AbortSignal; token?: string } = {},
 ): Promise<T> {
+  if (isDemo) throw new Error('AniList désactivé en mode démo');
   const res = await fetch(ENDPOINT, {
     method: 'POST',
     headers: {
@@ -214,10 +218,13 @@ export type AiringItem = {
   image?: string;
   color: string | null;
   format: string | null;
+  /** Catalog id when it is not `al<anilistId>` (demo schedule). */
+  seriesId?: string;
 };
 
 /** Every non-adult episode airing between `from` and `to` (unix seconds), soonest first. */
 export async function fetchAiring(from: number, to: number, signal?: AbortSignal): Promise<AiringItem[]> {
+  if (isDemo) return demoAiring(from, to);
   const out: AiringItem[] = [];
   for (let page = 1; page <= 8; page++) {
     const data = await gql<{

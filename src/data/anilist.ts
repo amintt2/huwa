@@ -3,6 +3,8 @@
 // Episode ↔ chapter mapping is not published anywhere, so bridges on real series are estimates.
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
+import { isDemo } from '@/demo/flags';
+
 import { hydrateExtraSeries, makeChapters, makeEpisodes, setCatalog, type Palette, type Series } from './catalog';
 
 export const ENDPOINT = 'https://graphql.anilist.co';
@@ -142,6 +144,8 @@ async function fetchCatalog(): Promise<Series[]> {
  * keep the offline demo if both fail. Resolves once something real is on screen (or on failure).
  */
 export async function loadCatalog(): Promise<void> {
+  // Demo mode: only the original fictional series, never AniList.
+  if (isDemo) return;
   await hydrateExtraSeries();
   let hadCache = false;
   try {

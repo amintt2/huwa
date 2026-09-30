@@ -1,3 +1,6 @@
+// Demo mode (store screenshots) must patch storage before anything reads it.
+import { isDemo } from '@/demo';
+import { DemoRoute } from '@/demo/route';
 import { DarkTheme, Stack, ThemeProvider } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
 import { StatusBar } from 'expo-status-bar';
@@ -42,7 +45,7 @@ export default function RootLayout() {
   useEffect(() => {
     hydrateAddons();
     registerNativeTorrentEngine();
-    cloudBackup.init().catch(() => {});
+    if (!isDemo) cloudBackup.init().catch(() => {});
   }, []);
   useEffect(() => {
     const timeout = setTimeout(() => setCatalogReady(true), 6000);
@@ -114,7 +117,7 @@ export default function RootLayout() {
           <Stack.Screen name="onboarding" options={{ animation: 'fade' }} />
         </Stack.Protected>
       </Stack>
-      <EpisodeNotifications />
+      {isDemo ? <DemoRoute /> : <EpisodeNotifications />}
       <OfflineBanner />
     </ThemeProvider>
   );

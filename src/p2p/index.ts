@@ -6,6 +6,8 @@ import { Platform } from 'react-native';
 
 import type { BareP2P } from './bare';
 import type { P2P, P2PStatus, Unsubscribe } from './contract';
+import { isDemo } from '@/demo/flags';
+
 import { createLocalP2P } from './local';
 
 export type * from './contract';
@@ -61,7 +63,8 @@ class SwitchingP2P implements P2P {
   }
 
   private pick(): P2P {
-    if (Platform.OS === 'web') return createLocalP2P();
+    // Demo mode (store screenshots): seeded single-device backend, no network.
+    if (Platform.OS === 'web' || isDemo) return createLocalP2P();
     try {
       // eslint-disable-next-line @typescript-eslint/no-require-imports
       const { createBareP2P } = require('./bare') as typeof import('./bare');

@@ -59,3 +59,10 @@ modules/huwa-torrent/ios/HuwaTorrentCore.xcframework/
 
 # Bare worklet bundle (npm run build:worklet, runs on postinstall)
 src/p2p/worklet.bundle.js
+
+# asc build artifacts
+.asc/
+
+# App Store posters and raw captures (regenerated with scripts/shots.ts)
+store/shots/
+store/screens/

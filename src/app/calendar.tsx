@@ -57,7 +57,7 @@ export default function Calendar() {
     for (const [id, st] of Object.entries(statuses)) if (st === 'watching' || st === 'planned') ids.add(id);
     return ids;
   }, [myList, statuses]);
-  const isMine = (a: AiringItem) => followed.has(`al${a.anilistId}`);
+  const isMine = (a: AiringItem) => followed.has(a.seriesId ?? `al${a.anilistId}`);
 
   const sections = useMemo(() => {
     const days = Array.from({ length: 7 }, (_, i) => {
@@ -71,7 +71,7 @@ export default function Calendar() {
       return { key: String(i), title, short: i === 0 ? t('calendar.today') : date.toLocaleDateString(locale, { weekday: 'short', day: 'numeric' }), data: [] as AiringItem[] };
     });
     for (const a of items ?? []) {
-      if (onlyMine && !followed.has(`al${a.anilistId}`)) continue;
+      if (onlyMine && !followed.has(a.seriesId ?? `al${a.anilistId}`)) continue;
       const i = Math.floor((new Date(a.airingAt * 1000).setHours(0, 0, 0, 0) - today) / DAY);
       if (i >= 0 && i < 7) days[i].data.push(a);
     }

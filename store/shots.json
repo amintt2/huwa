@@ -1,0 +1,110 @@
+{
+  "theme": {
+    "accent": "#2F6BEB",
+    "backdrop": "glow",
+    "mode": "dark",
+    "design": "default",
+    "glow": [
+      "#5B4BFF",
+      "#7FB0FF"
+    ]
+  },
+  "device": "huwa-shots",
+  "shots": [
+    {
+      "route": "/anime/void",
+      "layout": "hero",
+      "copy": {
+        "fr": {
+          "headline": "Fin de l’anime ?\n*Lis* la suite.",
+          "sub": "Huwa te montre le chapitre exact où le manhwa reprend l’histoire."
+        },
+        "en": {
+          "headline": "Anime over?\n*Keep* reading.",
+          "sub": "Huwa shows the exact manhwa chapter where the story picks up."
+        }
+      }
+    },
+    {
+      "route": "/",
+      "route2": "/manhwa/garden",
+      "layout": "duo",
+      "copy": {
+        "fr": {
+          "headline": "Anime et manhwa,\n*au même* endroit.",
+          "sub": "Tes épisodes, tes chapitres et où tu t’es arrêté, sur un seul écran."
+        },
+        "en": {
+          "headline": "Anime and manhwa,\n*one* home.",
+          "sub": "Your episodes, your chapters and where you left off, side by side."
+        }
+      }
+    },
+    {
+      "route": "/watch/void-e12",
+      "layout": "tilt",
+      "wait": 14,
+      "copy": {
+        "fr": {
+          "headline": "Chaque épisode,\nses *chapitres*.",
+          "sub": "Tu sais ce que l’épisode adapte, d’où vient le flux et en quelle qualité."
+        },
+        "en": {
+          "headline": "Every episode,\nits *chapters*.",
+          "sub": "See what each episode adapts, where the stream comes from and its quality."
+        }
+      }
+    },
+    {
+      "route": "/anime/void|/comments?target=ep:void-e12&kind=anime",
+      "layout": "zoom",
+      "wait": 12,
+      "copy": {
+        "fr": {
+          "headline": "Commente\n*à la seconde*.",
+          "sub": "Tes réactions sont calées sur la scène : un tap et tout le monde y est."
+        },
+        "en": {
+          "headline": "Comment\n*on the scene*.",
+          "sub": "Reactions are pinned to the exact second. One tap and everyone is there."
+        }
+      },
+      "zoom": {
+        "x": 0.03,
+        "y": 0.532,
+        "w": 0.94,
+        "h": 0.3
+      }
+    },
+    {
+      "route": "/calendar",
+      "route2": "/lists",
+      "layout": "duo",
+      "copy": {
+        "fr": {
+          "headline": "Ne rate *aucun*\népisode.",
+          "sub": "Les sorties de la semaine et tes listes, rangées comme tu veux."
+        },
+        "en": {
+          "headline": "Never miss\n*an* episode.",
+          "sub": "This week’s releases and your lists, sorted your way."
+        }
+      }
+    },
+    {
+      "route": "/profile",
+      "route2": "/settings/security",
+      "layout": "duo",
+      "copy": {
+        "fr": {
+          "headline": "Pas de compte.\nPas de serveur *central*.",
+          "sub": "Ton identité reste sur ton téléphone, tes messages vont de pair à pair."
+        },
+        "en": {
+          "headline": "No account.\nNo *central* server.",
+          "sub": "Your identity stays on your phone. Messages go peer to peer."
+        }
+      }
+    }
+  ]
+}
