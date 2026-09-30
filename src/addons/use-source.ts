@@ -3,6 +3,8 @@
 // better quality whenever one shows up (safe sources only: direct links or debrid-cached
 // torrents). A source that fails is skipped; the last good one is the fallback.
 // Manual mode: the user picked a source in the menu; a failure drops back to auto.
+// Hosted player pages ("lecteurs web", see web-player.ts) are used by auto mode only when no
+// native source exists; the page is then shown in the web player instead of the native one.
 import { useEffect, useMemo, useState } from 'react';
 
 import { resolveTorrent, useCachedHashes, useTorrentResolver } from '@/debrid/resolve';
@@ -10,10 +12,11 @@ import { resolveTorrent, useCachedHashes, useTorrentResolver } from '@/debrid/re
 import { isExternal, isPlayable, isTorrent, isYouTube, type AddonStream } from './protocol';
 import { detectQuality, rankStreams, streamKey, type Quality } from './quality';
 import { useAddonPrefs, useAddons, useStreams } from './registry';
+import { hostOf, needsProbe, useProbedUrls, webPlayerUrl } from './web-player';
 
 type Resolution = { url?: string; via?: string; error?: string };
 
-export type SourceState = 'playing' | 'resolving' | 'failed' | 'ready' | 'needs-debrid' | 'youtube' | 'external' | 'unusable';
+export type SourceState = 'playing' | 'resolving' | 'failed' | 'ready' | 'needs-debrid' | 'youtube' | 'external' | 'web' | 'unusable';
 
 // Stremio `bingeGroup`: the release last played for a series, preferred for its next episode
 // (same group, same quality/subs/audio), as Stremio's binge-watching does.
@@ -27,6 +30,7 @@ export function useSource(seriesId: string, episode: number, { enabled = true }:
   const addonList = useAddons();
   const resolverLabel = useTorrentResolver();
   const cached = useCachedHashes(streams.filter(isTorrent).map((s) => s.infoHash!));
+  const probed = useProbedUrls(streams, enabled);
 
   const ranked = useMemo(
     () => rankStreams(streams, {
@@ -34,18 +38,24 @@ export function useSource(seriesId: string, episode: number, { enabled = true }:
       addonOrder: addonList.map((a) => a.manifest.id),
       canResolveTorrents: !!resolverLabel,
       cached,
+      probed,
     }),
-    [streams, prefs.preferredQuality, addonList, resolverLabel, cached],
+    [streams, prefs.preferredQuality, addonList, resolverLabel, cached, probed],
   );
 
   const [manual, setManual] = useState<string | undefined>();
   const [bad, setBad] = useState<string[]>([]);
   const [resolved, setResolved] = useState<Record<string, Resolution>>({});
 
-  const usable = (s: AddonStream) => isPlayable(s) || (isTorrent(s) && !!resolverLabel);
+  /** Hosted player page of this stream, or null. */
+  const webOf = (s: AddonStream) => webPlayerUrl(s, probed);
+  const direct = (s: AddonStream) => isPlayable(s) && !webOf(s);
+  /** Extension-less link whose headers are still being checked (could be a player page). */
+  const probing = (s: AddonStream) => needsProbe(s) && !probed[s.url!];
+  const usable = (s: AddonStream) => direct(s) || (isTorrent(s) && !!resolverLabel);
   const cachedOf = (s: AddonStream) => (isTorrent(s) ? cached[s.infoHash!.toLowerCase()] : undefined);
   /** Safe = expected to start quickly: direct link, or torrent already cached by the debrid service. */
-  const safe = (s: AddonStream) => isPlayable(s) || cachedOf(s) === true;
+  const safe = (s: AddonStream) => direct(s) || cachedOf(s) === true;
 
   // Auto choice, recomputed as answers arrive: best quality among safe sources, falling back
   // to unconfirmed torrents only when nothing safe exists. Ties keep the ranking order.
@@ -55,22 +65,26 @@ export function useSource(seriesId: string, episode: number, { enabled = true }:
       const q = detectQuality(s) ?? 0;
       return pref !== 'auto' && q > pref ? pref - (q - pref) / 10 : q;
     };
-    const candidates = ranked.filter((s) => usable(s) && !bad.includes(streamKey(s)));
-    const pool = candidates.some(safe) ? candidates.filter(safe) : candidates;
+    const ok = (s: AddonStream) => !bad.includes(streamKey(s)) && !probing(s);
+    const candidates = ranked.filter((s) => usable(s) && ok(s));
+    // Only hosted players: the best of them (quality, then addon priority).
+    const web = candidates.length ? [] : ranked.filter((s) => !!webOf(s) && ok(s));
+    const pool = candidates.some(safe) ? candidates.filter(safe) : candidates.length ? candidates : web;
     const binge = lastBinge.get(seriesId);
     const same = binge ? pool.find((s) => s.behaviorHints?.bingeGroup === binge) : undefined;
     if (same) return same;
     return pool.reduce<AddonStream | undefined>((best, s) => (!best || score(s) > score(best) ? s : best), undefined);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [ranked, bad, resolverLabel, cached, prefs.preferredQuality, seriesId]);
+  }, [ranked, bad, resolverLabel, cached, probed, prefs.preferredQuality, seriesId]);
 
   const current = (manual ? ranked.find((s) => streamKey(s) === manual) : undefined) ?? auto;
   const currentKey = current ? streamKey(current) : undefined;
-  const url = current ? (isPlayable(current) ? current.url : resolved[currentKey!]?.url) : undefined;
+  const webUrl = current ? webOf(current) : null;
+  const url = current && !webUrl ? (isPlayable(current) ? current.url : resolved[currentKey!]?.url) : undefined;
   useEffect(() => {
     const group = current?.behaviorHints?.bingeGroup;
-    if (enabled && url && group) lastBinge.set(seriesId, group);
-  }, [enabled, url, current, seriesId]);
+    if (enabled && (url || webUrl) && group) lastBinge.set(seriesId, group);
+  }, [enabled, url, webUrl, current, seriesId]);
 
   const markBad = (k: string, error?: string) => {
     setBad((b) => (b.includes(k) ? b : [...b, k]));
@@ -105,7 +119,8 @@ export function useSource(seriesId: string, episode: number, { enabled = true }:
   const stateOf = (s: AddonStream): SourceState => {
     const k = streamKey(s);
     if (bad.includes(k)) return 'failed';
-    if (k === currentKey) return url ? 'playing' : 'resolving';
+    if (k === currentKey) return url || webUrl ? 'playing' : 'resolving';
+    if (webOf(s)) return 'web';
     if (usable(s)) return 'ready';
     if (isTorrent(s)) return 'needs-debrid';
     if (isYouTube(s)) return 'youtube';
@@ -117,7 +132,11 @@ export function useSource(seriesId: string, episode: number, { enabled = true }:
     ranked,
     current,
     currentKey,
+    /** Native player URL (direct link or resolved torrent). */
     url,
+    /** Hosted player page to show in the web player instead (never prefetched). */
+    web: webUrl ? { url: webUrl, host: hostOf(webUrl) } : null,
+    webOf,
     headers: current?.behaviorHints?.proxyHeaders?.request,
     /** Subtitles shipped with the current stream (merged with the subtitles addons by the player). */
     streamSubtitles: current?.subtitles ?? NO_SUBS,

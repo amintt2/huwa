@@ -10,6 +10,7 @@ import { EpisodeBridgeStrip } from '@/components/bridge';
 import { CommentsPanel } from '@/components/comments';
 import { Player, type ExternalSubtitle, type PlayerHandle } from '@/components/player/Player';
 import { PrefetchNext } from '@/components/player/prefetch-next';
+import { WebPlayer } from '@/components/player/WebPlayer';
 import { SourceButton, SourcesMenu } from '@/components/sources-menu';
 import { useStreamPolicy } from '@/settings/network';
 import { Button, Chip, Cover, IconButton, Press, Txt } from '@/components/ui';
@@ -82,6 +83,29 @@ function WatchScreen({ id }: { id: string }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [src.url]);
 
+  const startAt = () => {
+    const saved = getState().episodes[id];
+    return saved && !saved.done ? saved.position : undefined;
+  };
+  const onProgress = (position: number, duration: number) => {
+    saveEpisodeProgress(id, position, duration);
+    // Preload the next episode from mid-episode (or the last 5 minutes of a long one).
+    if (!prefetchArmed && duration > 0 && (position / duration > 0.5 || duration - position < 300)) setPrefetchArmed(true);
+  };
+  const onPlayerError = (message: string) => {
+    if (currentRef.current) src.markBad(currentRef.current, message);
+  };
+  const nextProp = next ? { label: episodeLabel(next), onPlay: () => router.replace(`/watch/${next.id}`) } : null;
+  const sourceLabel = src.current ? `${src.current.name ?? 'Source'} · ${qualityLabel(src.quality)}` : 'Sources';
+  const renderComments = () => (
+    <CommentsPanel
+      target={target}
+      kind="anime"
+      getTime={() => playerRef.current?.getTime() ?? 0}
+      onSeek={(t) => playerRef.current?.seekTo(t)}
+    />
+  );
+
   const header = (
     <View style={{ padding: S.lg, gap: S.lg }}>
       <View style={{ gap: 6 }}>
@@ -137,45 +161,53 @@ function WatchScreen({ id }: { id: string }) {
             <Txt v="small" numberOfLines={1} style={{ flex: 1 }}>{series.title}</Txt>
           </View>
         )}
-        <Player
-          ref={playerRef}
-          source={src.url ? { uri: src.url, headers: src.headers } : null}
-          title={series.title}
-          subtitle={episodeLabel(episode)}
-          artwork={series.image}
-          subtitles={subtitles}
-          malId={ids?.mal}
-          episodeNumber={episode.number}
-          notice={notice}
-          emptyText={src.pending > 0 ? 'Recherche de sources…' : 'Aucune source lisible. Ouvre le menu des sources.'}
-          startAt={() => {
-            const saved = getState().episodes[id];
-            return saved && !saved.done ? saved.position : undefined;
-          }}
-          onProgress={(position, duration) => {
-            saveEpisodeProgress(id, position, duration);
-            // Preload the next episode from mid-episode (or the last 5 minutes of a long one).
-            if (!prefetchArmed && duration > 0 && (position / duration > 0.5 || duration - position < 300)) setPrefetchArmed(true);
-          }}
-          onEnd={() => markEpisodeDone(id)}
-          onError={(message) => {
-            if (currentRef.current) src.markBad(currentRef.current, message);
-          }}
-          next={next ? { label: episodeLabel(next), onPlay: () => router.replace(`/watch/${next.id}`) } : null}
-          onFullscreenChange={setFull}
-          onOpenSources={() => setMenuOpen(true)}
-          sourceLabel={src.current ? `${src.current.name ?? 'Source'} · ${qualityLabel(src.quality)}` : 'Sources'}
-          commentCount={count}
-          timedComments={timed}
-          renderComments={() => (
-            <CommentsPanel
-              target={target}
-              kind="anime"
-              getTime={() => playerRef.current?.getTime() ?? 0}
-              onSeek={(t) => playerRef.current?.seekTo(t)}
-            />
-          )}
-        />
+        {src.web ? (
+          // Hosted player page (addon `externalUrl` / HTML `url`): shown in place of the native player.
+          <WebPlayer
+            key={src.web.url}
+            ref={playerRef}
+            url={src.web.url}
+            title={series.title}
+            subtitle={episodeLabel(episode)}
+            malId={ids?.mal}
+            episodeNumber={episode.number}
+            notice={notice}
+            startAt={startAt}
+            onProgress={onProgress}
+            onEnd={() => markEpisodeDone(id)}
+            onError={onPlayerError}
+            next={nextProp}
+            onFullscreenChange={setFull}
+            onOpenSources={() => setMenuOpen(true)}
+            sourceLabel={sourceLabel}
+            commentCount={count}
+            renderComments={renderComments}
+          />
+        ) : (
+          <Player
+            ref={playerRef}
+            source={src.url ? { uri: src.url, headers: src.headers } : null}
+            title={series.title}
+            subtitle={episodeLabel(episode)}
+            artwork={series.image}
+            subtitles={subtitles}
+            malId={ids?.mal}
+            episodeNumber={episode.number}
+            notice={notice}
+            emptyText={src.pending > 0 ? 'Recherche de sources…' : 'Aucune source lisible. Ouvre le menu des sources.'}
+            startAt={startAt}
+            onProgress={onProgress}
+            onEnd={() => markEpisodeDone(id)}
+            onError={onPlayerError}
+            next={nextProp}
+            onFullscreenChange={setFull}
+            onOpenSources={() => setMenuOpen(true)}
+            sourceLabel={sourceLabel}
+            commentCount={count}
+            timedComments={timed}
+            renderComments={renderComments}
+          />
+        )}
       </View>
       <SourcesMenu src={src} visible={menuOpen} onClose={() => setMenuOpen(false)} />
       {next && <PrefetchNext seriesId={series.id} episode={next.number} armed={prefetchArmed} buffer={streamPolicy.allowed} />}
