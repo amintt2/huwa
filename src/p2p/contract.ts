@@ -38,6 +38,10 @@ export type P2PComment = {
   spoiler: boolean;
   timestamp?: number;
   fromAnime?: boolean;
+  /** Edited by its author (last edit time). */
+  editedAt?: number;
+  /** Deleted by its author: text is empty, kept only as a placeholder when it has replies. */
+  deleted?: boolean;
 };
 
 export type Label = { by: PublicKey; target: PublicKey | string; val: 'spam' | 'abuse' | 'spoiler' | 'nsfw' | 'hide'; neg?: boolean; ts: number };
@@ -73,6 +77,9 @@ export interface P2P {
   watchComments(seriesId: string, cb: (all: P2PComment[]) => void): Unsubscribe;
   postComment(c: Pick<P2PComment, 'target' | 'parentId' | 'text' | 'spoiler' | 'timestamp'>): Promise<P2PComment>;
   toggleLike(seriesId: string, commentId: string): Promise<void>;
+  /** Only the author can edit or delete; peers enforce it in the room reducer. */
+  editComment(seriesId: string, commentId: string, patch: { text: string; spoiler: boolean }): Promise<void>;
+  deleteComment(seriesId: string, commentId: string): Promise<void>;
 
   // Moderation (phase 4)
   follow(key: PublicKey): Promise<void>;

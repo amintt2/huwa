@@ -139,6 +139,8 @@ class SwitchingP2P implements P2P {
   watchComments: P2P['watchComments'] = (...a) => this.track('watchComments', a);
   postComment: P2P['postComment'] = (...a) => this.impl.postComment(...a);
   toggleLike: P2P['toggleLike'] = (...a) => this.impl.toggleLike(...a);
+  editComment: P2P['editComment'] = (...a) => this.impl.editComment(...a);
+  deleteComment: P2P['deleteComment'] = (...a) => this.impl.deleteComment(...a);
 
   follow: P2P['follow'] = (...a) => this.impl.follow(...a);
   unfollow: P2P['unfollow'] = (...a) => this.impl.unfollow(...a);

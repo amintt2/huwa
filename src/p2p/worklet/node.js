@@ -46,7 +46,8 @@ function withTimeout(promise, ms, fallback) {
 
 // Protocol version of rooms and DM bases: bump it whenever `apply` rules change incompatibly
 // (a peer on older rules would reject new nodes and never bind their writers).
-const PROTOCOL = 'v2'
+// v3: comment edit/delete entries (older peers would ignore them and show stale text).
+const PROTOCOL = 'v3'
 const workBaseKey = (work) => crypto.keyPair(hash('huwa/work/' + PROTOCOL + '/' + work)).publicKey
 const dmPair = (a, b) => [a, b].sort()
 const dmBaseKey = (pair) => crypto.keyPair(hash('huwa/dm/' + PROTOCOL + '/' + pair.join(':'))).publicKey
@@ -715,6 +716,30 @@ class HuwaNode {
     try {
       const liked = !!(await valueOf(room.base.view, 'l/' + commentIdHex + '/' + this.secret.identity))
       await this._append(room.base, 'like', 'work:' + work, { id: commentIdHex, on: !liked }, { nonceBits: pow.DIFFICULTY.like })
+    } finally {
+      release()
+    }
+  }
+
+  async editComment(work, commentIdHex, patch) {
+    this._requireIdentity()
+    const text = String((patch && patch.text) || '').trim()
+    if (!text) throw new Error('Commentaire vide')
+    const room = await this._room(work)
+    const release = this._retain(room, work)
+    try {
+      await this._append(room.base, 'edit', 'work:' + work, { id: commentIdHex, text, spoiler: !!(patch && patch.spoiler) }, { nonceBits: pow.DIFFICULTY.like })
+    } finally {
+      release()
+    }
+  }
+
+  async deleteComment(work, commentIdHex) {
+    this._requireIdentity()
+    const room = await this._room(work)
+    const release = this._retain(room, work)
+    try {
+      await this._append(room.base, 'delete', 'work:' + work, { id: commentIdHex }, { nonceBits: pow.DIFFICULTY.like })
     } finally {
       release()
     }

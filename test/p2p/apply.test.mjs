@@ -236,6 +236,42 @@ test('room: likes toggle once per identity; vouch lowers difficulty', async () =
   assert.ok(await view.get('c/' + bobComment.value.body.id), 'vouched key posts with the lower difficulty')
 })
 
+test('room: only the author can edit or delete; deleted comments stay deleted', async () => {
+  const apply = createRoomApply('77')
+  const view = new FakeView()
+  const alice = await makeUser()
+  const bob = await makeUser()
+  const wa = alice.writer()
+  const wb = bob.writer()
+  const c1 = await comment(alice, wa, { text: 'avant' })
+  await apply([c1, await comment(bob, wb)], view, null)
+  const id = c1.value.body.id
+  const act = (user, w, t, body, withAuth = false) => node(user, w, t, 'work:77', body, { bits: powMod.DIFFICULTY.like, withAuth })
+
+  // Bob cannot touch Alice's comment.
+  await apply([await act(bob, wb, 'edit', { id, text: 'pirate', spoiler: false }), await act(bob, wb, 'delete', { id })], view, null)
+  assert.equal((await view.get('c/' + id)).value.text, 'avant')
+  assert.ok(!(await view.get('c/' + id)).value.deleted)
+
+  // Alice edits, then deletes; an edit after deletion is refused.
+  await apply([await act(alice, wa, 'edit', { id, text: 'après', spoiler: true })], view, null)
+  let c = (await view.get('c/' + id)).value
+  assert.equal(c.text, 'après')
+  assert.equal(c.spoiler, true)
+  assert.ok(c.editedAt > c.createdAt)
+  await apply([await act(alice, wa, 'delete', { id })], view, null)
+  c = (await view.get('c/' + id)).value
+  assert.equal(c.deleted, true)
+  assert.equal(c.text, '')
+  await apply([await act(alice, wa, 'edit', { id, text: 'retour', spoiler: false })], view, null)
+  assert.equal((await view.get('c/' + id)).value.text, '')
+
+  // Schema: empty edit text and unknown fields are rejected before apply.
+  const bad = await act(alice, wa, 'edit', { id, text: '   ', spoiler: false })
+  await apply([bad], view, null)
+  assert.equal((await view.get('c/' + id)).value.deleted, true)
+})
+
 test('room: same linearized nodes give byte-identical views (determinism)', async () => {
   const alice = await makeUser()
   const bob = await makeUser()

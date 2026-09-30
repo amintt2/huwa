@@ -69,7 +69,7 @@ function commentBody(b, work) {
 }
 
 function roomNode(value, work) {
-  if (!envelope(value, ['comment', 'like', 'vouch', 'bind'])) return false
+  if (!envelope(value, ['comment', 'like', 'edit', 'delete', 'vouch', 'bind'])) return false
   if (value.room !== 'work:' + work) return false
   const b = value.body
   switch (value.t) {
@@ -77,6 +77,17 @@ function roomNode(value, work) {
       return isNonce(value.nonce) && commentBody(b, work)
     case 'like':
       return isNonce(value.nonce) && onlyKeys(b, ['id', 'on']) && isId(b.id) && isBool(b.on)
+    case 'edit':
+      return (
+        isNonce(value.nonce) &&
+        onlyKeys(b, ['id', 'text', 'spoiler']) &&
+        isId(b.id) &&
+        isStr(b.text, LIMITS.text) &&
+        b.text.trim().length > 0 &&
+        isBool(b.spoiler)
+      )
+    case 'delete':
+      return isNonce(value.nonce) && onlyKeys(b, ['id']) && isId(b.id)
     case 'vouch':
       return isNonce(value.nonce) && onlyKeys(b, ['key']) && isKey(b.key)
     case 'bind':

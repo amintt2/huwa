@@ -10,6 +10,7 @@ import {
   Platform,
   Pressable,
   ScrollView,
+  Share,
   StyleSheet,
   TextInput,
   View,
@@ -50,49 +51,76 @@ const shortFp = (key: string) => {
   return v;
 };
 
-/** Long press: profile, message, report, block — native action sheet on iOS. */
-export function commentActions(c: Pick<Row, 'id' | 'author' | 'authorName'>, meKey?: string) {
+/** Long press or "…": edit/delete for your own comments, profile/message/report/block for others. */
+export function commentActions(
+  c: Pick<Row, 'id' | 'author' | 'authorName' | 'text' | 'target'>,
+  meKey?: string,
+  opts: { onEdit?: () => void; onReply?: () => void } = {},
+) {
   const mine = c.author === meKey;
-  const actions: { label: string; destructive?: boolean; run: () => void }[] = [
-    { label: mine ? 'Voir mon profil' : `Voir le profil de ${c.authorName}`, run: () => router.push(`/u/${c.author}`) },
-  ];
-  if (!mine) {
-    actions.push(
-      { label: 'Envoyer un message', run: () => router.push(`/dm/${c.author}`) },
-      {
-        label: 'Signaler (spam)',
-        run: () => social.report(c.id, 'spam').then(() => Alert.alert('Merci', 'Ce commentaire est masqué pour toi et ton signalement est publié.')),
-      },
-      { label: 'Signaler un spoiler non marqué', run: () => social.report(c.id, 'spoiler') },
-      {
-        label: `Bloquer ${c.authorName}`,
-        destructive: true,
-        run: () =>
-          Alert.alert(`Bloquer ${c.authorName} ?`, 'Tu ne verras plus ses commentaires ni ses messages. Ton blocage est visible par ceux qui s’abonnent à ta liste.', [
-            { text: 'Annuler', style: 'cancel' },
-            { text: 'Bloquer', style: 'destructive', onPress: () => social.setBlocked(c.author, true) },
-          ]),
-      },
-    );
-  }
+  type Action = { label: string; destructive?: boolean; run: () => void };
+  const share: Action = { label: 'Partager le texte', run: () => Share.share({ message: `« ${c.text} » — ${c.authorName} sur Huwa` }) };
+  const actions: Action[] = mine
+    ? [
+        ...(opts.onEdit ? [{ label: 'Modifier', run: opts.onEdit }] : []),
+        share,
+        { label: 'Voir mon profil', run: () => router.push(`/u/${c.author}`) },
+        {
+          label: 'Supprimer',
+          destructive: true,
+          run: () =>
+            Alert.alert('Supprimer ce commentaire ?', 'Il disparaît pour tout le monde. Les réponses restent visibles.', [
+              { text: 'Annuler', style: 'cancel' },
+              {
+                text: 'Supprimer',
+                style: 'destructive',
+                onPress: () =>
+                  social
+                    .deleteComment(seriesOfTarget(c.target), c.id)
+                    .then(() => Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success))
+                    .catch((e) => Alert.alert('Suppression impossible', e instanceof Error ? e.message : String(e))),
+              },
+            ]),
+        },
+      ]
+    : [
+        ...(opts.onReply ? [{ label: 'Répondre', run: opts.onReply }] : []),
+        share,
+        { label: `Voir le profil de ${c.authorName}`, run: () => router.push(`/u/${c.author}`) },
+        { label: 'Envoyer un message', run: () => router.push(`/dm/${c.author}`) },
+        {
+          label: 'Signaler (spam)',
+          run: () => social.report(c.id, 'spam').then(() => Alert.alert('Merci', 'Ce commentaire est masqué pour toi et ton signalement est publié.')),
+        },
+        { label: 'Signaler un spoiler non marqué', run: () => social.report(c.id, 'spoiler') },
+        {
+          label: `Bloquer ${c.authorName}`,
+          destructive: true,
+          run: () =>
+            Alert.alert(`Bloquer ${c.authorName} ?`, 'Tu ne verras plus ses commentaires ni ses messages. Ton blocage est visible par ceux qui s’abonnent à ta liste.', [
+              { text: 'Annuler', style: 'cancel' },
+              { text: 'Bloquer', style: 'destructive', onPress: () => social.setBlocked(c.author, true) },
+            ]),
+        },
+      ];
   Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
   if (Platform.OS === 'ios') {
     ActionSheetIOS.showActionSheetWithOptions(
       {
         options: [...actions.map((a) => a.label), 'Annuler'],
         cancelButtonIndex: actions.length,
-        destructiveButtonIndex: mine ? undefined : actions.length - 1,
+        destructiveButtonIndex: actions.length - 1,
         userInterfaceStyle: 'dark',
       },
       (i) => actions[i]?.run(),
     );
   } else {
-    // Android alerts hold 3 buttons: profile, message, then a second level for moderation.
+    // Android alerts hold 3 buttons: the first two actions, then a second level for the rest.
     const more = actions.slice(2);
     Alert.alert(c.authorName, undefined, [
       ...actions.slice(0, 2).map((a) => ({ text: a.label, onPress: a.run })),
       ...(more.length
-        ? [{ text: 'Signaler / bloquer…', onPress: () => Alert.alert(c.authorName, undefined, more.map((a) => ({ text: a.label, onPress: a.run }))) }]
+        ? [{ text: 'Plus…', onPress: () => Alert.alert(c.authorName, undefined, more.map((a) => ({ text: a.label, onPress: a.run }))) }]
         : [{ text: 'Annuler', style: 'cancel' as const }]),
     ]);
   }
@@ -105,6 +133,7 @@ function CommentRow({
   small,
   meKey,
   onReply,
+  onEdit,
   onSeek,
 }: {
   c: Row;
@@ -113,6 +142,7 @@ function CommentRow({
   small?: boolean;
   meKey?: string;
   onReply?: (c: Row) => void;
+  onEdit?: (c: Row) => void;
   onSeek?: (t: number) => void;
 }) {
   const [revealed, setRevealed] = useState(false);
@@ -120,11 +150,27 @@ function CommentRow({
   const name = pet || c.authorName;
   const masked = c.verdict.spoiler && hideSpoilers && !revealed;
   const openProfile = () => router.push(`/u/${c.author}`);
+  const menu = () =>
+    commentActions({ ...c, authorName: name }, meKey, {
+      onEdit: onEdit && (() => onEdit(c)),
+      onReply: onReply && (() => onReply(c)),
+    });
+
+  // Deleted by its author: only a placeholder remains, so replies keep their context.
+  if (c.deleted) {
+    return (
+      <View style={{ flexDirection: 'row', gap: 10, alignItems: 'center' }}>
+        <View style={[styles.ghostAvatar, small && { width: 26, height: 26, borderRadius: 13 }]} />
+        <Txt v="small" style={{ fontStyle: 'italic' }}>Commentaire supprimé par son auteur</Txt>
+      </View>
+    );
+  }
+
   return (
     <Pressable
-      onLongPress={() => commentActions({ ...c, authorName: name }, meKey)}
+      onLongPress={menu}
       delayLongPress={350}
-      accessibilityHint="Appui long pour signaler, bloquer ou écrire à l’auteur"
+      accessibilityHint="Appui long pour plus d’options"
       style={{ flexDirection: 'row', gap: 10 }}>
       <Pressable onPress={openProfile} hitSlop={6} accessibilityRole="link" accessibilityLabel={`Profil de ${name}`}>
         <Avatar seed={c.author} name={name} size={small ? 26 : 34} />
@@ -147,7 +193,7 @@ function CommentRow({
               <Txt v="caption" color={C.accentText} style={{ fontSize: 11 }}>{fmtTime(c.timestamp)}</Txt>
             </Pressable>
           )}
-          <Txt v="small">· {ago(c.createdAt)}</Txt>
+          <Txt v="small">· {ago(c.createdAt)}{c.editedAt ? ' · modifié' : ''}</Txt>
         </View>
         {masked ? (
           <Press onPress={() => setRevealed(true)} style={styles.spoiler} accessibilityLabel="Afficher le spoiler">
@@ -176,6 +222,9 @@ function CommentRow({
               <Txt v="small" style={{ ...F.semibold }}>Répondre</Txt>
             </Pressable>
           )}
+          <Pressable hitSlop={12} onPress={menu} accessibilityRole="button" accessibilityLabel="Plus d’options" style={{ marginLeft: 'auto' }}>
+            <Ionicons name="ellipsis-horizontal" size={16} color={C.text2} />
+          </Pressable>
         </View>
       </View>
     </Pressable>
@@ -208,6 +257,7 @@ export function CommentsPanel({
   const [spoiler, setSpoiler] = useState(false);
   const [stamp, setStamp] = useState(!!getTime);
   const [replyTo, setReplyTo] = useState<Row | null>(null);
+  const [editing, setEditing] = useState<Row | null>(null);
   const [sending, setSending] = useState(false);
   const input = useRef<TextInput>(null);
   // Proof of work is solved in the background while typing → sending feels instant.
@@ -215,12 +265,14 @@ export function CommentsPanel({
 
   const { roots, replies } = useMemo(() => {
     const ids = new Set(thread.map((c) => c.id));
-    const roots = thread.filter((c) => !c.parentId);
+    const hasReplies = new Set(thread.filter((c) => c.parentId && !c.deleted).map((c) => c.parentId));
+    // A deleted comment only stays (as a placeholder) when live replies hang off it.
+    const roots = thread.filter((c) => !c.parentId && (!c.deleted || hasReplies.has(c.id)));
     roots.sort((a, b) => (sort === 'top' ? b.likes - a.likes : b.createdAt - a.createdAt));
     const replies = new Map<string, Row[]>();
     for (const c of thread) {
       // Replies to a masked comment stay masked with it.
-      if (!c.parentId || !ids.has(c.parentId)) continue;
+      if (!c.parentId || !ids.has(c.parentId) || c.deleted) continue;
       replies.set(c.parentId, [...(replies.get(c.parentId) ?? []), c].sort((a, b) => a.createdAt - b.createdAt));
     }
     return { roots, replies };
@@ -231,6 +283,14 @@ export function CommentsPanel({
     if (!body || sending) return;
     setSending(true);
     try {
+      if (editing) {
+        await social.editComment(seriesOfTarget(editing.target), editing.id, { text: body, spoiler });
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+        setText('');
+        setSpoiler(false);
+        setEditing(null);
+        return;
+      }
       await social.postComment({
         target,
         text: body,
@@ -244,10 +304,23 @@ export function CommentsPanel({
       setReplyTo(null);
     } catch (e) {
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
-      Alert.alert('Commentaire non publié', e instanceof Error ? e.message : 'Réessaie dans un instant.');
+      Alert.alert(editing ? 'Modification non enregistrée' : 'Commentaire non publié', e instanceof Error ? e.message : 'Réessaie dans un instant.');
     } finally {
       setSending(false);
     }
+  };
+
+  const startEdit = (c: Row) => {
+    setReplyTo(null);
+    setEditing(c);
+    setText(c.text);
+    setSpoiler(c.spoiler);
+    input.current?.focus();
+  };
+  const cancelEdit = () => {
+    setEditing(null);
+    setText('');
+    setSpoiler(false);
   };
 
   const pill = (on: boolean) => [styles.pill, on && { backgroundColor: C.text }];
@@ -277,11 +350,11 @@ export function CommentsPanel({
           {roots.map((c) => (
             <View key={c.id} style={{ gap: 10 }}>
               <CommentRow c={c} kind={kind} hideSpoilers={hideSpoilers} onSeek={onSeek} meKey={me?.key}
-                onReply={(r) => { setReplyTo(r); input.current?.focus(); }} />
+                onReply={(r) => { setEditing(null); setReplyTo(r); input.current?.focus(); }} onEdit={startEdit} />
               {(replies.get(c.id) ?? []).map((r) => (
                 <View key={r.id} style={{ paddingLeft: 44 }}>
                   <CommentRow c={r} kind={kind} hideSpoilers={hideSpoilers} small onSeek={onSeek} meKey={me?.key}
-                    onReply={(x) => { setReplyTo(x); input.current?.focus(); }} />
+                    onReply={(x) => { setEditing(null); setReplyTo(x); input.current?.focus(); }} onEdit={startEdit} />
                 </View>
               ))}
             </View>
@@ -301,7 +374,13 @@ export function CommentsPanel({
 
       <View style={[styles.composer, { paddingBottom: Math.max(insets.bottom, S.md) }]}>
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: S.sm, flexWrap: 'wrap' }}>
-          {replyTo ? (
+          {editing ? (
+            <Pressable onPress={cancelEdit} style={[styles.replyTag, { backgroundColor: C.accentSoft }]} accessibilityLabel="Annuler la modification">
+              <Ionicons name="create-outline" size={14} color={C.accentText} />
+              <Txt v="small" color={C.accentText}>Modification</Txt>
+              <Ionicons name="close" size={14} color={C.accentText} />
+            </Pressable>
+          ) : replyTo ? (
             <Pressable onPress={() => setReplyTo(null)} style={styles.replyTag} accessibilityLabel="Annuler la réponse">
               <Txt v="small">Réponse à <Txt v="small" color={C.text}>{replyTo.authorName}</Txt></Txt>
               <Ionicons name="close" size={14} color={C.text2} />
@@ -324,7 +403,7 @@ export function CommentsPanel({
             ref={input}
             value={text}
             onChangeText={setText}
-            placeholder="Ajouter un commentaire…"
+            placeholder={editing ? 'Modifier ton commentaire…' : 'Ajouter un commentaire…'}
             placeholderTextColor="#8A8AA0"
             style={styles.input}
             multiline
@@ -333,9 +412,9 @@ export function CommentsPanel({
           <Press
             onPress={send}
             disabled={!text.trim() || sending}
-            accessibilityLabel={sending ? 'Publication en cours' : 'Envoyer'}
+            accessibilityLabel={sending ? 'Publication en cours' : editing ? 'Enregistrer la modification' : 'Envoyer'}
             style={[styles.send, { backgroundColor: kindFill(kind), opacity: text.trim() ? 1 : 0.4 }]}>
-            {sending ? <ActivityIndicator color={kindOnFill(kind)} /> : <Ionicons name="arrow-up" size={20} color={kindOnFill(kind)} />}
+            {sending ? <ActivityIndicator color={kindOnFill(kind)} /> : <Ionicons name={editing ? 'checkmark' : 'arrow-up'} size={20} color={kindOnFill(kind)} />}
           </Press>
         </View>
       </View>
@@ -349,6 +428,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row', alignItems: 'center', gap: 3, paddingVertical: 2, paddingHorizontal: 6,
     borderRadius: 5, backgroundColor: C.accentSoft,
   },
+  ghostAvatar: { width: 34, height: 34, borderRadius: 17, backgroundColor: C.elevated },
   spoiler: {
     minHeight: 44, flexDirection: 'row', alignItems: 'center', gap: 10, paddingHorizontal: S.md,
     borderRadius: 12, backgroundColor: C.elevated,

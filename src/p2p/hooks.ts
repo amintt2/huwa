@@ -280,6 +280,8 @@ export const social = {
     return posted;
   },
   toggleLike: (seriesId: string, id: string) => p2p().toggleLike(seriesId, id),
+  editComment: (seriesId: string, id: string, patch: { text: string; spoiler: boolean }) => p2p().editComment(seriesId, id, patch),
+  deleteComment: (seriesId: string, id: string) => p2p().deleteComment(seriesId, id),
 
   async setFollow(key: string, on: boolean) {
     setPrefs((p) => ({ ...p, follows: toggleIn(p.follows, key, on) }));

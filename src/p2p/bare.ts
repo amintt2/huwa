@@ -312,6 +312,12 @@ export class BareP2P implements P2P {
   toggleLike(seriesId: string, commentId: string) {
     return this.call<void>('toggleLike', [seriesId, commentId]);
   }
+  editComment(seriesId: string, commentId: string, patch: { text: string; spoiler: boolean }) {
+    return this.call<void>('editComment', [seriesId, commentId, patch]);
+  }
+  deleteComment(seriesId: string, commentId: string) {
+    return this.call<void>('deleteComment', [seriesId, commentId]);
+  }
 
   follow(key: PublicKey) {
     return this.call<void>('follow', [key]);

@@ -109,6 +109,21 @@ async function roomStep(view, node, writer, work) {
     return true
   }
 
+  // Edit / delete: only the comment's author, never on a deleted comment. A deleted comment keeps
+  // its id (replies still point at it) but loses its text.
+  if (v.t === 'edit' || v.t === 'delete') {
+    if (!pow.check(pow.powPayload(v, writer.w), v.nonce, pow.DIFFICULTY.like)) return false
+    const comment = await get(view, 'c/' + b.id)
+    if (!comment || comment.deleted || comment.author !== author) return false
+    if (v.ts <= comment.createdAt) return false
+    if (v.t === 'delete') {
+      await view.put('c/' + b.id, { ...comment, text: '', spoiler: false, deleted: true, editedAt: v.ts })
+    } else {
+      await view.put('c/' + b.id, { ...comment, text: b.text, spoiler: b.spoiler, editedAt: v.ts })
+    }
+    return true
+  }
+
   if (v.t === 'vouch') {
     if (!stats || stats.n < 5) return false
     if (!pow.check(pow.powPayload(v, writer.w), v.nonce, pow.difficultyFor(stats))) return false

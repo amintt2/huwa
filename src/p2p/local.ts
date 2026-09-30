@@ -451,6 +451,36 @@ export function createLocalP2P(): P2P {
       emitComments(seriesId);
     },
 
+    async editComment(seriesId, commentId, patch) {
+      await ready;
+      const { profile, secret: sk } = requireMe();
+      const text = patch.text.trim();
+      if (!text) throw new Error('Commentaire vide.');
+      if (text.length > MAX_COMMENT) throw new Error(`${MAX_COMMENT} caractères maximum.`);
+      const list = db.comments[seriesId] ?? [];
+      const i = list.findIndex((x) => x.id === commentId);
+      if (i < 0 || list[i].author !== profile.key || list[i].deleted) throw new Error('Tu ne peux modifier que tes propres commentaires.');
+      const { pow: _p, sig: _s, ...body } = list[i];
+      const next = { ...body, text, spoiler: patch.spoiler, editedAt: Date.now() };
+      list[i] = { ...next, sig: sign(hashHex(JSON.stringify(next)), sk) };
+      save();
+      emitComments(seriesId);
+    },
+
+    async deleteComment(seriesId, commentId) {
+      await ready;
+      const { profile, secret: sk } = requireMe();
+      const list = db.comments[seriesId] ?? [];
+      const i = list.findIndex((x) => x.id === commentId);
+      if (i < 0 || list[i].author !== profile.key) throw new Error('Tu ne peux supprimer que tes propres commentaires.');
+      const { pow: _p, sig: _s, ...body } = list[i];
+      const next = { ...body, text: '', spoiler: false, deleted: true, editedAt: Date.now() };
+      list[i] = { ...next, sig: sign(hashHex(JSON.stringify(next)), sk) };
+      delete db.likes[commentId];
+      save();
+      emitComments(seriesId);
+    },
+
     // ---------- moderation ----------
 
     async follow(key) {

@@ -21,6 +21,8 @@ const METHODS = new Set([
   'identityLog',
   'postComment',
   'toggleLike',
+  'editComment',
+  'deleteComment',
   'vouch',
   'listComments',
   'follow',
