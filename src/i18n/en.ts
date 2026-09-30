@@ -72,6 +72,12 @@ export const en: Record<Key, string> = {
   'calendar.all': 'All',
   'calendar.aired': 'Aired',
   'calendar.emptyMine': 'Nothing from your list airs this week.',
+  'calendar.next': 'Next episode',
+  'calendar.in': 'in {time}',
+  'calendar.count': '{n} releases',
+  'calendar.ep': 'Ep. {n}',
+  'calendar.new': 'New',
+  'calendar.final': 'Final',
 
   'lists.title': 'My lists',
   'lists.myList': 'My list',

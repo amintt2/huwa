@@ -218,6 +218,10 @@ export type AiringItem = {
   image?: string;
   color: string | null;
   format: string | null;
+  /** Total episodes when announced (for the "Final" badge). */
+  episodes?: number | null;
+  /** Popularity on AniList, to put the most followed series first. */
+  popularity?: number;
   /** Catalog id when it is not `al<anilistId>` (demo schedule). */
   seriesId?: string;
 };
@@ -238,8 +242,10 @@ export async function fetchAiring(from: number, to: number, signal?: AbortSignal
             id: number;
             isAdult: boolean;
             format: string | null;
+            episodes: number | null;
+            popularity: number;
             title: { english: string | null; userPreferred: string };
-            coverImage: { large: string; color: string | null };
+            coverImage: { large: string; extraLarge: string | null; color: string | null };
           } | null;
         }[];
       };
@@ -247,7 +253,7 @@ export async function fetchAiring(from: number, to: number, signal?: AbortSignal
       `query ($page: Int, $from: Int, $to: Int) { Page(page: $page, perPage: 50) {
         pageInfo { hasNextPage }
         airingSchedules(airingAt_greater: $from, airingAt_lesser: $to, sort: TIME) {
-          id episode airingAt media { id isAdult format title { english userPreferred } coverImage { large color } } } } }`,
+          id episode airingAt media { id isAdult format episodes popularity title { english userPreferred } coverImage { large extraLarge color } } } } }`,
       { page, from, to },
       { signal },
     );
@@ -259,9 +265,11 @@ export async function fetchAiring(from: number, to: number, signal?: AbortSignal
         airingAt: a.airingAt,
         anilistId: a.media.id,
         title: a.media.title.english ?? a.media.title.userPreferred,
-        image: a.media.coverImage.large,
+        image: a.media.coverImage.extraLarge ?? a.media.coverImage.large,
         color: a.media.coverImage.color,
         format: a.media.format,
+        episodes: a.media.episodes,
+        popularity: a.media.popularity,
       });
     }
     if (!data.Page.pageInfo.hasNextPage) break;

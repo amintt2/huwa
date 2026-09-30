@@ -76,6 +76,12 @@ export const fr = {
   'calendar.all': 'Tout',
   'calendar.aired': 'Diffusé',
   'calendar.emptyMine': 'Aucune série de ta liste ne sort cette semaine.',
+  'calendar.next': 'Prochain épisode',
+  'calendar.in': 'dans {time}',
+  'calendar.count': '{n} sorties',
+  'calendar.ep': 'Ép. {n}',
+  'calendar.new': 'Nouveau',
+  'calendar.final': 'Final',
 
   // lists
   'lists.title': 'Mes listes',
