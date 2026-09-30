@@ -64,7 +64,12 @@ export function buildTracks(embedded: EmbeddedInput[], external: ExternalInput[]
   return [...local, ...out];
 }
 
-export type AutoPrefs = { enabled: boolean; languages: string[] };
+export type AutoPrefs = {
+  enabled: boolean;
+  languages: string[];
+  /** Watching a dub: only "forced" tracks (signs, foreign dialogue) are picked automatically. */
+  forcedOnly?: boolean;
+};
 
 /** Best track key for the preferences, or `off`. */
 export function chooseTrack(tracks: Track[], prefs: AutoPrefs): string {
@@ -72,7 +77,7 @@ export function chooseTrack(tracks: Track[], prefs: AutoPrefs): string {
   for (const pref of prefs.languages) {
     const cands = tracks
       .map((t, i) => ({ t, i }))
-      .filter(({ t }) => t.kind !== 'local' && langMatches(t.lang, pref));
+      .filter(({ t }) => t.kind !== 'local' && langMatches(t.lang, pref) && (!prefs.forcedOnly || t.forced));
     if (!cands.length) continue;
     // Exact language beats a variant (`pt` pref: `pt` before `pt-br`).
     const p = normLang(pref);

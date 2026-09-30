@@ -8,6 +8,7 @@ import { File } from 'expo-file-system';
 import { useEffect, useMemo, useState } from 'react';
 import { Platform } from 'react-native';
 
+import { useSettings } from '@/settings/settings';
 import { formatFromName, parseSubtitleBytes, parseSubtitleText, SubtitleParseError, type ParsedFile } from '@/subtitles/parse';
 import { preferLanguage, setSubtitleOffset, setSubtitlePrefs, useSubtitleOffset, useSubtitlePrefs } from '@/subtitles/prefs';
 import { buildTracks, chooseTrack, groupTracks, type EmbeddedInput, type Track } from '@/subtitles/select';
@@ -88,6 +89,7 @@ export function useSubtitleController({
   mediaKey?: string;
 }) {
   const prefs = useSubtitlePrefs();
+  const { subLangs, watchMode } = useSettings();
   const [locals, setLocals] = useState<LocalTrack[]>([]);
   const [userKey, setUserKey] = useState<string | undefined>();
   const [picking, setPicking] = useState(false);
@@ -102,7 +104,10 @@ export function useSubtitleController({
       ),
     [embedded, external, locals],
   );
-  const autoKey = useMemo(() => chooseTrack(tracks, prefs), [tracks, prefs]);
+  const autoKey = useMemo(
+    () => chooseTrack(tracks, { enabled: prefs.enabled, languages: subLangs, forcedOnly: watchMode === 'dub' }),
+    [tracks, prefs.enabled, subLangs, watchMode],
+  );
   const key = userKey && (userKey === 'off' || tracks.some((t) => t.key === userKey)) ? userKey : autoKey;
   const selected = tracks.find((t) => t.key === key);
 
@@ -162,7 +167,7 @@ export function useSubtitleController({
 
   return {
     tracks,
-    groups: groupTracks(tracks.filter((t) => t.kind !== 'local'), prefs.languages),
+    groups: groupTracks(tracks.filter((t) => t.kind !== 'local'), subLangs),
     locals: locals.map((l) => l.track),
     selectedKey: key,
     selected,

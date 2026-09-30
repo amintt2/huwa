@@ -4,6 +4,7 @@ import Ionicons from '@expo/vector-icons/Ionicons';
 import { ActivityIndicator, Modal, Pressable, ScrollView, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
+import { FLAG } from '@/components/language-prefs';
 import { Txt } from '@/components/ui';
 import { langName } from '@/subtitles/lang';
 import { useSubtitlePrefs } from '@/subtitles/prefs';
@@ -90,7 +91,7 @@ export function SubtitleSheet({ visible, onClose, ctl }: { visible: boolean; onC
             <TrackRow track={null} on={ctl.selectedKey === 'off'} onPress={() => ctl.select('off')} />
             {ctl.groups.map((g) => (
               <View key={g.lang} style={{ gap: 6 }}>
-                <Txt v="small" style={styles.groupTitle}>{g.title}</Txt>
+                <Txt v="small" style={styles.groupTitle}>{FLAG[g.lang.split('-')[0]] ? `${FLAG[g.lang.split('-')[0]]}  ` : ''}{g.title}</Txt>
                 {g.tracks.map((t) => {
                   const on = t.key === ctl.selectedKey;
                   return <TrackRow key={t.key} track={t} on={on} busy={on && ctl.loading} onPress={() => ctl.select(t.key)} hint={trackHint(t, on ? ctl.loadedFormat : undefined)} />;

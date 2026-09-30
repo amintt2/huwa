@@ -339,16 +339,18 @@ test('auto choice: preferred language, then source, then non-forced', () => {
     { url: 'https://x/full.fr.srt', lang: 'fr', source: 'OS' },
   ]);
   assert.equal(chooseTrack(same, { enabled: true, languages: ['fr'] }), 'ext:https://x/full.fr.srt');
+  // Watching a dub: only forced (signs) tracks are auto-selected.
+  assert.equal(chooseTrack(same, { enabled: true, languages: ['fr'], forcedOnly: true }), 'ext:https://x/forced.fr.srt');
+  assert.equal(chooseTrack(noEmb, { enabled: true, languages: ['fr'], forcedOnly: true }), 'off');
   const groups = groupTracks(tracks, ['fr', 'en']);
   assert.deepEqual(groups.map((g) => g.title), ['Français', 'Anglais']);
   assert.equal(tracks.find((t) => t.url === 'https://c/3.ass')!.format, 'ass');
 });
 
 test('prefs are sanitised', () => {
-  const p = sanitizeSubtitlePrefs({ size: 99, font: 'comic-sans', color: 'red', languages: ['fr'], bold: false });
+  const p = sanitizeSubtitlePrefs({ size: 99, font: 'comic-sans', color: 'red', bold: false });
   assert.equal(p.size, DEFAULT_SUBTITLE_PREFS.size);
   assert.equal(p.font, 'nunito');
   assert.equal(p.color, '#FFFFFF');
-  assert.deepEqual(p.languages, ['fr']);
   assert.equal(p.bold, false);
 });

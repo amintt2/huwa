@@ -11,6 +11,7 @@ import { usePrefs } from '@/p2p/prefs';
 import { resetAll } from '@/store/store';
 import { langName } from '@/subtitles/lang';
 import { useSubtitlePrefs } from '@/subtitles/prefs';
+import { useSettings } from '@/settings/settings';
 import { C, S } from '@/theme/tokens';
 
 export default function Settings() {
@@ -23,7 +24,8 @@ export default function Settings() {
   const addonCount = useAddons().filter((a) => a.enabled).length;
   const mangaSources = useMangaExt().installed.filter((s) => s.enabled).length;
   const subPrefs = useSubtitlePrefs();
-  const subtitleDetail = subPrefs.enabled ? subPrefs.languages.map(langName).join(', ') || 'Aucune langue' : 'Désactivés';
+  const { subLangs } = useSettings();
+  const subtitleDetail = subPrefs.enabled ? subLangs.map(langName).join(', ') : 'Désactivés';
 
   const network =
     status.state === 'ready' && status.peers === 0

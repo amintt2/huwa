@@ -2,14 +2,15 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useSyncExternalStore } from 'react';
 
+import { getSettings, setSetting } from '@/settings/settings';
+
 export type FontId = 'nunito' | 'system' | 'atkinson' | 'mplus' | 'comic' | 'merriweather' | 'mono';
 export type Background = 'none' | 'box' | 'band';
 
 export type SubtitlePrefs = {
-  /** Subtitles on by default when a track in a preferred language exists. */
+  /** Subtitles on by default when a track in a preferred language exists.
+   *  The languages themselves are the app setting `subLangs` (onboarding / Général → Langues). */
   enabled: boolean;
-  /** Preferred languages, highest priority first. */
-  languages: string[];
   font: FontId;
   /** 0..5 (see SIZE_LEVELS). */
   size: number;
@@ -86,7 +87,6 @@ export const BG_OPACITIES = [0.35, 0.55, 0.75, 0.9] as const;
 
 export const DEFAULT_SUBTITLE_PREFS: SubtitlePrefs = {
   enabled: true,
-  languages: ['fr', 'en'],
   font: 'nunito',
   size: 2,
   color: '#FFFFFF',
@@ -109,7 +109,6 @@ export function sanitizeSubtitlePrefs(raw: unknown): SubtitlePrefs {
   const int = (x: unknown, max: number, fb: number) => (typeof x === 'number' && Number.isInteger(x) && x >= 0 && x <= max ? x : fb);
   return {
     enabled: typeof v.enabled === 'boolean' ? v.enabled : d.enabled,
-    languages: Array.isArray(v.languages) && v.languages.every((l) => typeof l === 'string') ? v.languages.slice(0, 8) : d.languages,
     font: FONTS.includes(v.font as FontId) ? (v.font as FontId) : d.font,
     size: int(v.size, SIZE_LEVELS.length - 1, d.size),
     color: typeof v.color === 'string' && HEX.test(v.color) ? v.color : d.color,
@@ -148,14 +147,17 @@ export function setSubtitlePrefs(patch: Partial<SubtitlePrefs>) {
 }
 
 export function resetSubtitleStyle() {
-  const { enabled, languages } = prefs;
-  setSubtitlePrefs({ ...DEFAULT_SUBTITLE_PREFS, enabled, languages });
+  setSubtitlePrefs({ ...DEFAULT_SUBTITLE_PREFS, enabled: prefs.enabled });
 }
 
-/** Picking a track teaches the preferred language (moved to the front). */
+/** Picking a track teaches the preferred language: moved to the front of `subLangs` (max 5). */
 export function preferLanguage(lang: string) {
-  if (!lang || lang === 'und') return setSubtitlePrefs({ enabled: true });
-  setSubtitlePrefs({ enabled: true, languages: [lang, ...prefs.languages.filter((l) => l !== lang)] });
+  setSubtitlePrefs({ enabled: true });
+  const base = lang.split('-')[0];
+  if (!/^[a-z]{2}$/.test(base)) return;
+  const cur = getSettings().subLangs;
+  if (cur[0] === base) return;
+  setSetting('subLangs', [base, ...cur.filter((l) => l !== base)].slice(0, 5));
 }
 
 const subscribe = (l: () => void) => {
