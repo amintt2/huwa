@@ -81,7 +81,7 @@ export function commentActions(c: Pick<Row, 'id' | 'author' | 'authorName'>, meK
       {
         options: [...actions.map((a) => a.label), 'Annuler'],
         cancelButtonIndex: actions.length,
-        destructiveButtonIndex: actions.findIndex((a) => a.destructive),
+        destructiveButtonIndex: mine ? undefined : actions.length - 1,
         userInterfaceStyle: 'dark',
       },
       (i) => actions[i]?.run(),
