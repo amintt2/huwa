@@ -1,7 +1,7 @@
 // Routes an install link to the right sheet: Stremio addon (video) or Paperback repository
 // (manhwa, handled by the `/manga-sources` screen).
 import { useLinkingURL } from 'expo-linking';
-import { router, type Href } from 'expo-router';
+import { router } from 'expo-router';
 import { useEffect } from 'react';
 import { ActivityIndicator, View } from 'react-native';
 
