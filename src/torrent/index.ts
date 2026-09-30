@@ -95,7 +95,9 @@ export function addStatusListener(cb: (torrents: TorrentStatus[]) => void): () =
   if (!Native || !isAvailable()) return () => {};
   const sub = Native.addListener('onTorrentStatus', (e) => {
     try {
-      cb(JSON.parse(e.json) as TorrentStatus[]);
+      // Same `{ok}` / `{error}` envelope as `call`: the native side forwards `list` as is.
+      const l = unwrap<TorrentStatus[]>(e.json);
+      if (Array.isArray(l)) cb(l);
     } catch {
       // malformed event, ignore
     }
@@ -109,7 +111,7 @@ export function useTorrentList() {
   useEffect(() => {
     if (!isAvailable()) return;
     let cancelled = false;
-    list().then((l) => !cancelled && setItems(l)).catch(() => {});
+    list().then((l) => !cancelled && Array.isArray(l) && setItems(l)).catch(() => {});
     const off = addStatusListener((l) => !cancelled && setItems(l));
     return () => {
       cancelled = true;

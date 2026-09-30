@@ -17,7 +17,8 @@ huwa_torrent_flag_enabled = lambda do
   end
 end
 
-xcframework_rel = '../../../native/huwa-torrent-core/dist/HuwaTorrentCore.xcframework'
+# Copied here by scripts/build-torrent.sh ios: CocoaPods ignores vendored paths outside the pod folder.
+xcframework_rel = 'HuwaTorrentCore.xcframework'
 xcframework_abs = File.expand_path(File.join(__dir__, xcframework_rel))
 flag_on = huwa_torrent_flag_enabled.call
 link_rust = flag_on && File.directory?(xcframework_abs)
@@ -42,6 +43,7 @@ Pod::Spec.new do |s|
   s.dependency 'ExpoModulesCore'
 
   s.source_files = '**/*.{h,m,swift}'
+  s.exclude_files = 'HuwaTorrentCore.xcframework/**/*'
 
   xcconfig = {
     'DEFINES_MODULE' => 'YES',
@@ -51,9 +53,6 @@ Pod::Spec.new do |s|
   if link_rust
     s.vendored_frameworks = xcframework_rel
     xcconfig['SWIFT_ACTIVE_COMPILATION_CONDITIONS'] = '$(inherited) HUWA_TORRENT'
-    # CocoaPods copies a library xcframework's headers but does not expose its module map to
-    # Swift, so `import HuwaTorrentCore` fails without this include path.
-    xcconfig['SWIFT_INCLUDE_PATHS'] = '$(inherited) "${PODS_TARGET_SRCROOT}/../../../native/huwa-torrent-core/include"'
     # Rust's std on iOS links against these.
     s.libraries = 'resolv', 'c++'
     s.frameworks = 'Security', 'SystemConfiguration', 'Network'

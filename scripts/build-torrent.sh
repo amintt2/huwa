@@ -63,7 +63,10 @@ build_ios() {
     -library "$CRATE/target/aarch64-apple-ios/release/$LIB.a" -headers "$CRATE/include" \
     -library "$sim_lib" -headers "$CRATE/include" \
     -output "$DIST/HuwaTorrentCore.xcframework"
-  echo "OK: $DIST/HuwaTorrentCore.xcframework"
+  # CocoaPods only vendors files inside the pod's own folder: copy it next to the podspec.
+  rm -rf "$ROOT/modules/huwa-torrent/ios/HuwaTorrentCore.xcframework"
+  cp -R "$DIST/HuwaTorrentCore.xcframework" "$ROOT/modules/huwa-torrent/ios/"
+  echo "OK: $DIST/HuwaTorrentCore.xcframework (copied to modules/huwa-torrent/ios/)"
 }
 
 build_android() {

@@ -1,13 +1,14 @@
-import { useEventListener } from 'expo';
-import { router, useLocalSearchParams } from 'expo-router';
-import { useVideoPlayer, VideoView } from 'expo-video';
-import { useEffect, useRef, useState } from 'react';
+import { router, Stack, useLocalSearchParams } from 'expo-router';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { StyleSheet, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
+import { useAnimeIds } from '@/addons/ids';
+import { useSubtitles } from '@/addons/registry';
 import { qualityLabel, useSource } from '@/addons/use-source';
 import { EpisodeBridgeStrip } from '@/components/bridge';
 import { CommentsPanel } from '@/components/comments';
+import { Player, type ExternalSubtitle, type PlayerHandle } from '@/components/player/Player';
 import { SourceButton, SourcesMenu } from '@/components/sources-menu';
 import { Button, Chip, Cover, IconButton, Press, Txt } from '@/components/ui';
 import { chapterAfterEpisode } from '@/data/bridge';
@@ -32,7 +33,21 @@ function WatchScreen({ id }: { id: string }) {
   const inList = useStore((s) => s.myList.includes(series.id));
   const target = `ep:${id}`;
   const count = useThread(target).length;
-  const lastSave = useRef(0);
+  const playerRef = useRef<PlayerHandle>(null);
+  const [full, setFull] = useState(false);
+  const thread = useThread(target);
+  const timed = useMemo(
+    () => thread.filter((c) => c.timestamp != null && !c.spoiler && !c.parentId)
+      .map((c) => ({ id: c.id, author: c.author, text: c.text, timestamp: c.timestamp! }))
+      .sort((a, b) => a.timestamp - b.timestamp),
+    [thread],
+  );
+  const ids = useAnimeIds(series.id);
+  const addonSubs = useSubtitles(series.id, episode.number);
+  const subtitles = useMemo<ExternalSubtitle[]>(
+    () => addonSubs.map((x, i) => ({ url: x.url, lang: x.lang, label: `${x.lang.toUpperCase()} · ${x.addonName}${addonSubs.filter((y) => y.lang === x.lang).length > 1 ? ` ${i + 1}` : ''}` })),
+    [addonSubs],
+  );
 
   // ---- Source: auto (first that works, then better quality) or manual via the menu ----
   const src = useSource(series.id, episode.number);
@@ -42,57 +57,20 @@ function WatchScreen({ id }: { id: string }) {
   useEffect(() => {
     currentRef.current = src.currentKey;
   }, [src.currentKey]);
+  // "Better quality found" notice when auto mode upgrades the source mid-episode.
   const loadedQuality = useRef<number | null | undefined>(undefined);
-  const resumed = useRef(false);
-
-  const player = useVideoPlayer(null, (p) => {
-    p.timeUpdateEventInterval = 1;
-  });
-
-  // Playback failure → next source in the ranked list.
-  useEventListener(player, 'statusChange', ({ status, error }) => {
-    if (status === 'error' && currentRef.current) src.markBad(currentRef.current, error?.message ?? 'Lecture impossible');
-  });
-
-  const headersKey = JSON.stringify(src.headers ?? {});
-  useEffect(() => {
-    if (!src.url) return;
-    // Switching source mid-episode (quality upgrade, fallback, manual pick) keeps the position.
-    const at = resumed.current ? player.currentTime : undefined;
-    const upgradedFrom = loadedQuality.current;
-    const quality = src.quality;
-    resumed.current = false;
-    player.replaceAsync({ uri: src.url, headers: src.headers }).then(() => {
-      const saved = getState().episodes[id];
-      if (at != null && at > 1) player.currentTime = at;
-      else if (saved && !saved.done && saved.position > 5) player.currentTime = saved.position;
-      resumed.current = true;
-      player.play();
-      if (upgradedFrom !== undefined && (quality ?? 0) > (upgradedFrom ?? 0)) {
-        setNotice(`Meilleure qualité trouvée : ${qualityLabel(quality)}`);
-        setTimeout(() => setNotice(''), 3500);
-      }
-      loadedQuality.current = quality;
-    }).catch(() => {
-      if (currentRef.current) src.markBad(currentRef.current, 'Lecture impossible');
-    });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [src.url, headersKey, player, id]);
-
-  // Persist progress every 5 s and when leaving the screen.
-  useEventListener(player, 'timeUpdate', ({ currentTime }) => {
-    if (Date.now() - lastSave.current < 5000) return;
-    lastSave.current = Date.now();
-    saveEpisodeProgress(id, currentTime, player.duration);
-  });
-  useEventListener(player, 'playToEnd', () => markEpisodeDone(id));
-  useEffect(() => () => {
-    try {
-      saveEpisodeProgress(id, player.currentTime, player.duration);
-    } catch {
-      // player already released
+  const onSourceLoaded = () => {
+    const from = loadedQuality.current;
+    if (from !== undefined && (src.quality ?? 0) > (from ?? 0)) {
+      setNotice(`Meilleure qualité trouvée : ${qualityLabel(src.quality)}`);
+      setTimeout(() => setNotice(''), 3500);
     }
-  }, [id, player]);
+    loadedQuality.current = src.quality;
+  };
+  useEffect(() => {
+    if (src.url) onSourceLoaded();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [src.url]);
 
   const header = (
     <View style={{ padding: S.lg, gap: S.lg }}>
@@ -139,44 +117,69 @@ function WatchScreen({ id }: { id: string }) {
   );
 
   return (
-    <View style={{ flex: 1, backgroundColor: C.bg }}>
-      <View style={{ paddingTop: insets.top, backgroundColor: C.black }}>
-        <View style={styles.topBar}>
-          <IconButton icon="chevron-back" label="Retour" onPress={() => router.back()} />
-          <Txt v="small" numberOfLines={1} style={{ flex: 1 }}>{series.title}</Txt>
-        </View>
-        <VideoView
-          player={player}
-          style={styles.video}
-          nativeControls
-          allowsPictureInPicture
-          contentFit="contain"
-        />
-        {!!notice && (
-          <View style={styles.notice} pointerEvents="none">
-            <Txt v="small" color={C.white}>{notice}</Txt>
+    <View style={{ flex: 1, backgroundColor: full ? C.black : C.bg }}>
+      {/* Fullscreen landscape: home indicator auto-hidden, no swipe-back (status bar: see Player). */}
+      <Stack.Screen options={{ autoHideHomeIndicator: full, gestureEnabled: !full }} />
+      <View style={full ? { flex: 1, backgroundColor: C.black } : { paddingTop: insets.top, backgroundColor: C.black }}>
+        {!full && (
+          <View style={styles.topBar}>
+            <IconButton icon="chevron-back" label="Retour" onPress={() => router.back()} />
+            <Txt v="small" numberOfLines={1} style={{ flex: 1 }}>{series.title}</Txt>
           </View>
         )}
+        <Player
+          ref={playerRef}
+          source={src.url ? { uri: src.url, headers: src.headers } : null}
+          title={series.title}
+          subtitle={episodeLabel(episode)}
+          artwork={series.image}
+          subtitles={subtitles}
+          malId={ids?.mal}
+          episodeNumber={episode.number}
+          notice={notice}
+          emptyText={src.pending > 0 ? 'Recherche de sources…' : 'Aucune source lisible. Ouvre le menu des sources.'}
+          startAt={() => {
+            const saved = getState().episodes[id];
+            return saved && !saved.done ? saved.position : undefined;
+          }}
+          onProgress={(position, duration) => saveEpisodeProgress(id, position, duration)}
+          onEnd={() => markEpisodeDone(id)}
+          onError={(message) => {
+            if (currentRef.current) src.markBad(currentRef.current, message);
+          }}
+          next={next ? { label: episodeLabel(next), onPlay: () => router.replace(`/watch/${next.id}`) } : null}
+          onFullscreenChange={setFull}
+          onOpenSources={() => setMenuOpen(true)}
+          sourceLabel={src.current ? `${src.current.name ?? 'Source'} · ${qualityLabel(src.quality)}` : 'Sources'}
+          commentCount={count}
+          timedComments={timed}
+          renderComments={() => (
+            <CommentsPanel
+              target={target}
+              kind="anime"
+              getTime={() => playerRef.current?.getTime() ?? 0}
+              onSeek={(t) => playerRef.current?.seekTo(t)}
+            />
+          )}
+        />
       </View>
       <SourcesMenu src={src} visible={menuOpen} onClose={() => setMenuOpen(false)} />
-      <CommentsPanel
-        target={target}
-        kind="anime"
-        header={header}
-        getTime={() => player.currentTime}
-        onSeek={(t) => {
-          player.seekBy(t - player.currentTime);
-          player.play();
-        }}
-      />
+      {/* Hidden, not unmounted, in fullscreen: keeps the comment draft and scroll position. */}
+      <View style={{ flex: 1, display: full ? 'none' : 'flex' }}>
+        <CommentsPanel
+          target={target}
+          kind="anime"
+          header={header}
+          getTime={() => playerRef.current?.getTime() ?? 0}
+          onSeek={(t) => playerRef.current?.seekTo(t)}
+        />
+      </View>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
   topBar: { flexDirection: 'row', alignItems: 'center', gap: S.md, paddingHorizontal: S.md, paddingBottom: S.sm },
-  video: { width: '100%', aspectRatio: 16 / 9, backgroundColor: C.black },
-  notice: { position: 'absolute', bottom: S.md, alignSelf: 'center', paddingHorizontal: S.md, paddingVertical: 6, borderRadius: 999, backgroundColor: 'rgba(0,0,0,0.7)' },
   next: { flexDirection: 'row', alignItems: 'center', gap: S.md, padding: 10, borderRadius: 16, backgroundColor: C.surface },
   nextPlay: { borderRadius: 20, overflow: 'hidden', backgroundColor: C.accent },
 });
