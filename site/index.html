@@ -58,6 +58,7 @@
     code { background: var(--elevated); padding: 2px 6px; border-radius: 6px; font-size: 13px; color: var(--text); word-break: break-all; }
     .note { font-size: 14px; color: var(--text2); }
     footer { padding: 32px 0 48px; border-top: 1px solid var(--border); font-size: 14px; color: var(--text2); }
+    .copy { font: inherit; font-size: 13px; color: var(--accent-text); background: none; border: 1px solid rgba(127,176,255,.3); border-radius: 8px; padding: 2px 8px; margin-left: 4px; cursor: pointer; }
     @media (prefers-reduced-motion: reduce) { .btn { transition: none; } }
   </style>
 </head>
@@ -110,19 +111,34 @@
         </div>
 
         <div class="card">
-          <span class="tag">iPhone et iPad</span>
-          <h3>AltStore ou SideStore</h3>
+          <span class="tag">iPhone et iPad · Union européenne</span>
+          <h3>AltStore PAL, en 3 étapes</h3>
           <ol>
-            <li>Installe <a href="https://altstore.io">AltStore</a> (AltStore PAL dans l’Union européenne) ou <a href="https://sidestore.io">SideStore</a>.</li>
-            <li>Ajoute la source Huwa avec le bouton ci-dessous, puis installe l’app.</li>
-            <li>Sans store alternatif, télécharge l’<code>.ipa</code> et ouvre-le avec Sideloadly.</li>
+            <li><strong>Installe AltStore PAL</strong> depuis son site officiel (Safari). iOS te demande d’autoriser cette place de marché : accepte dans Réglages.</li>
+            <li><strong>Ajoute la source Huwa</strong> : le bouton ouvre AltStore PAL et l’ajoute directement.</li>
+            <li><strong>Installe Huwa</strong> depuis l’onglet Sources. Les mises à jour arrivent ensuite dans AltStore PAL.</li>
           </ol>
           <div class="cta">
-            <a class="btn btn-primary" href="altstore://source?url=https://huwa.mciut.fr/altstore-source.json">Ajouter à AltStore</a>
+            <a class="btn btn-primary" href="https://altstore.io">1 · Installer AltStore PAL</a>
+            <a class="btn btn-primary" href="altstore-pal://source?url=https://huwa.mciut.fr/altstore-source.json">2 · Ajouter la source Huwa</a>
+          </div>
+          <p class="note">Le bouton ne marche pas ? Dans AltStore PAL : onglet Sources, bouton +, puis colle <code>https://huwa.mciut.fr/altstore-source.json</code>. <button class="copy" data-copy="https://huwa.mciut.fr/altstore-source.json">Copier l’adresse</button></p>
+        </div>
+
+        <div class="card">
+          <span class="tag">iPhone et iPad · hors UE</span>
+          <h3>AltStore classique ou SideStore</h3>
+          <ol>
+            <li>Installe <a href="https://altstore.io">AltStore</a> ou <a href="https://sidestore.io">SideStore</a> (avec ton identifiant Apple).</li>
+            <li>Ajoute la même source Huwa, puis installe l’app.</li>
+            <li>Sans store, télécharge l’<code>.ipa</code> et installe-le avec Sideloadly.</li>
+          </ol>
+          <div class="cta">
+            <a class="btn btn-soft" href="altstore://source?url=https://huwa.mciut.fr/altstore-source.json">AltStore</a>
             <a class="btn btn-soft" href="sidestore://source?url=https://huwa.mciut.fr/altstore-source.json">SideStore</a>
             <a class="btn btn-soft" href="https://github.com/amintt2/huwa/releases/latest">Fichier .ipa</a>
           </div>
-          <p class="note">Adresse de la source : <code>https://huwa.mciut.fr/altstore-source.json</code></p>
+          <p class="note">Avec un identifiant Apple gratuit, l’app doit être re-signée tous les 7 jours (SideStore le fait tout seul).</p>
         </div>
       </div>
       <p class="note">Huwa est en développement actif. Si aucun fichier n’apparaît encore sur la page des versions, la première version publique arrive bientôt.</p>
@@ -139,5 +155,10 @@
       Huwa · open source · <a href="https://github.com/amintt2/huwa/blob/huwa-v1/distribution/LEGAL.md">Conditions et signalements</a>
     </footer>
   </div>
+  <script>
+    document.querySelectorAll('.copy').forEach((b) => b.addEventListener('click', async () => {
+      try { await navigator.clipboard.writeText(b.dataset.copy); b.textContent = 'Copié'; } catch { b.textContent = b.dataset.copy; }
+    }));
+  </script>
 </body>
 </html>
