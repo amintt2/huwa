@@ -36,7 +36,8 @@
         }
       ],
       "expo-video",
-      "./plugins/with-scene-lifecycle"
+      "./plugins/with-scene-lifecycle",
+      "expo-secure-store"
     ],
     "experiments": {
       "typedRoutes": true,
