@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Huwa — confidentialité</title>
+  <meta name="description" content="Politique de confidentialité de l'app Huwa : aucune donnée collectée, aucun compte, aucun serveur central.">
+  <meta name="theme-color" content="#05070D">
+  <link rel="icon" href="/icon.svg" type="image/svg+xml">
+  <style>
+    :root {
+      --bg: #05070D; --surface: #0C111C; --elevated: #141B2B; --border: rgba(120,140,180,.18);
+      --text: #F2F5FA; --text2: #9AA5BA; --body: #C3CBDA; --accent: #2F6BEB; --accent-text: #7FB0FF;
+      --accent-soft: rgba(47,107,235,.18);
+    }
+    * { box-sizing: border-box; }
+    html { -webkit-text-size-adjust: 100%; }
+    body {
+      margin: 0; background: var(--bg); color: var(--body);
+      font: 16px/1.55 -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto, sans-serif;
+    }
+    a { color: var(--accent-text); }
+    .wrap { max-width: 1040px; margin: 0 auto; padding: 0 20px; }
+    header { display: flex; align-items: center; justify-content: space-between; padding: 20px 0; }
+    .brand { display: flex; align-items: center; gap: 10px; color: var(--text); font-weight: 900; letter-spacing: .04em; text-decoration: none; font-size: 20px; }
+    .brand img { width: 32px; height: 32px; }
+    .gh { color: var(--text2); text-decoration: none; font-size: 14px; }
+    .hero { padding: 56px 0 40px; display: grid; gap: 28px; }
+    h1 { margin: 0; color: var(--text); font-size: clamp(36px, 7vw, 64px); line-height: 1.02; font-weight: 900; text-transform: uppercase; letter-spacing: -.01em; }
+    h1 span { color: var(--accent-text); }
+    .lead { margin: 0; font-size: clamp(17px, 2.4vw, 20px); max-width: 640px; color: var(--body); }
+    .cta { display: flex; flex-wrap: wrap; gap: 12px; }
+    .btn {
+      display: inline-flex; align-items: center; gap: 10px; min-height: 52px; padding: 0 22px; border-radius: 14px;
+      font-weight: 700; text-decoration: none; letter-spacing: .02em; border: 1px solid transparent;
+      transition: transform .12s ease, background-color .15s ease;
+    }
+    .btn:active { transform: scale(.97); }
+    .btn-primary { background: var(--accent); color: #fff; }
+    .btn-primary:hover { background: #3a76f5; }
+    .btn-soft { background: var(--accent-soft); color: var(--accent-text); border-color: rgba(127,176,255,.3); }
+    .btn svg { width: 20px; height: 20px; flex: none; }
+    section { padding: 44px 0; border-top: 1px solid var(--border); }
+    h2 { margin: 0 0 20px; color: var(--text); font-size: 24px; font-weight: 900; text-transform: uppercase; letter-spacing: .02em; }
+    .grid { display: grid; gap: 14px; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); }
+    .card { background: var(--surface); border: 1px solid var(--border); border-radius: 16px; padding: 20px; }
+    .card h3 { margin: 0 0 6px; color: var(--text); font-size: 17px; }
+    .card p { margin: 0; font-size: 15px; color: var(--text2); }
+    .install { display: grid; gap: 14px; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); }
+    .install .card { display: grid; gap: 14px; align-content: start; }
+    .install ol { margin: 0; padding-left: 20px; color: var(--text2); font-size: 15px; }
+    .install li { margin: 4px 0; }
+    .tag { display: inline-block; font-size: 12px; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; color: var(--accent-text); }
+    code { background: var(--elevated); padding: 2px 6px; border-radius: 6px; font-size: 13px; color: var(--text); word-break: break-all; }
+    .note { font-size: 14px; color: var(--text2); }
+    footer { padding: 32px 0 48px; border-top: 1px solid var(--border); font-size: 14px; color: var(--text2); }
+    .copy { font: inherit; font-size: 13px; color: var(--accent-text); background: none; border: 1px solid rgba(127,176,255,.3); border-radius: 8px; padding: 2px 8px; margin-left: 4px; cursor: pointer; }
+    @media (prefers-reduced-motion: reduce) { .btn { transition: none; } }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <header>
+      <a class="brand" href="/"><img src="/icon.svg" alt="" width="32" height="32">HUWA</a>
+      <a class="gh" href="/">Accueil</a>
+    </header>
+    <section style="border-top:0">
+      <h2>Confidentialité</h2>
+      <div class="card" style="display:grid;gap:14px">
+        <p><strong style="color:var(--text)">En bref : Huwa ne collecte aucune donnée.</strong> Il n’y a ni compte, ni publicité, ni outil de mesure d’audience, ni serveur Huwa qui stockerait tes informations.</p>
+        <h3>Ce qui reste sur ton appareil</h3>
+        <p>Ta progression, tes listes, tes réglages et ta clé d’identité sont enregistrés uniquement sur ton appareil. Ta phrase de récupération est dans le trousseau sécurisé d’iOS ; si tu laisses l’option activée, iOS en garde une copie chiffrée de bout en bout dans ton Trousseau iCloud, lisible par toi seul.</p>
+        <h3>Ce qui passe de pair à pair</h3>
+        <p>Les commentaires, ton profil public (pseudo, bio) et ton journal de progression que tu choisis de publier sont signés par ta clé et échangés directement avec les autres utilisateurs, sans passer par un serveur Huwa. Les messages privés sont chiffrés de bout en bout.</p>
+        <h3>Services tiers que l’app contacte</h3>
+        <p>Pour afficher le catalogue, Huwa interroge l’API publique d’AniList et des services de correspondance d’identifiants. Les vidéos viennent des addons que tu ajoutes toi-même, et, si tu en configures un, de ton service de débridage. Ces services reçoivent ton adresse IP comme pour tout site web ; Huwa ne leur transmet aucune donnée personnelle.</p>
+        <h3>Enfants</h3>
+        <p>Huwa n’est pas destiné aux enfants de moins de 13 ans.</p>
+        <h3>Contact</h3>
+        <p>Pour toute question : <a href="mailto:amin2020e@gmail.com">amin2020e@gmail.com</a>.</p>
+        <p class="note">Dernière mise à jour : 30 septembre 2026.</p>
+      </div>
+    </section>
+    <footer>Huwa · <a href="/">Accueil</a></footer>
+  </div>
+</body>
+</html>
