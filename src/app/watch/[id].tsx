@@ -32,6 +32,7 @@ function WatchScreen({ id }: { id: string }) {
   const target = `ep:${id}`;
   const count = useThread(target).length;
   const playerRef = useRef<PlayerHandle>(null);
+  const [full, setFull] = useState(false);
 
   const { streams, pending, failed } = useStreams(series.id, episode.number);
   const [picked, setPicked] = useState<AddonStream | undefined>();
@@ -112,11 +113,11 @@ function WatchScreen({ id }: { id: string }) {
 
   return (
     <View style={{ flex: 1, backgroundColor: C.bg }}>
-      <View style={{ paddingTop: insets.top, backgroundColor: C.black }}>
-        <View style={styles.topBar}>
+      <View style={full ? { flex: 1, backgroundColor: C.black } : { paddingTop: insets.top, backgroundColor: C.black }}>
+        {!full && <View style={styles.topBar}>
           <IconButton icon="chevron-back" label="Retour" onPress={() => router.back()} />
           <Txt v="small" numberOfLines={1} style={{ flex: 1 }}>{series.title}</Txt>
-        </View>
+        </View>}
         <Player
           ref={playerRef}
           source={source?.url ? { uri: source.url, headers } : null}
@@ -132,15 +133,19 @@ function WatchScreen({ id }: { id: string }) {
           onProgress={(position, duration) => saveEpisodeProgress(id, position, duration)}
           onEnd={() => markEpisodeDone(id)}
           next={next ? { label: episodeLabel(next), onPlay: () => router.replace(`/watch/${next.id}`) } : null}
+          onFullscreenChange={setFull}
         />
       </View>
-      <CommentsPanel
-        target={target}
-        kind="anime"
-        header={header}
-        getTime={() => playerRef.current?.getTime() ?? 0}
-        onSeek={(t) => playerRef.current?.seekTo(t)}
-      />
+      {/* Hidden, not unmounted, in fullscreen: keeps the comment draft and scroll position. */}
+      <View style={{ flex: 1, display: full ? 'none' : 'flex' }}>
+        <CommentsPanel
+          target={target}
+          kind="anime"
+          header={header}
+          getTime={() => playerRef.current?.getTime() ?? 0}
+          onSeek={(t) => playerRef.current?.seekTo(t)}
+        />
+      </View>
     </View>
   );
 }

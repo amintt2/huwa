@@ -7,7 +7,6 @@ import Ionicons from '@expo/vector-icons/Ionicons';
 import { useEvent, useEventListener } from 'expo';
 import * as ScreenOrientation from 'expo-screen-orientation';
 import { StatusBar } from 'expo-status-bar';
-import { LinearGradient } from 'expo-linear-gradient';
 import {
   isPictureInPictureSupported,
   useVideoPlayer,
@@ -18,7 +17,7 @@ import {
   type VideoPlayer,
 } from 'expo-video';
 import { useEffect, useImperativeHandle, useMemo, useRef, useState, type Ref } from 'react';
-import { ActivityIndicator, Modal, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, BackHandler, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { Txt, type IconName } from '@/components/ui';
@@ -58,6 +57,8 @@ export type PlayerProps = {
   introSkip?: number;
   /** Text shown when there is no source yet. */
   emptyText?: string;
+  /** The parent should hide everything else and give the player the whole screen while `true`. */
+  onFullscreenChange?: (full: boolean) => void;
 };
 
 const AUTO_NEXT_SECONDS = 8;
@@ -107,14 +108,15 @@ export function Player({
   next,
   introSkip = 85,
   emptyText = 'Choisis une source pour lancer la lecture.',
+  onFullscreenChange,
 }: PlayerProps) {
   const insets = useSafeAreaInsets();
   const prefs = usePrefs();
   const view = useRef<VideoView>(null);
   const lastSave = useRef(0);
-  const cb = useRef({ startAt, onProgress, onEnd, next });
+  const cb = useRef({ startAt, onProgress, onEnd, next, onFullscreenChange });
   useEffect(() => {
-    cb.current = { startAt, onProgress, onEnd, next };
+    cb.current = { startAt, onProgress, onEnd, next, onFullscreenChange };
   });
 
   const player = useVideoPlayer(null, (p) => {
@@ -264,7 +266,7 @@ export function Player({
   };
   useEffect(() => {
     if (!controls || !isPlaying || settings) return;
-    const t = setTimeout(() => setControls(false), 3500);
+    const t = setTimeout(() => setControls(false), 60000);
     return () => clearTimeout(t);
   }, [controls, isPlaying, settings, touch]);
 
@@ -295,9 +297,22 @@ export function Player({
 
   const toggleFull = (on: boolean) => {
     setFull(on);
+    cb.current.onFullscreenChange?.(on);
     wake();
     ScreenOrientation.lockAsync(on ? ScreenOrientation.OrientationLock.LANDSCAPE : ScreenOrientation.OrientationLock.PORTRAIT_UP).catch(() => {});
   };
+
+  // Android back button leaves fullscreen first.
+  useEffect(() => {
+    if (!full) return;
+    const sub = BackHandler.addEventListener('hardwareBackPress', () => {
+      setFull(false);
+      cb.current.onFullscreenChange?.(false);
+      ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.PORTRAIT_UP).catch(() => {});
+      return true;
+    });
+    return () => sub.remove();
+  }, [full]);
 
   const pipOk = Platform.OS !== 'web' && isPictureInPictureSupported();
   const loading = !!source?.uri && (status === 'loading' || (status === 'idle' && !ended));
@@ -349,8 +364,7 @@ export function Player({
 
       {controls && (
         <View style={StyleSheet.absoluteFill} pointerEvents="box-none">
-          <LinearGradient pointerEvents="none" colors={['rgba(0,0,0,0.65)', 'rgba(0,0,0,0)', 'rgba(0,0,0,0)', 'rgba(0,0,0,0.75)']}
-            locations={[0, 0.3, 0.6, 1]} style={StyleSheet.absoluteFill} />
+          <View pointerEvents="none" style={[StyleSheet.absoluteFill, { backgroundColor: 'rgba(0,0,0,0.42)' }]} />
 
           <View pointerEvents="box-none" style={[styles.topRow, isFull && { paddingTop: S.md, paddingHorizontal: Math.max(insets.left, insets.right, S.lg) }]}>
             {isFull ? (
@@ -453,26 +467,12 @@ export function Player({
     </View>
   );
 
+  // Fullscreen = the same view grown to fill the screen (the parent hides its other content via
+  // `onFullscreenChange`) + landscape lock. Keeping one VideoView avoids a remount / black frame.
   return (
-    <View style={styles.inline}>
-      {full ? (
-        <View style={styles.center}>
-          <Ionicons name="expand" size={26} color={C.text2} />
-          <Txt v="small">Lecture en plein écran</Txt>
-        </View>
-      ) : (
-        stage(false)
-      )}
-      <Modal
-        visible={full}
-        animationType="fade"
-        supportedOrientations={['landscape-left', 'landscape-right', 'portrait']}
-        onRequestClose={() => toggleFull(false)}
-        statusBarTranslucent
-        navigationBarTranslucent>
-        <StatusBar hidden />
-        <View style={{ flex: 1, backgroundColor: C.black }}>{full && stage(true)}</View>
-      </Modal>
+    <View style={full ? styles.full : styles.inline}>
+      {full && <StatusBar hidden animated />}
+      {stage(full)}
     </View>
   );
 }
@@ -481,6 +481,7 @@ const shadow = { textShadowColor: 'rgba(0,0,0,0.95)', textShadowOffset: { width:
 
 const styles = StyleSheet.create({
   inline: { width: '100%', aspectRatio: 16 / 9, backgroundColor: C.black, overflow: 'hidden' },
+  full: { flex: 1, backgroundColor: C.black, overflow: 'hidden' },
   center: { ...StyleSheet.absoluteFill, alignItems: 'center', justifyContent: 'center', gap: S.sm },
   topRow: { position: 'absolute', top: 0, left: 0, right: 0, flexDirection: 'row', alignItems: 'center', gap: S.xs, padding: S.xs },
   airplay: { width: 40, height: 40, alignItems: 'center', justifyContent: 'center' },
