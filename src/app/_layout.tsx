@@ -107,6 +107,10 @@ export default function RootLayout() {
           <Stack.Screen name="addons" />
           <Stack.Screen name="manga-sources" />
           <Stack.Screen name="paperback" options={{ animation: 'none' }} />
+          <Stack.Screen name="addon" options={SHEET} />
+          <Stack.Screen name="install" options={SHEET} />
+          <Stack.Screen name="addon-catalog" />
+          <Stack.Screen name="import" />
           <Stack.Screen name="debrid" />
           <Stack.Screen name="discover" />
           <Stack.Screen name="meta/[id]" />

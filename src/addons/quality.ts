@@ -1,5 +1,5 @@
 // Stream ranking: playable first, then closest to the preferred quality, then addon priority.
-import { isPlayable, isTorrent, type AddonStream } from './protocol';
+import { isExternal, isPlayable, isTorrent, isYouTube, type AddonStream } from './protocol';
 
 export type Quality = 2160 | 1080 | 720 | 480;
 export const QUALITIES: Quality[] = [2160, 1080, 720, 480];
@@ -30,14 +30,14 @@ export type RankContext = {
   cached?: Record<string, boolean>;
 };
 
-/** 0 direct · 1 cached torrent · 2 torrent (unknown cache) · 3 external · 4 unusable */
+/** 0 direct · 1 cached torrent · 2 torrent (unknown cache) · 3 YouTube / external · 4 unusable */
 export function playTier(s: AddonStream, ctx: RankContext) {
   if (isPlayable(s)) return 0;
   if (isTorrent(s) && ctx.canResolveTorrents) {
     const c = ctx.cached?.[s.infoHash!.toLowerCase()];
     return c === false ? 2.5 : c ? 1 : 2;
   }
-  if (s.externalUrl) return 3;
+  if (isYouTube(s) || isExternal(s)) return 3;
   return 4;
 }
 
@@ -52,4 +52,5 @@ export function rankStreams(streams: AddonStream[], ctx: RankContext): AddonStre
     .map((x) => x.s);
 }
 
-export const streamKey = (s: AddonStream) => `${s.addonId}|${s.url ?? ''}|${s.infoHash ?? ''}|${s.fileIdx ?? ''}|${s.name ?? ''}|${s.title ?? ''}`;
+export const streamKey = (s: AddonStream) =>
+  `${s.addonId}|${s.url ?? ''}|${s.infoHash ?? ''}|${s.fileIdx ?? ''}|${s.ytId ?? ''}|${s.externalUrl ?? ''}|${s.name ?? ''}|${s.title ?? ''}`;

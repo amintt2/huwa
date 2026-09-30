@@ -69,8 +69,7 @@ export default function Settings() {
         </Group>
 
         <Group title="Lecture">
-          <Row icon="extension-puzzle-outline" label="Addons" detail={`${addonCount} actif${addonCount > 1 ? 's' : ''}`} onPress={() => router.push('/addons')} />
-          <Row icon="book-outline" label="Extensions manhwa" detail={`${mangaSources} source${mangaSources > 1 ? 's' : ''}`} onPress={() => router.push('/manga-sources')} />
+          <Row icon="extension-puzzle-outline" label="Extensions" detail={`${addonCount} vidéo · ${mangaSources} manhwa`} onPress={() => router.push('/addons')} />
           <Row
             icon="refresh"
             label="Réinitialiser la progression"

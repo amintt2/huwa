@@ -10,7 +10,7 @@
 import * as Linking from 'expo-linking';
 import * as WebBrowser from 'expo-web-browser';
 
-import { fetchUserList, fetchViewer, type ListStatus } from '@/data/anilist-api';
+import { fetchUserList, fetchViewer, type ImportedEntry, type ListStatus } from '@/data/anilist-api';
 import { t } from '@/i18n';
 import { setWatchStatuses, upsertListByName, type WatchStatus } from '@/store/lists';
 import { getState, toggleMyList } from '@/store/store';
@@ -53,10 +53,18 @@ export async function importAniList(opts: { userName?: string; token?: string })
   if (!name) throw new Error('username');
 
   const entries = await fetchUserList(name, opts.token);
-  if (!entries.length) return 0;
+  return applyImportedEntries(entries, t('anilist.listName'));
+}
 
+/**
+ * Shared by every import (AniList, Stremio, anime-sama): copies statuses, fills a custom list
+ * named `listName`, and adds what is in progress to "Ma liste". Episode progress is not
+ * replayed: it would forge entries in the signed watch journal.
+ */
+export function applyImportedEntries(entries: ImportedEntry[], listName: string): number {
+  if (!entries.length) return 0;
   setWatchStatuses(Object.fromEntries(entries.map((e) => [e.series.id, STATUS[e.status]])));
-  upsertListByName(t('anilist.listName'), entries.map((e) => e.series.id));
+  upsertListByName(listName, entries.map((e) => e.series.id));
   const mine = new Set(getState().myList);
   for (const e of entries) {
     if ((e.status === 'CURRENT' || e.status === 'REPEATING') && !mine.has(e.series.id)) toggleMyList(e.series.id);

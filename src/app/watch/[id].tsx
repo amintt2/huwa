@@ -46,13 +46,19 @@ function WatchScreen({ id }: { id: string }) {
   );
   const ids = useAnimeIds(series.id);
   const addonSubs = useSubtitles(series.id, episode.number);
-  const subtitles = useMemo<ExternalSubtitle[]>(
-    () => addonSubs.map((x, i) => ({ url: x.url, lang: x.lang, label: `${x.lang.toUpperCase()} · ${x.addonName}${addonSubs.filter((y) => y.lang === x.lang).length > 1 ? ` ${i + 1}` : ''}` })),
-    [addonSubs],
-  );
 
   // ---- Source: auto (first that works, then better quality) or manual via the menu ----
   const src = useSource(series.id, episode.number);
+  // Subtitles attached to the playing stream first, then the subtitles addons (e.g. OpenSubtitles).
+  const { streamSubtitles } = src;
+  const streamAddon = src.current?.addonName ?? 'Flux';
+  const subtitles = useMemo<ExternalSubtitle[]>(() => {
+    const all = [
+      ...streamSubtitles.map((x) => ({ url: x.url, lang: x.lang, addonName: streamAddon })),
+      ...addonSubs,
+    ].filter((x, i, arr) => arr.findIndex((y) => y.url === x.url) === i);
+    return all.map((x, i) => ({ url: x.url, lang: x.lang, label: `${x.lang.toUpperCase()} · ${x.addonName}${all.filter((y) => y.lang === x.lang).length > 1 ? ` ${i + 1}` : ''}` }));
+  }, [addonSubs, streamSubtitles, streamAddon]);
   const [menuOpen, setMenuOpen] = useState(false);
   const [prefetchArmed, setPrefetchArmed] = useState(false);
   const streamPolicy = useStreamPolicy();
