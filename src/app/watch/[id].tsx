@@ -1,7 +1,5 @@
-import { useEventListener } from 'expo';
 import { router, useLocalSearchParams } from 'expo-router';
-import { useVideoPlayer, VideoView } from 'expo-video';
-import { useEffect, useRef, useState } from 'react';
+import { useRef, useState } from 'react';
 import { Linking, StyleSheet, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -9,6 +7,7 @@ import { isPlayable, type AddonStream } from '@/addons/protocol';
 import { useStreams } from '@/addons/registry';
 import { EpisodeBridgeStrip } from '@/components/bridge';
 import { CommentsPanel } from '@/components/comments';
+import { Player, type ExternalSubtitle, type PlayerHandle } from '@/components/player/Player';
 import { Button, Chip, Cover, IconButton, Press, Txt } from '@/components/ui';
 import { chapterAfterEpisode } from '@/data/bridge';
 import { episodeLabel, getEpisode } from '@/data/catalog';
@@ -32,45 +31,14 @@ function WatchScreen({ id }: { id: string }) {
   const inList = useStore((s) => s.myList.includes(series.id));
   const target = `ep:${id}`;
   const count = useThread(target).length;
-  const lastSave = useRef(0);
+  const playerRef = useRef<PlayerHandle>(null);
 
   const { streams, pending, failed } = useStreams(series.id, episode.number);
   const [picked, setPicked] = useState<AddonStream | undefined>();
   const source = picked ?? streams.find(isPlayable);
-  const resumed = useRef(false);
-
-  const player = useVideoPlayer(null, (p) => {
-    p.timeUpdateEventInterval = 1;
-  });
-
+  // External SRT/VTT files for this episode (wired to useSubtitles when available).
+  const subtitles: ExternalSubtitle[] = [];
   const headers = source?.behaviorHints?.proxyHeaders?.request;
-  const headersKey = JSON.stringify(headers ?? {});
-  useEffect(() => {
-    if (!source?.url) return;
-    resumed.current = false;
-    player.replaceAsync({ uri: source.url, headers }).then(() => {
-      const saved = getState().episodes[id];
-      if (!resumed.current && saved && !saved.done && saved.position > 5) player.currentTime = saved.position;
-      resumed.current = true;
-      player.play();
-    }).catch(() => {});
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [source?.url, headersKey, player, id]);
-
-  // Persist progress every 5 s and when leaving the screen.
-  useEventListener(player, 'timeUpdate', ({ currentTime }) => {
-    if (Date.now() - lastSave.current < 5000) return;
-    lastSave.current = Date.now();
-    saveEpisodeProgress(id, currentTime, player.duration);
-  });
-  useEventListener(player, 'playToEnd', () => markEpisodeDone(id));
-  useEffect(() => () => {
-    try {
-      saveEpisodeProgress(id, player.currentTime, player.duration);
-    } catch {
-      // player already released
-    }
-  }, [id, player]);
 
   const header = (
     <View style={{ padding: S.lg, gap: S.lg }}>
@@ -149,23 +117,29 @@ function WatchScreen({ id }: { id: string }) {
           <IconButton icon="chevron-back" label="Retour" onPress={() => router.back()} />
           <Txt v="small" numberOfLines={1} style={{ flex: 1 }}>{series.title}</Txt>
         </View>
-        <VideoView
-          player={player}
-          style={styles.video}
-          nativeControls
-          allowsPictureInPicture
-          contentFit="contain"
+        <Player
+          ref={playerRef}
+          source={source?.url ? { uri: source.url, headers } : null}
+          title={series.title}
+          subtitle={episodeLabel(episode)}
+          artwork={series.image}
+          subtitles={subtitles}
+          emptyText={pending > 0 ? 'Recherche de sources…' : 'Choisis une source ci-dessous.'}
+          startAt={() => {
+            const saved = getState().episodes[id];
+            return saved && !saved.done ? saved.position : undefined;
+          }}
+          onProgress={(position, duration) => saveEpisodeProgress(id, position, duration)}
+          onEnd={() => markEpisodeDone(id)}
+          next={next ? { label: episodeLabel(next), onPlay: () => router.replace(`/watch/${next.id}`) } : null}
         />
       </View>
       <CommentsPanel
         target={target}
         kind="anime"
         header={header}
-        getTime={() => player.currentTime}
-        onSeek={(t) => {
-          player.seekBy(t - player.currentTime);
-          player.play();
-        }}
+        getTime={() => playerRef.current?.getTime() ?? 0}
+        onSeek={(t) => playerRef.current?.seekTo(t)}
       />
     </View>
   );
@@ -173,7 +147,6 @@ function WatchScreen({ id }: { id: string }) {
 
 const styles = StyleSheet.create({
   topBar: { flexDirection: 'row', alignItems: 'center', gap: S.md, paddingHorizontal: S.md, paddingBottom: S.sm },
-  video: { width: '100%', aspectRatio: 16 / 9, backgroundColor: C.black },
   source: { flexDirection: 'row', alignItems: 'center', gap: S.md, padding: S.md, borderRadius: 14, backgroundColor: C.surface },
   next: { flexDirection: 'row', alignItems: 'center', gap: S.md, padding: 10, borderRadius: 16, backgroundColor: C.surface },
   nextPlay: { borderRadius: 20, overflow: 'hidden', backgroundColor: C.accent },
