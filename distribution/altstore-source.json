@@ -22,19 +22,22 @@
       "screenshots": [],
       "appPermissions": {
         "entitlements": [],
-        "privacy": {}
+        "privacy": {
+          "NSCameraUsageDescription": "Huwa utilise la caméra uniquement pour scanner le QR code d’appairage d’un autre appareil."
+        }
       },
       "versions": [
         {
-          "version": "0.1.0",
+          "version": "1.0.0",
           "buildVersion": "1",
           "date": "2026-09-30",
           "localizedDescription": "Première version de test : addons, lecteur, pont épisode ↔ chapitre, communauté P2P, moteur torrent optionnel.",
-          "downloadURL": "https://github.com/amintt2/huwa/releases/download/v0.1.0/Huwa-0.1.0.ipa",
+          "downloadURL": "https://huwa.mciut.fr/adp/1.0.0/manifest.json",
           "size": 0,
           "minOSVersion": "16.4"
         }
-      ]
+      ],
+      "marketplaceID": "6817880554"
     }
   ],
   "news": [

@@ -25,7 +25,6 @@
       }
     },
     "ios": {
-      "icon": "./assets/expo.icon",
       "bundleIdentifier": "com.amintt2.huwa",
       "infoPlist": {
         "UISupportedInterfaceOrientations": [
@@ -38,7 +37,7 @@
     },
     "android": {
       "adaptiveIcon": {
-        "backgroundColor": "#0A0A0F",
+        "backgroundColor": "#2F6BEB",
         "foregroundImage": "./assets/images/android-icon-foreground.png",
         "backgroundImage": "./assets/images/android-icon-background.png",
         "monochromeImage": "./assets/images/android-icon-monochrome.png"
@@ -56,9 +55,9 @@
       [
         "expo-splash-screen",
         {
-          "backgroundColor": "#0A0A0F",
+          "backgroundColor": "#05070D",
           "image": "./assets/images/splash-icon.png",
-          "imageWidth": 76
+          "imageWidth": 120
         }
       ],
       [
