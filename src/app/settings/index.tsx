@@ -9,6 +9,8 @@ import { useMangaExt } from '@/manga-ext/registry';
 import { useP2PStatus, useSecurity } from '@/p2p/hooks';
 import { usePrefs } from '@/p2p/prefs';
 import { resetAll } from '@/store/store';
+import { langName } from '@/subtitles/lang';
+import { useSubtitlePrefs } from '@/subtitles/prefs';
 import { C, S } from '@/theme/tokens';
 
 export default function Settings() {
@@ -20,6 +22,8 @@ export default function Settings() {
   const words = usePrefs((p) => p.words.length);
   const addonCount = useAddons().filter((a) => a.enabled).length;
   const mangaSources = useMangaExt().installed.filter((s) => s.enabled).length;
+  const subPrefs = useSubtitlePrefs();
+  const subtitleDetail = subPrefs.enabled ? subPrefs.languages.map(langName).join(', ') || 'Aucune langue' : 'Désactivés';
 
   const network =
     status.state === 'ready' && status.peers === 0
@@ -37,7 +41,7 @@ export default function Settings() {
       <ScreenHeader title="Réglages" />
       <ScrollView contentContainerStyle={{ paddingHorizontal: S.lg, paddingBottom: insets.bottom + S.xxl, gap: S.xl }}>
         <Group title="Application">
-          <Row icon="options-outline" label="Général" detail="Langue, lecture, sous-titres, notifications, données" onPress={() => router.push('/settings/general')} last />
+          <Row icon="options-outline" label="Général" detail="Langue, lecture, notifications, données" onPress={() => router.push('/settings/general')} last />
         </Group>
 
         <Group title="Compte">
@@ -69,6 +73,7 @@ export default function Settings() {
         </Group>
 
         <Group title="Lecture">
+          <Row icon="text" label="Sous-titres" detail={subtitleDetail} onPress={() => router.push('/settings/subtitles')} />
           <Row icon="extension-puzzle-outline" label="Extensions" detail={`${addonCount} vidéo · ${mangaSources} manhwa`} onPress={() => router.push('/addons')} />
           <Row
             icon="refresh"

@@ -57,7 +57,11 @@ function WatchScreen({ id }: { id: string }) {
       ...streamSubtitles.map((x) => ({ url: x.url, lang: x.lang, addonName: streamAddon })),
       ...addonSubs,
     ].filter((x, i, arr) => arr.findIndex((y) => y.url === x.url) === i);
-    return all.map((x, i) => ({ url: x.url, lang: x.lang, label: `${x.lang.toUpperCase()} · ${x.addonName}${all.filter((y) => y.lang === x.lang).length > 1 ? ` ${i + 1}` : ''}` }));
+    // Several files of one language from one source: number them ("Piste 2").
+    return all.map((x) => {
+      const same = all.filter((y) => y.lang === x.lang && y.addonName === x.addonName);
+      return { url: x.url, lang: x.lang, source: x.addonName, label: same.length > 1 ? `Piste ${same.indexOf(x) + 1}` : '' };
+    });
   }, [addonSubs, streamSubtitles, streamAddon]);
   const [menuOpen, setMenuOpen] = useState(false);
   const [prefetchArmed, setPrefetchArmed] = useState(false);
@@ -144,6 +148,7 @@ function WatchScreen({ id }: { id: string }) {
           subtitle={episodeLabel(episode)}
           artwork={series.image}
           subtitles={subtitles}
+          mediaKey={id}
           malId={ids?.mal}
           episodeNumber={episode.number}
           notice={notice}

@@ -1,0 +1,26 @@
+1
+00:00:01,000 --> 00:00:03,500
+<i>Il était une fois…</i>
+
+2
+00:00:04,000 --> 00:00:06,000
+{\an8}Titre en haut de l’écran
+
+00:00:06.500 --> 00:00:08.000 X1:100 X2:200 Y1:10 Y2:20
+<font color="#FFFF00">Jaune</font> et <b>gras</b>,
+sur deux lignes
+
+4
+00:00:07,500 --> 00:00:09,000
+- Chevauchement !
+- Oui.
+
+5
+00:01:00,000 --> 00:01:02,000
+Avec une ligne
+
+vide au milieu
+
+6
+00:01:03,000 --> 00:01:04,000
+L&apos;entité &amp; les balises <u>soulignées</u>
