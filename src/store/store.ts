@@ -1,6 +1,6 @@
-// Tiny persisted store (useSyncExternalStore + AsyncStorage).
-// Swap the persistence layer for a backend (Supabase, Firebase…) to share
-// comments between users; the actions below are the only write paths.
+// Tiny persisted store (useSyncExternalStore + AsyncStorage) for progress and "my list".
+// Comments, likes and the user name moved to the P2P layer (src/p2p): the legacy
+// `comments`/`liked`/`userName` fields are kept read-only so `migrateLegacy` can import them.
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useEffect, useState, useSyncExternalStore } from 'react';
 
@@ -130,36 +130,6 @@ export function toggleMyList(seriesId: string) {
     ...s,
     myList: s.myList.includes(seriesId) ? s.myList.filter((x) => x !== seriesId) : [seriesId, ...s.myList],
   }));
-}
-
-export function setUserName(userName: string) {
-  set((s) => ({ ...s, userName: userName.trim() || 'moi' }));
-}
-
-export function addComment(c: Omit<Comment, 'id' | 'createdAt' | 'likes' | 'author' | 'fromAnime'>) {
-  set((s) => {
-    const seriesId = seriesIdOfTarget(c.target);
-    const fromAnime =
-      c.target.startsWith('ch:') && Object.keys(s.episodes).some((k) => k.startsWith(seriesId + '-e'));
-    const comment: Comment = {
-      ...c,
-      id: `u-${Date.now()}-${Math.round(Math.random() * 1e6)}`,
-      createdAt: Date.now(),
-      likes: 0,
-      author: s.userName,
-      fromAnime,
-    };
-    return { ...s, comments: [comment, ...s.comments] };
-  });
-}
-
-export function toggleLike(commentId: string) {
-  set((s) => {
-    const liked = { ...s.liked };
-    if (liked[commentId]) delete liked[commentId];
-    else liked[commentId] = true;
-    return { ...s, liked };
-  });
 }
 
 export function resetAll() {
