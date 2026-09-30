@@ -36,7 +36,8 @@
         }
       ],
       "expo-video",
-      "./plugins/with-scene-lifecycle"
+      "./plugins/with-scene-lifecycle",
+      "./plugins/with-huwa-torrent"
     ],
     "experiments": {
       "typedRoutes": true,
