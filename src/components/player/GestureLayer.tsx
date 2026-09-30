@@ -2,35 +2,15 @@
 // - single tap: show / hide the controls
 // - double tap on the left / right half: -10 s / +10 s
 // - vertical drag (fullscreen only): left half = screen brightness, right half = volume
+// Built on the JS responder system (PanResponder): it sits under the controls, so buttons and the
+// seek bar keep their own touches, and it doesn't need a gesture-handler root view.
 import * as Brightness from 'expo-brightness';
-import { useEffect, type ReactNode } from 'react';
-import { Platform, StyleSheet, View } from 'react-native';
-import { Gesture, GestureDetector } from 'react-native-gesture-handler';
+import { useEffect, useState } from 'react';
+import { PanResponder, Platform, StyleSheet, View, type GestureResponderEvent, type PanResponderGestureState } from 'react-native';
 
 export type Hud = { kind: 'volume' | 'brightness'; value: number };
 
-// Gesture session state. Module-level (one player on screen at a time) so gesture callbacks,
-// which the React Compiler treats as render-time code, don't touch refs.
-const session: {
-  start: { kind: Hud['kind']; value: number } | null;
-  original: number | null;
-  brightness: number | null;
-} = { start: null, original: null, brightness: null };
-const patchSession = (p: Partial<typeof session>) => Object.assign(session, p);
-
-export function GestureLayer({
-  children,
-  width,
-  height,
-  adjust,
-  seekEnabled,
-  onTap,
-  onDoubleTap,
-  getVolume,
-  setVolume,
-  onHud,
-}: {
-  children?: ReactNode;
+type Props = {
   width: number;
   height: number;
   /** Brightness / volume drags. */
@@ -41,77 +21,120 @@ export function GestureLayer({
   getVolume: () => number;
   setVolume: (v: number) => void;
   onHud: (hud: Hud | null) => void;
-}) {
-  // Put the screen brightness back when leaving the player (iOS keeps it until the device locks).
-  useEffect(
-    () => () => {
-      const original = session.original;
-      patchSession({ original: null, brightness: null });
-      if (original == null) return;
-      if (Platform.OS === 'android') Brightness.restoreSystemBrightnessAsync().catch(() => {});
-      else Brightness.setBrightnessAsync(original).catch(() => {});
-    },
-    [],
-  );
+};
 
-  const readBrightness = () => {
-    if (session.brightness != null) return;
+const DOUBLE_TAP_MS = 260;
+const TAP_SLOP = 10;
+
+// Session state lives outside React: responder callbacks mutate it on every move.
+class Session {
+  props!: Props;
+  lastTap = 0;
+  lastSide: 'left' | 'right' = 'left';
+  tapTimer: ReturnType<typeof setTimeout> | undefined;
+  drag: { kind: Hud['kind']; value: number } | null = null;
+  brightness: number | null = null;
+  original: number | null = null;
+  startX = 0;
+
+  setProps(p: Props) {
+    this.props = p;
+  }
+
+  readBrightness() {
+    if (this.brightness != null) return;
     Brightness.getBrightnessAsync()
       .then((b) => {
-        patchSession({ brightness: b, original: session.original ?? b });
+        this.brightness = b;
+        if (this.original == null) this.original = b;
       })
       .catch(() => {});
-  };
+  }
 
-  const pan = Gesture.Pan()
-    .runOnJS(true)
-    .enabled(adjust)
-    .activeOffsetY([-12, 12])
-    .failOffsetX([-24, 24])
-    .onBegin(() => readBrightness())
-    .onStart((e) => {
-      const kind = e.x < width / 2 ? 'brightness' : 'volume';
-      patchSession({ start: { kind, value: kind === 'volume' ? getVolume() : (session.brightness ?? 0.5) } });
-    })
-    .onUpdate((e) => {
-      const s = session.start;
-      if (!s) return;
-      const value = Math.min(1, Math.max(0, s.value - e.translationY / (height * 0.75)));
-      if (s.kind === 'volume') setVolume(value);
-      else {
-        patchSession({ brightness: value });
-        Brightness.setBrightnessAsync(value).catch(() => {});
-      }
-      onHud({ kind: s.kind, value });
-    })
-    .onFinalize(() => {
-      patchSession({ start: null });
-      onHud(null);
-    });
+  restoreBrightness() {
+    clearTimeout(this.tapTimer);
+    const original = this.original;
+    this.original = null;
+    this.brightness = null;
+    if (original == null) return;
+    if (Platform.OS === 'android') Brightness.restoreSystemBrightnessAsync().catch(() => {});
+    else Brightness.setBrightnessAsync(original).catch(() => {});
+  }
 
-  const doubleTap = Gesture.Tap()
-    .runOnJS(true)
-    .enabled(seekEnabled)
-    .numberOfTaps(2)
-    .maxDelay(260)
-    .onEnd((e, ok) => {
-      if (ok) onDoubleTap(e.x < width / 2 ? 'left' : 'right');
-    });
+  isDrag(g: PanResponderGestureState) {
+    return !!this.props?.adjust && Math.abs(g.dy) > 12 && Math.abs(g.dy) > Math.abs(g.dx) * 1.5;
+  }
 
-  const tap = Gesture.Tap()
-    .runOnJS(true)
-    .maxDuration(300)
-    .onEnd((_e, ok) => {
-      if (ok) onTap();
-    });
+  grant(e: GestureResponderEvent) {
+    this.drag = null;
+    this.startX = e.nativeEvent.locationX;
+    if (this.props.adjust) this.readBrightness();
+  }
 
-  const gesture = Gesture.Race(pan, Gesture.Exclusive(doubleTap, tap));
+  move(g: PanResponderGestureState) {
+    const p = this.props;
+    if (!this.drag) {
+      if (!this.isDrag(g)) return;
+      const kind = this.startX < p.width / 2 ? 'brightness' : 'volume';
+      this.drag = { kind, value: kind === 'volume' ? p.getVolume() : (this.brightness ?? 0.5) };
+    }
+    const value = Math.min(1, Math.max(0, this.drag.value - g.dy / (p.height * 0.75)));
+    if (this.drag.kind === 'volume') p.setVolume(value);
+    else {
+      this.brightness = value;
+      Brightness.setBrightnessAsync(value).catch(() => {});
+    }
+    p.onHud({ kind: this.drag.kind, value });
+  }
 
-  return (
-    <GestureDetector gesture={gesture}>
-      <View style={StyleSheet.absoluteFill} collapsable={false}>
-        {children}
-      </View>
-    </GestureDetector>
+  release(g: PanResponderGestureState) {
+    const p = this.props;
+    if (this.drag) {
+      this.drag = null;
+      p.onHud(null);
+      return;
+    }
+    if (Math.abs(g.dx) > TAP_SLOP || Math.abs(g.dy) > TAP_SLOP) return;
+    const side = this.startX < p.width / 2 ? 'left' : 'right';
+    const now = Date.now();
+    if (p.seekEnabled && now - this.lastTap < DOUBLE_TAP_MS && side === this.lastSide) {
+      clearTimeout(this.tapTimer);
+      this.lastTap = now; // keep chaining: triple tap = ±20 s
+      p.onDoubleTap(side);
+      return;
+    }
+    this.lastTap = now;
+    this.lastSide = side;
+    clearTimeout(this.tapTimer);
+    // Wait for a possible second tap before toggling the controls.
+    this.tapTimer = setTimeout(() => this.props.onTap(), p.seekEnabled ? DOUBLE_TAP_MS : 0);
+  }
+
+  cancel() {
+    if (!this.drag) return;
+    this.drag = null;
+    this.props.onHud(null);
+  }
+}
+
+export function GestureLayer(props: Props) {
+  const [session] = useState(() => new Session());
+  const [responder] = useState(() =>
+    PanResponder.create({
+      onStartShouldSetPanResponder: () => true,
+      onMoveShouldSetPanResponder: (_e, g) => session.isDrag(g),
+      onPanResponderTerminationRequest: () => !session.drag,
+      onPanResponderGrant: (e) => session.grant(e),
+      onPanResponderMove: (_e, g) => session.move(g),
+      onPanResponderRelease: (_e, g) => session.release(g),
+      onPanResponderTerminate: () => session.cancel(),
+    }),
   );
+  useEffect(() => {
+    session.setProps(props);
+  });
+  // Put the screen brightness back when leaving the player (iOS keeps it until the device locks).
+  useEffect(() => () => session.restoreBrightness(), [session]);
+
+  return <View style={StyleSheet.absoluteFill} {...responder.panHandlers} />;
 }

@@ -118,8 +118,8 @@ function WatchScreen({ id }: { id: string }) {
 
   return (
     <View style={{ flex: 1, backgroundColor: full ? C.black : C.bg }}>
-      {/* Fullscreen landscape: system bars hidden. */}
-      <Stack.Screen options={{ statusBarHidden: full, autoHideHomeIndicator: full, gestureEnabled: !full }} />
+      {/* Fullscreen landscape: home indicator auto-hidden, no swipe-back (status bar: see Player). */}
+      <Stack.Screen options={{ autoHideHomeIndicator: full, gestureEnabled: !full }} />
       <View style={full ? { flex: 1, backgroundColor: C.black } : { paddingTop: insets.top, backgroundColor: C.black }}>
         {!full && (
           <View style={styles.topBar}>

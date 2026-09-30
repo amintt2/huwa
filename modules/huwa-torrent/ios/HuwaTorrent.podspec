@@ -4,7 +4,7 @@ require 'json'
 #   HUWA_TORRENT=1 in the environment (pod install / EAS env), or
 #   "huwa.torrent": "1" in ios/Podfile.properties.json (written by plugins/with-huwa-torrent.js).
 # Otherwise the module compiles without it and `isAvailable()` returns false.
-def huwa_torrent_flag_enabled
+huwa_torrent_flag_enabled = lambda do
   return true if ENV['HUWA_TORRENT'] == '1'
   props_path = File.expand_path(File.join(__dir__, '..', '..', '..', 'ios', 'Podfile.properties.json'))
   return false unless File.exist?(props_path)
@@ -17,7 +17,7 @@ end
 
 xcframework_rel = '../../../native/huwa-torrent-core/dist/HuwaTorrentCore.xcframework'
 xcframework_abs = File.expand_path(File.join(__dir__, xcframework_rel))
-flag_on = huwa_torrent_flag_enabled
+flag_on = huwa_torrent_flag_enabled.call
 link_rust = flag_on && File.directory?(xcframework_abs)
 
 if flag_on && !link_rust

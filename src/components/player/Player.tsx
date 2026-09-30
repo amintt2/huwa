@@ -21,7 +21,6 @@ import {
 } from 'expo-video';
 import { useEffect, useImperativeHandle, useMemo, useRef, useState, type ReactNode, type Ref } from 'react';
 import { ActivityIndicator, BackHandler, Platform, Pressable, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
-import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import Animated, { FadeIn, FadeOut, SlideInLeft, SlideInRight, SlideOutLeft, SlideOutRight } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -455,7 +454,7 @@ export function Player({
   const bottomOffset = controls ? (full ? 76 + Math.max(insets.bottom - 8, 0) : 52) : full ? 24 : 12;
 
   return (
-    <GestureHandlerRootView style={full ? styles.full : styles.inline}>
+    <View style={full ? styles.full : styles.inline}>
       {full && <StatusBar hidden animated />}
       <VideoView
         ref={view}
@@ -687,7 +686,7 @@ export function Player({
         liveComments={prefs.liveComments}
         onLiveComments={(liveComments) => setPrefs({ liveComments })}
       />
-    </GestureHandlerRootView>
+    </View>
   );
 }
 
