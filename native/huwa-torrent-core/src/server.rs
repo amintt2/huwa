@@ -281,7 +281,8 @@ fn apply_priority_policy(
                 let mut left = w.len;
                 let mut buf = vec![0u8; 256 * 1024];
                 while left > 0 {
-                    let n = s.read(&mut buf[..buf.len().min(left as usize)]).await?;
+                    let chunk = buf.len().min(left as usize);
+                    let n = s.read(&mut buf[..chunk]).await?;
                     if n == 0 {
                         break;
                     }

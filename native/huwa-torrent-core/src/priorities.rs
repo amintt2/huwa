@@ -559,9 +559,12 @@ mod tests {
     }
 
     #[test]
-    fn large_file_metadata_starts_ten_mib_before_end() {
+    fn large_file_metadata_starts_at_earlier_of_ten_mib_or_five_percent() {
+        // Same rule as stream-server: whichever comes first, 10 MiB before the end or the final 5 %.
         let file_size = 10 * 1024 * 1024 * 1024;
-        assert_eq!(container_metadata_start(file_size), file_size - 10 * 1024 * 1024);
+        assert_eq!(container_metadata_start(file_size), file_size * 95 / 100);
+        let medium = 100 * 1024 * 1024;
+        assert_eq!(container_metadata_start(medium), medium - 10 * 1024 * 1024);
         let start = container_metadata_start(file_size);
         assert!(is_container_metadata_request(start, MAX_CONTAINER_METADATA_WINDOW_BYTES, file_size));
         assert!(!is_container_metadata_request(start, MAX_CONTAINER_METADATA_WINDOW_BYTES + 1, file_size));
