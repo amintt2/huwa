@@ -17,22 +17,27 @@ export default function CommentsSheet() {
       ? (() => { const f = getEpisode(id); return f ? episodeLabel(f.episode) : ''; })()
       : (() => { const f = getChapter(id); return f ? chapterLabel(f.chapter) : ''; })();
 
+  // The header lives inside the panel's ScrollView: in an iOS form sheet the ScrollView is pinned to
+  // the sheet's edges, so a sibling header above it ends up drawn underneath the list.
+  const header = (
+    <View style={{ flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between', paddingHorizontal: S.lg, paddingTop: S.xl + S.sm, paddingBottom: S.md }}>
+      <View style={{ gap: 6, flex: 1 }}>
+        <View style={{ flexDirection: 'row', alignItems: 'baseline', gap: S.sm }}>
+          <Txt v="title" style={{ fontSize: 20 }}>Commentaires</Txt>
+          <Txt v="small" style={{ fontSize: 15 }}>{count}</Txt>
+        </View>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+          <Chip kind={kind === 'anime' ? 'anime' : 'manhwa'} />
+          <Txt v="small" numberOfLines={1} style={{ flexShrink: 1 }}>{context}</Txt>
+        </View>
+      </View>
+      <IconButton icon="close" label="Fermer" tone="solid" onPress={() => router.back()} />
+    </View>
+  );
+
   return (
     <View style={{ flex: 1, backgroundColor: C.surface }}>
-      <View style={{ flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between', padding: S.lg, paddingTop: S.xl }}>
-        <View style={{ gap: 6, flex: 1 }}>
-          <View style={{ flexDirection: 'row', alignItems: 'baseline', gap: S.sm }}>
-            <Txt v="title" style={{ fontSize: 20 }}>Commentaires</Txt>
-            <Txt v="small" style={{ fontSize: 15 }}>{count}</Txt>
-          </View>
-          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-            <Chip kind={kind === 'anime' ? 'anime' : 'manhwa'} />
-            <Txt v="small" numberOfLines={1}>{context}</Txt>
-          </View>
-        </View>
-        <IconButton icon="close" label="Fermer" tone="solid" onPress={() => router.back()} />
-      </View>
-      <CommentsPanel target={target} kind={kind === 'anime' ? 'anime' : 'manhwa'} />
+      <CommentsPanel target={target} kind={kind === 'anime' ? 'anime' : 'manhwa'} header={header} />
     </View>
   );
 }
