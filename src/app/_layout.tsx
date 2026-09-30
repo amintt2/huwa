@@ -8,6 +8,8 @@ import { Onboarding } from '@/components/onboarding';
 import { OfflineBanner } from '@/components/states';
 import { loadCatalog } from '@/data/anilist';
 import { useEpisodeNotifications } from '@/notifications/episodes';
+import { useMe, useP2PStatus } from '@/p2p/hooks';
+import { useJournalSync } from '@/p2p/sync';
 import { useSettings, useSettingsHydrated } from '@/settings/settings';
 import { useListsHydrated } from '@/store/lists';
 import { useHydrated } from '@/store/store';
@@ -18,6 +20,14 @@ SplashScreen.preventAutoHideAsync();
 const theme = {
   ...DarkTheme,
   colors: { ...DarkTheme.colors, background: C.bg, card: C.surface, primary: C.accent, text: C.text, border: C.border },
+};
+
+const SHEET = {
+  presentation: 'formSheet' as const,
+  sheetAllowedDetents: [0.75, 1],
+  sheetGrabberVisible: true,
+  sheetCornerRadius: 28,
+  contentStyle: { backgroundColor: C.surface },
 };
 
 export default function RootLayout() {
@@ -38,7 +48,12 @@ export default function RootLayout() {
     });
     return () => clearTimeout(timeout);
   }, []);
-  const ready = hydrated && settingsReady && listsReady && catalogReady;
+  // Identity decides between onboarding and the app: wait until the P2P layer has loaded it.
+  const p2pState = useP2PStatus().state;
+  const me = useMe();
+  const identityKnown = p2pState !== 'starting';
+  useJournalSync(hydrated && !!me);
+  const ready = hydrated && settingsReady && listsReady && catalogReady && identityKnown;
 
   useEffect(() => {
     if (ready) SplashScreen.hideAsync();
@@ -59,37 +74,40 @@ export default function RootLayout() {
     <ThemeProvider value={theme}>
       <StatusBar style="light" />
       <Stack screenOptions={{ headerShown: false, contentStyle: { backgroundColor: C.bg } }}>
-        <Stack.Screen name="(tabs)" />
-        <Stack.Screen name="anime/[id]" />
-        <Stack.Screen name="manhwa/[id]" />
-        <Stack.Screen name="watch/[id]" options={{ contentStyle: { backgroundColor: C.black } }} />
-        <Stack.Screen name="read/[id]" options={{ contentStyle: { backgroundColor: C.black } }} />
-        <Stack.Screen
-          name="comments"
-          options={{
-            presentation: 'formSheet',
-            sheetAllowedDetents: [0.75, 1],
-            sheetGrabberVisible: true,
-            sheetCornerRadius: 28,
-            contentStyle: { backgroundColor: C.surface },
-          }}
-        />
-        <Stack.Screen name="search" />
-        <Stack.Screen name="calendar" />
-        <Stack.Screen name="settings" />
-        <Stack.Screen name="lists" />
-        <Stack.Screen name="list/[id]" />
-        <Stack.Screen
-          name="list-picker"
-          options={{
-            presentation: 'formSheet',
-            sheetAllowedDetents: [0.7, 1],
-            sheetGrabberVisible: true,
-            sheetCornerRadius: 28,
-            contentStyle: { backgroundColor: C.surface },
-          }}
-        />
-        <Stack.Screen name="anilist-auth" options={{ animation: 'none' }} />
+        <Stack.Protected guard={!!me}>
+          <Stack.Screen name="(tabs)" />
+          <Stack.Screen name="anime/[id]" />
+          <Stack.Screen name="manhwa/[id]" />
+          <Stack.Screen name="watch/[id]" options={{ contentStyle: { backgroundColor: C.black } }} />
+          <Stack.Screen name="read/[id]" options={{ contentStyle: { backgroundColor: C.black } }} />
+          <Stack.Screen name="comments" options={SHEET} />
+          <Stack.Screen name="u/[key]" />
+          <Stack.Screen name="profile-edit" options={SHEET} />
+          <Stack.Screen name="messages" />
+          <Stack.Screen name="dm/[key]" />
+          <Stack.Screen name="rank" />
+          <Stack.Screen name="settings/index" />
+          <Stack.Screen name="settings/general" />
+          <Stack.Screen name="settings/security" />
+          <Stack.Screen name="settings/phrase" />
+          <Stack.Screen name="settings/pair" options={SHEET} />
+          <Stack.Screen name="settings/moderation" />
+          <Stack.Screen name="settings/notifications" />
+          <Stack.Screen name="addons" />
+          <Stack.Screen name="debrid" />
+          <Stack.Screen name="discover" />
+          <Stack.Screen name="meta/[id]" />
+          <Stack.Screen name="downloads" />
+          <Stack.Screen name="search" />
+          <Stack.Screen name="calendar" />
+          <Stack.Screen name="lists" />
+          <Stack.Screen name="list/[id]" />
+          <Stack.Screen name="list-picker" options={{ ...SHEET, sheetAllowedDetents: [0.7, 1] }} />
+          <Stack.Screen name="anilist-auth" options={{ animation: 'none' }} />
+        </Stack.Protected>
+        <Stack.Protected guard={!me}>
+          <Stack.Screen name="onboarding" options={{ animation: 'fade' }} />
+        </Stack.Protected>
       </Stack>
       <EpisodeNotifications />
       <OfflineBanner />

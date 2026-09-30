@@ -54,7 +54,20 @@
       ],
       "expo-video",
       "./plugins/with-scene-lifecycle",
-      "expo-secure-store",
+      [
+        "expo-secure-store",
+        {
+          "faceIDPermission": false
+        }
+      ],
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "Huwa utilise la caméra uniquement pour scanner le QR code d’appairage d’un autre appareil.",
+          "microphonePermission": false,
+          "recordAudioAndroid": false
+        }
+      ],
       "expo-sharing",
       "expo-notifications",
       "./plugins/with-huwa-torrent"
