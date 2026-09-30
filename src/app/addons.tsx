@@ -91,6 +91,7 @@ export default function Addons() {
         <Button style={{ flex: 1 }} small variant="soft" icon="compass-outline" label="Découvrir" onPress={() => router.push('/discover' as Href)} />
         <Button style={{ flex: 1 }} small variant="soft" icon="flash-outline" label={provider ? provider.name : 'Débrid'} onPress={() => router.push('/debrid' as Href)} />
       </View>
+      <Button small variant="ghost" icon="book-outline" label="Extensions manhwa (Paperback)" onPress={() => router.push('/manga-sources' as Href)} />
 
       <View style={{ gap: S.md }}>
         <Txt v="section">Installés</Txt>

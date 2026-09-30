@@ -14,12 +14,16 @@ function immediate(chapterId: string): State | undefined {
 }
 
 /** Pages of a chapter: offline copy → addon page sources → placeholder. */
-export function usePages(chapterId: string): State {
+export function usePages(chapterId: string): State & { retry: () => void } {
   const [state, setState] = useState<State>(
     () => immediate(chapterId) ?? { chapterId, pages: [], origin: 'placeholder', loading: true },
   );
   const [gen, setGen] = useState(0);
   useEffect(() => onPageSourcesChange(() => setGen((g) => g + 1)), []);
+  const retry = () => {
+    setState({ chapterId, pages: [], origin: 'placeholder', loading: true });
+    setGen((g) => g + 1);
+  };
 
   useEffect(() => {
     let alive = true;
@@ -34,7 +38,7 @@ export function usePages(chapterId: string): State {
     };
   }, [chapterId, gen]);
 
-  return state.chapterId === chapterId ? state : { chapterId, pages: [], origin: 'placeholder', loading: true };
+  return { ...(state.chapterId === chapterId ? state : { chapterId, pages: [], origin: 'placeholder' as const, loading: true }), retry };
 }
 
 /** Warm the image cache for upcoming pages (and the next chapter's first pages). */
