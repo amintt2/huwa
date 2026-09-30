@@ -1,0 +1,48 @@
+# Serveur de mises à jour OTA auto-hébergé pour expo-updates.
+# Image : xprem (ex « expo-open-ota », renommé en 2026 — https://github.com/mercuretechnologies/xprem).
+# Vérifié à la source : docker-compose.yml, Dockerfile (uid 100 / gid 101, port 3000,
+# LOCAL_BUCKET_BASE_PATH=./updates) et docs « Environment variables », « Keys », « Stateless mode ».
+#
+# Mode base de données (recommandé) : xprem génère la paire de clés de signature à la création
+# de l'app dans le tableau de bord et la scelle dans Postgres avec DB_KEYS_MASTER_KEY_B64.
+# Le certificat public à embarquer dans l'app se télécharge depuis la page de l'app
+# (« app-<id>-certificate.txt ») et se copie dans `certs/certificate.pem` du projet Expo.
+#
+# Démarrage :  cp .env.example .env && éditer && docker compose up -d
+# Mettre un reverse proxy TLS devant (Caddy : `ota.example.org { reverse_proxy 127.0.0.1:3000 }`).
+
+services:
+  ota:
+    image: ghcr.io/mercuretechnologies/xprem:latest
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      PORT: "3000"
+      STORAGE_MODE: local
+      LOCAL_BUCKET_BASE_PATH: /updates
+      CACHE_MODE: local
+      USE_DASHBOARD: "true"
+      DB_URL: postgres://xprem:${POSTGRES_PASSWORD}@db:5432/xprem?sslmode=disable
+    ports:
+      - "127.0.0.1:3000:3000"
+    volumes:
+      # L'image tourne en 100:101 : `chown -R 100:101 ./data/updates` avant le premier démarrage.
+      - ./data/updates:/updates
+    depends_on:
+      db:
+        condition: service_healthy
+
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: xprem
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: xprem
+    volumes:
+      - ./data/postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U xprem -d xprem"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
