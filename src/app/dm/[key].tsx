@@ -2,9 +2,10 @@ import Ionicons from '@expo/vector-icons/Ionicons';
 import * as Haptics from 'expo-haptics';
 import { router, useLocalSearchParams } from 'expo-router';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Alert, FlatList, KeyboardAvoidingView, Platform, Pressable, StyleSheet, TextInput, View } from 'react-native';
+import { ActionSheetIOS, Alert, FlatList, KeyboardAvoidingView, Platform, Pressable, StyleSheet, TextInput, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
+import { reportAccount } from '@/components/report';
 import { Avatar, Empty, shortKey } from '@/components/social';
 import { Button, IconButton, Press, Txt } from '@/components/ui';
 import type { DirectMessage } from '@/p2p/contract';
@@ -71,6 +72,28 @@ export default function Conversation() {
     }
   };
 
+  const report = () => reportAccount({ key: peer, name, where: 'messages privés', blocked, onBlocked: () => router.back() });
+  const toggleBlock = () => {
+    if (blocked) return void social.setBlocked(peer, false);
+    Alert.alert(`Bloquer ${name} ?`, 'Ses messages et commentaires seront masqués et il ne pourra plus t’écrire.', [
+      { text: 'Annuler', style: 'cancel' },
+      { text: 'Bloquer', style: 'destructive', onPress: () => social.setBlocked(peer, true).then(() => router.back()).catch(() => {}) },
+    ]);
+  };
+  const more = () => {
+    const actions = [
+      { label: 'Voir le profil', run: () => router.push(`/u/${peer}`) },
+      { label: 'Signaler', run: report },
+      { label: blocked ? 'Débloquer' : 'Bloquer', run: toggleBlock },
+    ];
+    if (Platform.OS === 'ios')
+      ActionSheetIOS.showActionSheetWithOptions(
+        { options: [...actions.map((a) => a.label), 'Annuler'], cancelButtonIndex: actions.length, destructiveButtonIndex: blocked ? undefined : actions.length - 1, userInterfaceStyle: 'dark' },
+        (i) => actions[i]?.run(),
+      );
+    else Alert.alert(name, undefined, [...actions.map((a) => ({ text: a.label, onPress: a.run })), { text: 'Annuler', style: 'cancel' }]);
+  };
+
   if (!isPublicKey(peer)) return <Empty icon="help-circle-outline" title="Conversation introuvable" />;
 
   return (
@@ -88,6 +111,7 @@ export default function Conversation() {
             <Txt v="small" style={{ fontSize: 11 }}>{self ? 'Visible seulement par toi' : profile?.fingerprint ?? ''}</Txt>
           </View>
         </Pressable>
+        {!self && <IconButton icon="ellipsis-horizontal" label="Plus d’options : signaler, bloquer" onPress={more} />}
       </View>
 
       <FlatList
@@ -160,6 +184,7 @@ export default function Conversation() {
                 router.back();
               }}
             />
+            <Button style={{ flex: 1 }} variant="ghost" small label="Signaler" onPress={report} />
             <Button style={{ flex: 1 }} small label="Accepter" onPress={() => setAccepted(true)} />
           </View>
         </View>

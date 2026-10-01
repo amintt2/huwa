@@ -2,7 +2,7 @@ import Ionicons from '@expo/vector-icons/Ionicons';
 import * as Haptics from 'expo-haptics';
 import { router } from 'expo-router';
 import { useState } from 'react';
-import { KeyboardAvoidingView, Platform, Pressable, ScrollView, View } from 'react-native';
+import { Alert, KeyboardAvoidingView, Platform, Pressable, ScrollView, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { CloudAccountCard } from '@/components/cloud-account';
@@ -27,8 +27,25 @@ export default function Welcome() {
   const [error, setError] = useState<string>();
   // An iCloud account card takes the primary role: creating a new identity steps back.
   const [cloudCard, setCloudCard] = useState(false);
+  // An account phrase found in iCloud Keychain: creating a new identity replaces that copy on every
+  // Apple device (cloud-backup save), so say it before doing it.
+  const [cloudAccount, setCloudAccount] = useState<{ name?: string }>();
 
-  const create = async () => {
+  const create = () => {
+    if (busy) return;
+    if (!cloudAccount) return void doCreate();
+    const who = cloudAccount.name ? `le compte « ${cloudAccount.name} »` : 'un compte Huwa';
+    Alert.alert(
+      'Remplacer la sauvegarde iCloud ?',
+      `Ton Trousseau iCloud contient déjà ${who}. Créer une nouvelle identité remplacera cette sauvegarde sur tous tes appareils Apple : si sa phrase n’est pas notée ailleurs, cet ancien compte sera perdu.`,
+      [
+        { text: 'Annuler', style: 'cancel' },
+        { text: 'Créer quand même', style: 'destructive', onPress: () => void doCreate() },
+      ],
+    );
+  };
+
+  const doCreate = async () => {
     if (busy) return;
     setBusy(true);
     setError(undefined);
@@ -70,7 +87,7 @@ export default function Welcome() {
 
         <View style={{ flex: 1 }} />
 
-        <CloudAccountCard onVisibleChange={setCloudCard} />
+        <CloudAccountCard onVisibleChange={setCloudCard} onFound={setCloudAccount} />
 
         <View style={{ gap: S.md }}>
           <Field

@@ -1,6 +1,8 @@
 // Demo mode (store screenshots) must patch storage before anything reads it.
 import { isDemo } from '@/demo';
 import { DemoRoute } from '@/demo/route';
+// An account deleted last session: its P2P store goes before anything opens it.
+import { finishPendingDeletion } from '@/settings/delete-account';
 import { DarkTheme, Stack, ThemeProvider, router } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
 import { StatusBar } from 'expo-status-bar';
@@ -30,6 +32,7 @@ import { flushPendingWrites, leavesForeground } from '@/store/persist';
 import { useHydrated } from '@/store/store';
 import { C } from '@/theme/tokens';
 
+finishPendingDeletion();
 SplashScreen.preventAutoHideAsync();
 
 // Any crash below the root shows a friendly screen with « Réessayer » (see error-screen.tsx).
@@ -134,6 +137,8 @@ export default function RootLayout() {
           <Stack.Screen name="settings/moderation" />
           <Stack.Screen name="settings/notifications" />
           <Stack.Screen name="settings/stats" />
+          <Stack.Screen name="settings/delete-account" />
+          <Stack.Screen name="about" />
           {/* Extensions, packs, debrid and torrent: full flavor only. The App Store build is a
               library app (PLAN.md « Version App Store »); links there are also redirected by
               +native-intent. */}

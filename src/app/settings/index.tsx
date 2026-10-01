@@ -106,6 +106,10 @@ export default function Settings() {
           <Row icon="git-network-outline" label={networkLabel} detail={network} last />
         </Group>
 
+        <Group>
+          <Row icon="information-circle-outline" label="À propos" detail="Version, conditions, confidentialité, licences, contact" onPress={() => router.push('/about')} last />
+        </Group>
+
         <Txt v="small" style={{ textAlign: 'center' }}>Huwa · données locales, sans télémétrie</Txt>
       </ScrollView>
     </View>
