@@ -288,14 +288,18 @@ class HuwaNode {
     const known = this.peers.get(identity)
     if (known && known.home) return known
     const discovery = this._join(idTopic(identity), { server: false, client: true })
-    const deadline = Date.now() + LOOKUP_MS
-    while (Date.now() < deadline) {
-      const p = this.peers.get(identity)
-      if (p && p.home) return p
-      await sleep(200)
+    try {
+      const deadline = Date.now() + LOOKUP_MS
+      while (Date.now() < deadline) {
+        const p = this.peers.get(identity)
+        if (p && p.home) return p
+        await sleep(200)
+      }
+      return this.peers.get(identity) || null
+    } finally {
+      // Found or not, the topic is left (the connection, if any, stays).
+      if (discovery) discovery.destroy().catch(noop)
     }
-    if (discovery) discovery.destroy().catch(noop)
-    return this.peers.get(identity) || null
   }
 
   // ---- identity (phase 2) ---------------------------------------------------
@@ -1266,11 +1270,14 @@ class HuwaNode {
     let topic
     let load
     let release = noop
+    let stopped = false
     if (kind === 'comments') {
       topic = 'comments:' + arg
       load = () => this.listComments(arg)
       this._room(arg).then((room) => {
+        // Unsubscribed while the room was opening: retain and release at once (idle close).
         release = this._retain(room, arg)
+        if (stopped) release()
       }, noop)
     } else if (kind === 'labels') {
       topic = 'labels'
@@ -1312,6 +1319,7 @@ class HuwaNode {
     const entry = { topic, run }
     const id = Symbol(topic)
     this.subs.set(id, () => {
+      stopped = true
       release()
     })
     this._watchers = this._watchers || new Map()
