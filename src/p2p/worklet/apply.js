@@ -57,13 +57,48 @@ async function accept(view, host, node, writer, { indexer = false } = {}) {
   }
 }
 
+// ---- device revocation in shared bases (rooms, DMs) --------------------------
+// A personal base cannot be read from `apply`, so a revocation is republished in each shared base
+// by a remaining device of the same identity (`revoke` node). From then on, every node of a writer
+// bound to that device is refused. An identity can only revoke its own devices (`rv/<id>/<dev>`);
+// the first revocation linearized wins, as in the personal base.
+
+const isRevoked = async (view, writer) => !!(await get(view, 'rv/' + writer.who.id + '/' + writer.who.dev))
+
+async function revokeStep(view, host, writer, device) {
+  if (device === writer.who.dev) return false
+  const key = 'rv/' + writer.who.id + '/' + device
+  if (await get(view, key)) return false
+  await view.put(key, 1)
+  if (host && host.removeWriter) {
+    for await (const e of view.createReadStream({ gt: 'dw/' + device + '/', lt: 'dw/' + device + '0' })) {
+      const w = e.key.split('/')[2]
+      const who = await get(view, 'w/' + w)
+      if (!who || who.id !== writer.who.id) continue
+      try {
+        await host.removeWriter(fromHex(w))
+      } catch {
+        // Not removable (e.g. last indexer): its nodes are refused anyway.
+      }
+    }
+  }
+  return true
+}
+
 // ---- comment room: one Autobase per work -----------------------------------
 
-function rateOk(stats, ts, rules = RATE) {
+/**
+ * Per identity: one write every `minIntervalMs` and `perHour` per hour (comments: 15 s / 20).
+ * Timestamps only have to grow per device (`dev`): the devices of one identity have their own,
+ * possibly skewed, clocks.
+ */
+function rateOk(stats, ts, dev, rules = RATE) {
   if (!stats) return { ok: true, recent: [] }
-  if (ts <= stats.last) return { ok: false }
-  if (stats.last && ts - stats.last < rules.minIntervalMs) return { ok: false }
-  const recent = stats.recent.filter((r) => ts - r < rules.hourMs)
+  const devLast = dev === undefined ? stats.last : (stats.devs && stats.devs[dev]) || 0
+  if (ts <= devLast) return { ok: false }
+  if (stats.last && Math.abs(ts - stats.last) < rules.minIntervalMs) return { ok: false }
+  const recent = stats.recent.filter((r) => Math.abs(ts - r) < rules.hourMs)
+  if (recent.some((r) => Math.abs(ts - r) < rules.minIntervalMs)) return { ok: false }
   if (recent.length >= rules.perHour) return { ok: false }
   return { ok: true, recent }
 }
@@ -79,7 +114,7 @@ async function roomStep(view, node, writer, work) {
     if (b.id !== commentId(author, v.ts, b.target, b.text)) return false
     if (await get(view, 'c/' + b.id)) return false
     if (b.parentId && !(await get(view, 'c/' + b.parentId))) return false
-    const rate = rateOk(stats, v.ts)
+    const rate = rateOk(stats, v.ts, writer.who.dev)
     if (!rate.ok) return false
     await view.put('c/' + b.id, {
       id: b.id,
@@ -98,7 +133,8 @@ async function roomStep(view, node, writer, work) {
       n: (stats ? stats.n : 0) + 1,
       last: v.ts,
       recent: rate.recent.concat(v.ts),
-      vouched: !!(stats && stats.vouched)
+      vouched: !!(stats && stats.vouched),
+      devs: { ...((stats && stats.devs) || {}), [writer.who.dev]: v.ts }
     })
     return true
   }
@@ -148,7 +184,12 @@ function createRoomApply(work) {
     for (const node of nodes) {
       if (node.value === null || !schema.roomNode(node.value, work)) continue
       const writer = await resolveWriter(view, node)
-      if (!writer) continue
+      if (!writer || (await isRevoked(view, writer))) continue
+      if (node.value.t === 'revoke') {
+        if (!pow.check(pow.powPayload(node.value, writer.w), node.value.nonce, pow.DIFFICULTY.like)) continue
+        if (await revokeStep(view, host, writer, node.value.body.device)) await accept(view, host, node, writer)
+        continue
+      }
       if (await roomStep(view, node, writer, work)) await accept(view, host, node, writer)
     }
   }
@@ -168,13 +209,13 @@ async function mapStep(view, node, writer) {
   const author = writer.who.id
   const stats = await get(view, 'a/' + author)
   if (!pow.check(pow.powPayload(v, writer.w), v.nonce, pow.difficultyFor(stats))) return false
-  const rate = rateOk(stats, v.ts, MAP_RATE)
+  const rate = rateOk(stats, v.ts, writer.who.dev, MAP_RATE)
   if (!rate.ok) return false
   const key = mapKey(b, author)
   const prev = await get(view, key)
   if (prev && prev.ts >= v.ts) return false
   await view.put(key, b.f === 'end' ? { to: b.b, ts: v.ts } : { from: b.a, to: b.b, ts: v.ts })
-  await view.put('a/' + author, { n: (stats ? stats.n : 0) + 1, last: v.ts, recent: rate.recent.concat(v.ts), vouched: false })
+  await view.put('a/' + author, { n: (stats ? stats.n : 0) + 1, last: Math.max((stats && stats.last) || 0, v.ts), recent: rate.recent.concat(v.ts), vouched: false, devs: { ...((stats && stats.devs) || {}), [writer.who.dev]: v.ts } })
   return true
 }
 
@@ -264,6 +305,19 @@ async function homeStep(view, host, node, writer) {
       await logEvent(view, 'remove-device', b, v.ts, dev)
       return true
     }
+    case 'box': {
+      // DM key rotation (after a revocation): the new seed is sealed to each remaining device.
+      const profile = await get(view, 'profile')
+      if (!profile) return false
+      const meta = (await get(view, 'boxmeta')) || { n: 0 }
+      await view.put('box/' + pad(meta.n, 10), { box: b.box, seeds: b.seeds, ts: v.ts, dev })
+      await view.put('boxmeta', { n: meta.n + 1 })
+      if (profile.box !== b.box) {
+        await view.put('profile', { ...profile, box: b.box })
+        await logEvent(view, 'box', { box: b.box }, v.ts, dev)
+      }
+      return true
+    }
     case 'label':
       await view.put('lab/' + toHex(hash(canon({ t: b.target, v: b.val }), 16)), { target: b.target, val: b.val, neg: b.neg, ts: v.ts })
       return true
@@ -311,12 +365,14 @@ async function dmStep(view, node, writer, pair) {
   const state = (await get(view, 's/' + from)) || { last: 0, seen: 0 }
   if (v.t === 'dm') {
     if (b.to !== other) return false
-    if (v.ts <= state.last) return false
+    // Increasing per device (each device of an identity has its own clock).
+    const devs = state.devs || {}
+    if (v.ts <= (devs[writer.who.dev] || 0)) return false
     if (!pow.check(pow.powPayload(v, writer.w), v.nonce, pow.DIFFICULTY.dm)) return false
     if (await get(view, 'mi/' + b.id)) return false
     await view.put('mi/' + b.id, 1)
     await view.put('m/' + pad(v.ts) + '/' + b.id, { id: b.id, from, to: b.to, ts: v.ts, r: b.r, s: b.s })
-    await view.put('s/' + from, { ...state, last: v.ts })
+    await view.put('s/' + from, { ...state, last: Math.max(state.last, v.ts), devs: { ...devs, [writer.who.dev]: v.ts } })
     return true
   }
   if (v.t === 'seen') {
@@ -332,7 +388,11 @@ function createDmApply(pair) {
     for (const node of nodes) {
       if (node.value === null || !schema.dmNode(node.value)) continue
       const writer = await resolveWriter(view, node)
-      if (!writer || !pair.includes(writer.who.id)) continue
+      if (!writer || !pair.includes(writer.who.id) || (await isRevoked(view, writer))) continue
+      if (node.value.t === 'revoke') {
+        if (await revokeStep(view, host, writer, node.value.body.device)) await accept(view, host, node, writer)
+        continue
+      }
       if (await dmStep(view, node, writer, pair)) await accept(view, host, node, writer)
     }
   }

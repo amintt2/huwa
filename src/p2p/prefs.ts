@@ -4,6 +4,7 @@
 // own persisted mirror; the P2P layer stays the source for what peers see.
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useSyncExternalStore } from 'react';
+import { registerRehydrate } from '@/settings/rehydrate';
 
 export type DmNotifMode = 'discreet' | 'instant';
 
@@ -43,6 +44,17 @@ export const prefsReady = AsyncStorage.getItem(KEY)
   })
   .catch(() => {})
   .finally(() => listeners.forEach((l) => l()));
+
+registerRehydrate(async () => {
+  clearTimeout(timer);
+  const raw = await AsyncStorage.getItem(KEY).catch(() => null);
+  try {
+    prefs = raw ? { ...initial, ...JSON.parse(raw) } : initial;
+  } catch {
+    prefs = initial;
+  }
+  listeners.forEach((l) => l());
+});
 
 export function setPrefs(update: (p: Prefs) => Prefs) {
   prefs = update(prefs);

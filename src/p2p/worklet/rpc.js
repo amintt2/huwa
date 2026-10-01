@@ -108,6 +108,7 @@ function serve(stream, createNode, { log = () => {} } = {}) {
       reply = { ok: true, v: v === undefined ? null : v }
     } catch (err) {
       reply = { ok: false, e: (err && err.message) || String(err) }
+      if (err && typeof err.code === 'string') reply.code = err.code
     }
     try {
       req.reply(JSON.stringify(reply))

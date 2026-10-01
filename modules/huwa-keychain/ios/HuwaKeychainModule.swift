@@ -14,13 +14,24 @@ public class HuwaKeychainModule: Module {
   public func definition() -> ModuleDefinition {
     Name("HuwaKeychain")
 
+    // Update in place (never delete first: a failed add after a delete would lose the phrase,
+    // and the deletion would propagate to the other devices through iCloud Keychain).
     AsyncFunction("set") { (key: String, value: String) in
       let base = Self.query(key)
-      SecItemDelete(base as CFDictionary)
-      var add = base
-      add[kSecValueData as String] = Data(value.utf8)
-      add[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlock
-      let status = SecItemAdd(add as CFDictionary, nil)
+      let attrs: [String: Any] = [
+        kSecValueData as String: Data(value.utf8),
+        kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlock,
+      ]
+      var status = SecItemUpdate(base as CFDictionary, attrs as CFDictionary)
+      if status == errSecItemNotFound {
+        var add = base
+        add.merge(attrs) { _, new in new }
+        status = SecItemAdd(add as CFDictionary, nil)
+        if status == errSecDuplicateItem {
+          // Created concurrently (iCloud sync): update it.
+          status = SecItemUpdate(base as CFDictionary, attrs as CFDictionary)
+        }
+      }
       guard status == errSecSuccess else { throw KeychainException(status) }
     }
 
@@ -38,6 +49,17 @@ public class HuwaKeychainModule: Module {
     AsyncFunction("remove") { (key: String) in
       let status = SecItemDelete(Self.query(key) as CFDictionary)
       guard status == errSecSuccess || status == errSecItemNotFound else { throw KeychainException(status) }
+    }
+
+    // Keeps a file or directory out of iCloud / Finder device backups (the P2P worklet's store holds
+    // this device's private keys: restored on another iPhone, it would clone this device's writers).
+    AsyncFunction("excludeFromBackup") { (path: String) -> Bool in
+      var url = URL(fileURLWithPath: path)
+      guard FileManager.default.fileExists(atPath: path) else { return false }
+      var values = URLResourceValues()
+      values.isExcludedFromBackup = true
+      try url.setResourceValues(values)
+      return true
     }
   }
 

@@ -4,6 +4,8 @@ import * as Device from 'expo-device';
 import { Paths } from 'expo-file-system';
 import { Platform } from 'react-native';
 
+import { HuwaKeychain } from '../../modules/huwa-keychain';
+
 import type { BareP2P } from './bare';
 import type { P2P, P2PStatus, Unsubscribe } from './contract';
 import { isDemo } from '@/demo/flags';
@@ -35,6 +37,20 @@ export function p2pBackend(): P2PBackend {
 /** Spike/diagnostic helpers, only available on the bare backend. */
 export function bareDiagnostics(): BareP2P | null {
   return instance?.bare ?? null;
+}
+
+/**
+ * The worklet keeps this device's identity secrets (device key, proof, DM box seed) in its store
+ * under Documents: keep it out of iCloud / Finder backups, otherwise a backup restored on another
+ * iPhone would carry them (and clone this device's writer keys).
+ */
+function excludeP2PStoreFromBackup() {
+  const keychain = HuwaKeychain;
+  if (!keychain?.excludeFromBackup) return;
+  // The stats store is created on first use: excluded from the next launch on.
+  for (const dir of ['huwa-p2p', 'huwa-p2p-stats']) {
+    keychain.excludeFromBackup(`${documentsDir()}/${dir}`).catch((e: unknown) => console.warn('[huwa] exclusion de la sauvegarde', dir, e));
+  }
 }
 
 function documentsDir() {
@@ -74,7 +90,7 @@ class SwitchingP2P implements P2P {
         deviceName: Device.deviceName ?? Device.modelName ?? 'appareil',
         onBoot: (ok, info) => console.log('[huwa] worklet', ok ? `prêt en ${info.readyMs} ms` : `échec: ${info.error}`),
       });
-      bare.ready.catch(() => this.fallback());
+      bare.ready.then(() => excludeP2PStoreFromBackup(), () => this.fallback());
       this.bare = bare;
       this.backend = 'bare';
       return bare;

@@ -133,3 +133,11 @@ test('net: per-source jar, UA, size cap, policy before any fetch', async () => {
   await assert.rejects(net.request('a', { url: 'https://site.io/', method: 'CONNECT', headers: {} }), /Méthode/);
   assert.equal(seen.length, 4, 'refused requests never reach the transport');
 });
+
+test('net: a redirect landing on a refused host is not delivered', async () => {
+  const fake: RawFetch = async () => ({ url: 'http://127.0.0.1:8081/secret', status: 200, headers: {}, setCookies: ['x=1'], body: new TextEncoder().encode('local') });
+  const jar = new CookieJar();
+  const net = createNet(fake, { jar: () => jar });
+  await assert.rejects(net.request('a', { url: 'https://site.io/r', method: 'GET', headers: {} }), /redirection/);
+  assert.equal(jar.header(parseHttpUrl('http://127.0.0.1:8081/')!), '', 'no cookie kept');
+});

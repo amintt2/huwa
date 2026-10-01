@@ -209,6 +209,10 @@ export function createNet(rawFetch: RawFetch, opts: { jar: (sourceKey: string) =
       } finally {
         clearTimeout(timer);
       }
+      // The transport follows redirects (RN's fetch cannot stop them): a redirect to a refused host
+      // is not delivered to the source, nor its cookies kept.
+      const landed = parseHttpUrl(raw.url);
+      if (landed && isBlockedHost(landed.host)) throw new Error('Hôte refusé (redirection)');
       if (raw.body.length > (opts.maxBytes ?? MAX_RESPONSE_BYTES)) throw new Error('Réponse trop volumineuse');
       const finalUrl = parseHttpUrl(raw.url) ? raw.url : escapeUrl(req.url);
       const cookies: HttpCookie[] = [];

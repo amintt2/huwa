@@ -3,6 +3,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useSyncExternalStore } from 'react';
 
 import { getSettings, setSetting } from '@/settings/settings';
+import { registerRehydrate } from '@/settings/rehydrate';
 
 export type FontId = 'nunito' | 'system' | 'atkinson' | 'mplus' | 'comic' | 'merriweather' | 'mono';
 export type Background = 'none' | 'box' | 'band';
@@ -130,13 +131,15 @@ let prefs: SubtitlePrefs = DEFAULT_SUBTITLE_PREFS;
 const listeners = new Set<() => void>();
 const emit = () => listeners.forEach((l) => l());
 
-AsyncStorage.getItem(KEY)
-  .then((raw) => {
-    if (!raw) return;
-    prefs = sanitizeSubtitlePrefs(JSON.parse(raw));
-    emit();
-  })
-  .catch(() => {});
+const loadPrefs = () =>
+  AsyncStorage.getItem(KEY)
+    .then((raw) => {
+      prefs = raw ? sanitizeSubtitlePrefs(JSON.parse(raw)) : DEFAULT_SUBTITLE_PREFS;
+      emit();
+    })
+    .catch(() => {});
+loadPrefs();
+registerRehydrate(loadPrefs);
 
 export const getSubtitlePrefs = () => prefs;
 
@@ -183,6 +186,15 @@ AsyncStorage.getItem(OFFSETS_KEY)
     offsetListeners.forEach((l) => l());
   })
   .catch(() => {});
+registerRehydrate(() =>
+  AsyncStorage.getItem(OFFSETS_KEY)
+    .then((raw) => {
+      const v = raw ? JSON.parse(raw) : {};
+      offsets = v && typeof v === 'object' ? v : {};
+      offsetListeners.forEach((l) => l());
+    })
+    .catch(() => {}),
+);
 
 export const clampOffset = (s: number) => Math.round(Math.max(-60, Math.min(60, s)) * 10) / 10;
 

@@ -58,6 +58,10 @@ struct TranslateUnsupported: Error, LocalizedError {
   var errorDescription: String? { "Traduction sur l’appareil indisponible (iOS 18 requis)" }
 }
 
+struct TranslateTimeout: Error, LocalizedError {
+  var errorDescription: String? { "La traduction sur l’appareil n’a pas démarré à temps" }
+}
+
 #if canImport(Translation)
 @available(iOS 18.0, *)
 enum TranslateCore {
@@ -106,6 +110,7 @@ final class TranslationHost: ObservableObject {
 
   typealias Work = (TranslationSession) async throws -> [String]
   private struct Job {
+    let id = UUID()
     let source: String
     let target: String
     let work: Work
@@ -120,9 +125,24 @@ final class TranslationHost: ObservableObject {
   func run(source: String, target: String, work: @escaping Work) async throws -> [String] {
     guard attach() else { throw TranslateUnsupported() }
     return try await withCheckedThrowingContinuation { cont in
-      jobs.append(Job(source: source, target: target, work: work, done: cont))
+      let job = Job(source: source, target: target, work: work, done: cont)
+      jobs.append(job)
       schedule()
+      // The hidden host may never render (no window, app in background): a job still queued after
+      // the timeout fails instead of leaving its caller waiting forever.
+      Task { @MainActor [weak self] in
+        try? await Task.sleep(nanoseconds: Self.queueTimeoutNs)
+        self?.expire(job.id)
+      }
     }
+  }
+
+  private static let queueTimeoutNs: UInt64 = 45 * 1_000_000_000
+
+  private func expire(_ id: UUID) {
+    guard let i = jobs.firstIndex(where: { $0.id == id }) else { return } // already running or done
+    let job = jobs.remove(at: i)
+    job.done.resume(throwing: TranslateTimeout())
   }
 
   private func schedule() {

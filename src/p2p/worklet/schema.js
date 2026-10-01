@@ -69,7 +69,7 @@ function commentBody(b, work) {
 }
 
 function roomNode(value, work) {
-  if (!envelope(value, ['comment', 'like', 'edit', 'delete', 'vouch', 'bind'])) return false
+  if (!envelope(value, ['comment', 'like', 'edit', 'delete', 'vouch', 'bind', 'revoke'])) return false
   if (value.room !== 'work:' + work) return false
   const b = value.body
   switch (value.t) {
@@ -92,6 +92,8 @@ function roomNode(value, work) {
       return isNonce(value.nonce) && onlyKeys(b, ['key']) && isKey(b.key)
     case 'bind':
       return isAuth(value.auth) && Object.keys(b).length === 0
+    case 'revoke':
+      return isNonce(value.nonce) && revokeBody(b)
   }
   return false
 }
@@ -125,6 +127,21 @@ function mapNode(value, room) {
   return isNonce(value.nonce) && mapBody(value.body)
 }
 
+/** A device of the writer's own identity, revoked in its personal base, now refused here too. */
+const revokeBody = (b) => onlyKeys(b, ['device']) && isKey(b.device)
+
+/** Box key rotation: new public key + its seed sealed to each remaining device (and the root). */
+const MAX_BOX_SEEDS = 24
+function boxBody(b) {
+  if (!onlyKeys(b, ['box', 'seeds']) || !isKey(b.box) || !isObj(b.seeds)) return false
+  const keys = Object.keys(b.seeds)
+  return (
+    keys.length > 0 &&
+    keys.length <= MAX_BOX_SEEDS &&
+    keys.every((k) => (k === 'root' || isKey(k)) && isStr(b.seeds[k], 256) && HEX.test(b.seeds[k]))
+  )
+}
+
 // ---- personal (home) base -------------------------------------------------
 
 const JOURNAL_TYPES = ['ep', 'ch', 'comment']
@@ -135,7 +152,7 @@ function journalEntry(e) {
 }
 
 function homeNode(value) {
-  if (!envelope(value, ['inception', 'profile', 'add-device', 'remove-device', 'label', 'block', 'follow', 'sub', 'xp', 'bind'])) {
+  if (!envelope(value, ['inception', 'profile', 'add-device', 'remove-device', 'label', 'block', 'follow', 'sub', 'xp', 'bind', 'box'])) {
     return false
   }
   if (value.room !== 'home') return false
@@ -145,12 +162,13 @@ function homeNode(value) {
       return onlyKeys(b, ['name', 'box', 'device']) && isStr(b.name, LIMITS.name) && isKey(b.box) && isStr(b.device, LIMITS.name)
     case 'profile':
       return (
-        onlyKeys(b, ['name', 'bio', 'avatar', 'box']) &&
+        onlyKeys(b, ['name', 'bio', 'avatar', 'box', 'rot']) &&
         Object.keys(b).length > 0 &&
         optional(b.name, (v) => isStr(v, LIMITS.name)) &&
         optional(b.bio, (v) => isStr(v, LIMITS.bio, 0)) &&
         optional(b.avatar, (v) => isStr(v, LIMITS.avatar, 0)) &&
-        optional(b.box, isKey)
+        optional(b.box, isKey) &&
+        optional(b.rot, isKey)
       )
     case 'add-device':
       return onlyKeys(b, ['device', 'name']) && isKey(b.device) && isStr(b.name, LIMITS.name)
@@ -171,6 +189,8 @@ function homeNode(value) {
       return onlyKeys(b, ['entry', 'prev']) && journalEntry(b.entry) && (b.prev === null || isKey(b.prev))
     case 'bind':
       return isAuth(value.auth) && Object.keys(b).length === 0
+    case 'box':
+      return boxBody(b)
   }
   return false
 }
@@ -178,7 +198,7 @@ function homeNode(value) {
 // ---- direct messages -------------------------------------------------------
 
 function dmNode(value) {
-  if (!envelope(value, ['dm', 'seen', 'bind'], MAX_DM_NODE_BYTES)) return false
+  if (!envelope(value, ['dm', 'seen', 'bind', 'revoke'], MAX_DM_NODE_BYTES)) return false
   if (value.room !== 'dm') return false
   const b = value.body
   switch (value.t) {
@@ -197,6 +217,8 @@ function dmNode(value) {
       return onlyKeys(b, ['upto']) && isTs(b.upto)
     case 'bind':
       return isAuth(value.auth) && Object.keys(b).length === 0
+    case 'revoke':
+      return revokeBody(b)
   }
   return false
 }

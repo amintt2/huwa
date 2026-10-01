@@ -203,3 +203,32 @@ test('mapping corrections: one active proposal per field, validated, paced, demo
   assert.equal(demo.filter((x) => x.season === 'void2' && x.to === 88).length, 2);
   assert.ok(demo.every((x) => x.author === demoKey('mira.reads') || x.author === demoKey('kaito_92')));
 });
+
+test('a new identity over an orphaned profile starts clean; the phrase brings the old data back', async () => {
+  // Earlier tests' instances still have a demo welcome DM scheduled (4 s) that saves their own
+  // database: let them fire, then start from empty storage.
+  await new Promise((r) => setTimeout(r, 4500));
+  await AsyncStorage.clear();
+  const a = createLocalP2P();
+  const { profile: pa, phrase } = await a.createIdentity('ancien');
+  const peer = demoKey('kaito_92');
+  await a.sendMessage(peer, 'message de l’ancien compte');
+  await new Promise((r) => setTimeout(r, 400)); // debounced save
+
+  // The Keychain lost the keys (the AsyncStorage profile is still there): orphaned profile.
+  for (const k of ['huwa.identity.phrase', 'huwa.identity.root']) await SecureStore.deleteItemAsync(k);
+  const b = createLocalP2P();
+  await first<unknown>((cb) => b.onStatus(cb));
+  assert.equal(b.me(), undefined);
+  const { profile: pb } = await b.createIdentity('nouveau');
+  assert.notEqual(pb.key, pa.key);
+  const convs = await first((cb: (c: import('../contract').Conversation[]) => void) => b.watchConversations(cb));
+  assert.ok(!convs.some((c) => c.lastText === 'message de l’ancien compte'), 'old DMs not mixed in');
+  assert.equal((await b.devices()).length, 1);
+
+  const restored = await b.restoreIdentity(phrase);
+  assert.equal(restored.key, pa.key);
+  assert.equal(restored.name, 'ancien');
+  const back = await first((cb: (c: import('../contract').Conversation[]) => void) => b.watchConversations(cb));
+  assert.ok(back.some((c) => c.lastText === 'message de l’ancien compte'), 'old data restored with its phrase');
+});

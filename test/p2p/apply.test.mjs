@@ -372,3 +372,144 @@ test('dm: only the pair, sealed boxes, per-author monotonic ts, read receipts', 
   await apply([await node(bob, wb, 'seen', 'dm', { upto: m1.value.ts })], view, null)
   assert.equal((await view.get('s/' + bob.identity)).value.seen, m1.value.ts)
 })
+
+// ---- device revocation ---------------------------------------------------------
+
+/** A second device of `user`, attested by its first device. */
+function secondDevice(user) {
+  const device = crypto.keyPair()
+  return { ...user, device, proof: IdentityKey.attestDevice(device.publicKey, user.device, user.proof) }
+}
+
+test('room: a revoked device is refused once its identity publishes the revocation', async () => {
+  const alice = await makeUser()
+  const mallory = await makeUser()
+  const stolen = secondDevice(alice)
+  const apply = createRoomApply('77')
+  const view = new FakeView()
+  const host = new FakeHost()
+  const w1 = alice.writer()
+  const ws = alice.writer()
+  await apply([await comment(alice, w1)], view, host)
+  await apply([await comment(stolen, ws)], view, host)
+  assert.equal([...view.map.keys()].filter((k) => k.startsWith('c/')).length, 2, 'both devices write before the revocation')
+
+  const revoke = (user, w, device, opts = {}) =>
+    node(user, w, 'revoke', 'work:77', { device: toHex(device.publicKey) }, { bits: powMod.DIFFICULTY.like, withAuth: false, ...opts })
+  // Another identity cannot revoke Alice's device, and a device cannot revoke itself.
+  await apply([await revoke(mallory, mallory.writer(), stolen.device, { withAuth: true })], view, host)
+  await apply([await revoke(stolen, ws, stolen.device)], view, host)
+  assert.equal(view.map.has('rv/' + alice.identity + '/' + toHex(stolen.device.publicKey)), false)
+  await apply([await revoke(alice, w1, stolen.device)], view, host)
+  assert.ok(view.map.has('rv/' + alice.identity + '/' + toHex(stolen.device.publicKey)))
+  assert.deepEqual(host.removed, [toHex(ws)], 'the revoked device writer is removed')
+
+  // Its bound writer and any new writer it binds are refused, including a counter-revocation.
+  await apply([await comment(stolen, ws, { withAuth: false, text: 'après' })], view, host)
+  await apply([await comment(stolen, alice.writer(), { text: 'nouveau writer' })], view, host)
+  await apply([await revoke(stolen, ws, alice.device)], view, host)
+  assert.equal([...view.map.keys()].filter((k) => k.startsWith('c/')).length, 2)
+  assert.equal(view.map.has('rv/' + alice.identity + '/' + toHex(alice.device.publicKey)), false)
+  // Alice's remaining device still writes.
+  await apply([await comment(alice, w1, { withAuth: false, text: 'toujours là' })], view, host)
+  assert.equal([...view.map.keys()].filter((k) => k.startsWith('c/')).length, 3)
+})
+
+test('dm: a revoked device of a participant cannot write any more', async () => {
+  const alice = await makeUser()
+  const bob = await makeUser()
+  const stolen = secondDevice(alice)
+  const pair = [alice.identity, bob.identity].sort()
+  const apply = createDmApply(pair)
+  const view = new FakeView()
+  const host = new FakeHost()
+  const box = sealMod.boxKeyPair(crypto.randomBytes(32))
+  const msg = async (user, w, opts = {}) => {
+    const id = toHex(crypto.randomBytes(16))
+    const ts = tick(1000)
+    const plain = JSON.stringify({ id, from: user.identity, ts, text: 'x' })
+    const sealed = toHex(sealMod.seal(plain, box.publicKey))
+    return node(user, w, 'dm', 'dm', { id, to: bob.identity, r: sealed, s: sealed }, { bits: powMod.DIFFICULTY.dm, ts, withAuth: opts.withAuth ?? true })
+  }
+  const count = () => [...view.map.keys()].filter((k) => k.startsWith('m/')).length
+  const wa = alice.writer()
+  const ws = alice.writer()
+  await apply([await msg(alice, wa)], view, host)
+  await apply([await msg(stolen, ws)], view, host)
+  assert.equal(count(), 2)
+  await apply([await node(alice, wa, 'revoke', 'dm', { device: toHex(stolen.device.publicKey) }, { withAuth: false })], view, host)
+  assert.deepEqual(host.removed, [toHex(ws)])
+  await apply([await msg(stolen, ws, { withAuth: false })], view, host)
+  await apply([await msg(stolen, alice.writer())], view, host)
+  assert.equal(count(), 2, 'revoked device refused')
+  await apply([await msg(alice, wa, { withAuth: false })], view, host)
+  assert.equal(count(), 3)
+})
+
+test('home: box rotation updates the profile box and keeps every rotation', async () => {
+  const alice = await makeUser()
+  const apply = createHomeApply(alice.identity)
+  const view = new FakeView()
+  const w1 = alice.writer()
+  const box0 = toHex(crypto.randomBytes(32))
+  await apply([await node(alice, w1, 'inception', 'home', { name: 'Alice', box: box0, device: 'iPhone' })], view, null)
+  const rot = sealMod.boxKeyPair(crypto.randomBytes(32))
+  await apply([await node(alice, w1, 'profile', 'home', { rot: toHex(rot.publicKey) }, { withAuth: false })], view, null)
+
+  const seed = crypto.randomBytes(32)
+  const kp = sealMod.boxKeyPair(seed)
+  const dev = toHex(alice.device.publicKey)
+  const seeds = { [dev]: toHex(sealMod.seal(seed, sealMod.signToBoxPublicKey(alice.device.publicKey))), root: toHex(sealMod.seal(seed, rot.publicKey)) }
+  await apply([await node(alice, w1, 'box', 'home', { box: toHex(kp.publicKey), seeds }, { withAuth: false })], view, null)
+  const profile = (await view.get('profile')).value
+  assert.equal(profile.box, toHex(kp.publicKey))
+  assert.equal(profile.name, 'Alice')
+  const entry = (await view.get('box/' + util.pad(0, 10))).value
+  // The device and the root (restore from the phrase) open the new seed; nobody else can.
+  assert.equal(toHex(sealMod.open(util.fromHex(entry.seeds[dev]), sealMod.signToBoxKeyPair(alice.device))), toHex(seed))
+  assert.equal(toHex(sealMod.open(util.fromHex(entry.seeds.root), rot)), toHex(seed))
+  assert.equal(sealMod.open(util.fromHex(entry.seeds[dev]), sealMod.signToBoxKeyPair(crypto.keyPair())), null)
+
+  // Schema: unknown seed holders and oversize lists are refused.
+  await apply([await node(alice, w1, 'box', 'home', { box: box0, seeds: { nope: 'aa' } }, { withAuth: false })], view, null)
+  assert.equal((await view.get('profile')).value.box, toHex(kp.publicKey))
+})
+
+test('two devices of one identity with skewed clocks both get their comments and DMs in', async () => {
+  const alice = await makeUser()
+  const bob = await makeUser()
+  const laggy = secondDevice(alice) // clock 2 minutes behind
+  const view = new FakeView()
+  const apply = createRoomApply('77')
+  const w1 = alice.writer()
+  const w2 = alice.writer()
+  const at = (user, w, ts, text) => {
+    const body = commentBody(user, ts, text)
+    return node(user, w, 'comment', 'work:77', body, { bits: 16, ts })
+  }
+  const t0 = tick(RATE.minIntervalMs)
+  await apply([await at(alice, w1, t0, 'un')], view, null)
+  await apply([await at(laggy, w2, t0 - 120_000 + 30_000, 'deux')], view, null) // 30 s later, real time
+  assert.equal([...view.map.keys()].filter((k) => k.startsWith('c/')).length, 2, 'skewed device accepted')
+  // Still increasing per device, and the identity-wide interval still holds.
+  await apply([await at(laggy, w2, t0 - 120_000 + 20_000, 'trois')], view, null)
+  await apply([await at(alice, w1, t0 + 5_000, 'quatre')], view, null)
+  assert.equal([...view.map.keys()].filter((k) => k.startsWith('c/')).length, 2)
+
+  const pair = [alice.identity, bob.identity].sort()
+  const dmApply = createDmApply(pair)
+  const dmView = new FakeView()
+  const box = sealMod.boxKeyPair(crypto.randomBytes(32))
+  const dm = (user, w, ts) => {
+    const id = toHex(crypto.randomBytes(16))
+    const sealed = toHex(sealMod.seal(JSON.stringify({ id, from: user.identity, ts, text: 'x' }), box.publicKey))
+    return node(user, w, 'dm', 'dm', { id, to: bob.identity, r: sealed, s: sealed }, { bits: powMod.DIFFICULTY.dm, ts })
+  }
+  const t1 = tick(1000)
+  await dmApply([await dm(alice, alice.writer(), t1)], dmView, null)
+  const wl = alice.writer()
+  await dmApply([await dm(laggy, wl, t1 - 60_000)], dmView, null)
+  assert.equal([...dmView.map.keys()].filter((k) => k.startsWith('m/')).length, 2, 'skewed device DM accepted')
+  await dmApply([await node(laggy, wl, 'dm', 'dm', (await dm(laggy, wl, t1 - 70_000)).value.body, { bits: powMod.DIFFICULTY.dm, ts: t1 - 70_000, withAuth: false })], dmView, null)
+  assert.equal([...dmView.map.keys()].filter((k) => k.startsWith('m/')).length, 2, 'per-device order still enforced')
+})

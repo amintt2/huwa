@@ -11,6 +11,7 @@ import worklet from '../../src/p2p/worklet/node.js'
 const { HuwaNode } = worklet
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'huwa-it-'))
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
+const sealBoxOf = (n) => n._box().publicKey.toString('hex')
 
 async function until(fn, ms = 20000) {
   const deadline = Date.now() + ms
@@ -129,9 +130,28 @@ test('identity, comments, likes, DMs, labels, journal and pairing across nodes',
   const revoked = await until(async () => (await alice.devices()).find((d) => d.key === other.key && d.revoked))
   assert.ok(revoked)
 
+  // Revocation is not cosmetic: the DM box rotates (bob seals to the new one, the revoked device
+  // cannot open it) and the revoked device's writes are refused in the DM base.
+  const oldBox = sealBoxOf(alice2)
+  const newBox = sealBoxOf(alice)
+  assert.notEqual(newBox, oldBox, 'alice rotated her box')
+  assert.ok(await until(() => bob.peers.get(pa.key) && bob.peers.get(pa.key).box === newBox), 'bob uses the rotated box')
+  await bob.sendMessage(pa.key, 'après révocation')
+  assert.ok(await until(async () => (await alice.listMessages(pb.key)).some((m) => m.text === 'après révocation')), 'alice reads it')
+  await alice2.listMessages(pb.key) // opens the DM base on the revoked device
+  const dmOn2 = alice2.dms.get(pb.key).base
+  assert.ok(await until(async () => (await dmOn2.view.get('rv/' + pa.key + '/' + other.key))), 'revocation published in the DM')
+  assert.ok(!(await alice2.listMessages(pb.key)).some((m) => m.text === 'après révocation'), 'revoked device cannot read new DMs')
+  await alice2.sendMessage(pb.key, 'message volé').catch(() => {})
+  await sleep(3000)
+  assert.ok(!(await bob.listMessages(pa.key)).some((m) => m.text === 'message volé'), 'bob refuses the revoked device')
+
   // Restore from the phrase on a fresh device finds the same personal base.
   const alice3 = await mk('alice3')
   const restored = await alice3.restoreIdentity(phrase)
   assert.equal(restored.key, pa.key)
   assert.equal(restored.name, 'Alice')
+  // The rotated box seed is sealed to the root too: the phrase recovers it, and the DM history.
+  assert.ok(await until(() => sealBoxOf(alice3) === sealBoxOf(alice)), 'restored device adopts the rotated box')
+  assert.ok(await until(async () => (await alice3.listMessages(pb.key)).some((m) => m.text === 'après révocation')), 'restored device reads DMs')
 })

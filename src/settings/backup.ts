@@ -1,6 +1,7 @@
-// Export / import of every local Huwa key (JSON file), and cache clearing.
+// Export / import of the local Huwa data (JSON file), and cache clearing.
 // The file holds raw AsyncStorage values keyed by name, so new stores are covered automatically
-// as long as their key starts with `huwa/`. Re-fetchable caches are left out.
+// as long as their key starts with `huwa/`. Caches, cookies, device-bound identity material and
+// file indexes are left out (rules in ./backup-core.ts); personal add-on URLs only on request.
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as DocumentPicker from 'expo-document-picker';
 import { File, Paths } from 'expo-file-system';
@@ -9,28 +10,34 @@ import * as Sharing from 'expo-sharing';
 import { Platform } from 'react-native';
 
 import { hydrateExtraSeries } from '@/data/catalog';
+import { hasSourceBundle } from '@/manga-ext/registry';
 import { hydrateLists } from '@/store/lists';
 import { rehydrateStore } from '@/store/store';
 
+import { MANGA_EXT_KEY, PREFIX, dropMissingSources, exportData as exportable, isExportable, personalAddonCount, planRestore, withoutPersonalAddons } from './backup-core';
+import { rehydrateAll } from './rehydrate';
 import { hydrateSettings } from './settings';
 
-const PREFIX = 'huwa/';
-/** Caches: rebuilt from the network, not worth exporting. */
+/** Caches: rebuilt from the network, cleared by "Vider le cache". */
 const CACHE_KEYS = ['huwa/catalog/v2'];
 
 export type Backup = { app: 'huwa'; format: 1; exportedAt: string; data: Record<string, string> };
 
-export async function buildBackup(): Promise<Backup> {
-  const keys = (await AsyncStorage.getAllKeys()).filter((k) => k.startsWith(PREFIX) && !CACHE_KEYS.includes(k));
-  const pairs = await AsyncStorage.multiGet(keys);
-  const data: Record<string, string> = {};
-  for (const [k, v] of pairs) if (v != null) data[k] = v;
-  return { app: 'huwa', format: 1, exportedAt: new Date().toISOString(), data };
+export async function buildBackup({ includePersonalAddons = false }: { includePersonalAddons?: boolean } = {}): Promise<Backup> {
+  const keys = (await AsyncStorage.getAllKeys()).filter(isExportable);
+  const data = exportable(await AsyncStorage.multiGet(keys));
+  return { app: 'huwa', format: 1, exportedAt: new Date().toISOString(), data: includePersonalAddons ? data : withoutPersonalAddons(data) };
+}
+
+/** Installed add-ons whose URL holds a personal configuration (API keys, tokens…). */
+export async function personalAddonsInExport(): Promise<number> {
+  const raw = await AsyncStorage.getItem('huwa/addons/v1').catch(() => null);
+  return raw ? personalAddonCount({ 'huwa/addons/v1': raw }) : 0;
 }
 
 /** Writes the backup to a temp file and opens the system share sheet. */
-export async function exportData(): Promise<void> {
-  const backup = await buildBackup();
+export async function exportData(opts: { includePersonalAddons?: boolean } = {}): Promise<void> {
+  const backup = await buildBackup(opts);
   const json = JSON.stringify(backup, null, 2);
   const name = `huwa-backup-${backup.exportedAt.slice(0, 10)}.json`;
 
@@ -71,14 +78,24 @@ export async function pickBackup(): Promise<Backup | null> {
   return parseBackup(text);
 }
 
-/** Replace local data with the backup, then reload every store in memory. */
-export async function restoreBackup(backup: Backup) {
-  const existing = (await AsyncStorage.getAllKeys()).filter((k) => k.startsWith(PREFIX) && !CACHE_KEYS.includes(k));
-  await AsyncStorage.multiRemove(existing);
-  await AsyncStorage.multiSet(Object.entries(backup.data));
-  // Progress, lists, settings and saved series reload live. Installed add-ons are read by their
-  // registry at launch only, so they apply on the next start.
-  await Promise.all([rehydrateStore(), hydrateLists(true), hydrateSettings(true), hydrateExtraSeries()]);
+/**
+ * Replaces this device's data with the backup (writes first, then removes the keys the backup does
+ * not have), then makes every store in memory re-read it. Returns the extension sources that must
+ * be reinstalled (their code is not part of an export).
+ */
+export async function restoreBackup(backup: Backup): Promise<{ sourcesToReinstall: string[] }> {
+  const data = { ...backup.data };
+  let sourcesToReinstall: string[] = [];
+  if (data[MANGA_EXT_KEY] != null) {
+    const r = dropMissingSources(data[MANGA_EXT_KEY], hasSourceBundle);
+    data[MANGA_EXT_KEY] = r.raw;
+    sourcesToReinstall = r.dropped;
+  }
+  const plan = planRestore(await AsyncStorage.getAllKeys(), data);
+  await AsyncStorage.multiSet(plan.set);
+  if (plan.remove.length) await AsyncStorage.multiRemove(plan.remove);
+  await Promise.all([rehydrateStore(), hydrateLists(true), hydrateSettings(true), hydrateExtraSeries(), rehydrateAll()]);
+  return { sourcesToReinstall };
 }
 
 /** Image caches + catalog cache. Progress, lists and settings are untouched. */

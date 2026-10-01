@@ -5,6 +5,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useSyncExternalStore } from 'react';
 
 import { pushRing, type AddonStat, type PlaybackEvent } from './model';
+import { registerRehydrate } from '@/settings/rehydrate';
 
 const KEY = 'huwa/stats/v1';
 export const MAX_EVENTS = 500;
@@ -43,6 +44,19 @@ export const statsReady: Promise<void> = AsyncStorage.getItem(KEY)
     hydrated = true;
     listeners.forEach((l) => l());
   });
+
+registerRehydrate(async () => {
+  clearTimeout(timer);
+  const raw = await AsyncStorage.getItem(KEY).catch(() => null);
+  try {
+    const saved = raw ? (JSON.parse(raw) as Partial<StatsState>) : {};
+    state = { ...initial, ...saved, events: Array.isArray(saved.events) ? saved.events : [], addons: saved.addons ?? {} };
+  } catch {
+    state = initial;
+  }
+  hydrated = true;
+  listeners.forEach((l) => l());
+});
 
 function set(next: StatsState) {
   state = next;

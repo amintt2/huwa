@@ -6,6 +6,7 @@ import { useSyncExternalStore } from 'react';
 import { demoEngine } from '@/demo/flags';
 
 import type { Engine, EnginePref } from './policy';
+import { registerRehydrate } from '@/settings/rehydrate';
 
 const KEY = 'huwa/player-engine/v1';
 
@@ -17,14 +18,17 @@ const subscribe = (l: () => void) => {
   return () => listeners.delete(l);
 };
 
-AsyncStorage.getItem(KEY)
-  .then((raw) => {
-    if (!demoEngine && (raw === 'auto' || raw === 'native' || raw === 'mpv')) {
-      pref = raw;
-      emit();
-    }
-  })
-  .catch(() => {});
+const load = () =>
+  AsyncStorage.getItem(KEY)
+    .then((raw) => {
+      if (!demoEngine && (raw === 'auto' || raw === 'native' || raw === 'mpv' || raw === null)) {
+        pref = raw ?? 'auto';
+        emit();
+      }
+    })
+    .catch(() => {});
+load();
+registerRehydrate(load);
 
 export const getEnginePref = () => pref;
 

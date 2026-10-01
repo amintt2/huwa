@@ -4,9 +4,11 @@ import { useMemo, useState } from 'react';
 import { Alert, KeyboardAvoidingView, Platform, ScrollView, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
+import { RestoreOfflineNotice } from '@/components/restore-offline';
 import { DANGER, Field, Group, Row, ScreenHeader } from '@/components/social';
 import { Button, Txt } from '@/components/ui';
 import { cloudBackup, cloudBackupSupported } from '@/p2p/cloud-backup';
+import { isRestoreNotFound } from '@/p2p/errors';
 import { social } from '@/p2p/hooks';
 import { PasskeyError, passkeyMessage, passkeySupport, requestPasskeyOffer, restoreWithPasskey } from '@/p2p/passkey';
 import { PHRASE_WORDS, isValidPhrase, normalizePhraseInput, unknownWords } from '@/social/identity';
@@ -17,6 +19,20 @@ export default function Restore() {
   const [text, setText] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();
+  /** None of the account's devices answered: how to try the same restore again. */
+  const [retry, setRetry] = useState<() => void>();
+
+  /** Shared failure path: no success haptic, no iCloud save, no passkey offer. */
+  const failed = (e: unknown, again: () => void) => {
+    requestPasskeyOffer(false);
+    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+    setBusy(false);
+    if (isRestoreNotFound(e)) {
+      setRetry(() => again);
+      return true;
+    }
+    return false;
+  };
 
   const words = useMemo(() => normalizePhraseInput(text), [text]);
   const unknown = useMemo(() => unknownWords(words), [words]);
@@ -27,14 +43,13 @@ export default function Restore() {
     if (busy || !valid) return;
     setBusy(true);
     setError(undefined);
+    setRetry(undefined);
     try {
       requestPasskeyOffer();
       await social.restoreIdentity(words);
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     } catch (e) {
-      requestPasskeyOffer(false);
-      setError(e instanceof Error ? e.message : 'Restauration impossible.');
-      setBusy(false);
+      if (!failed(e, restore)) setError(e instanceof Error ? e.message : 'Restauration impossible.');
     }
   };
 
@@ -42,11 +57,16 @@ export default function Restore() {
     if (busy) return;
     setBusy(true);
     setError(undefined);
+    setRetry(undefined);
     try {
       await restoreWithPasskey({ immediate });
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     } catch (e) {
       setBusy(false);
+      if (isRestoreNotFound(e)) {
+        failed(e, () => restoreFromPasskey(immediate));
+        return;
+      }
       if (e instanceof PasskeyError && e.code === 'no-credentials' && immediate) {
         // Nothing on this iPhone: the system sheet can still use a passkey from a phone nearby (QR).
         Alert.alert('Aucune clé d’accès sur cet appareil', 'Tu peux utiliser une clé d’accès enregistrée sur un autre appareil à proximité.', [
@@ -75,14 +95,13 @@ export default function Restore() {
       return;
     }
     setBusy(true);
+    setRetry(undefined);
     try {
       requestPasskeyOffer();
       await social.restoreIdentity(saved);
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     } catch (e) {
-      requestPasskeyOffer(false);
-      setError(e instanceof Error ? e.message : 'Restauration impossible.');
-      setBusy(false);
+      if (!failed(e, restoreFromCloud)) setError(e instanceof Error ? e.message : 'Restauration impossible.');
     }
   };
 
@@ -98,6 +117,13 @@ export default function Restore() {
       <ScrollView
         keyboardShouldPersistTaps="handled"
         contentContainerStyle={{ paddingHorizontal: S.lg, paddingBottom: insets.bottom + S.xl, gap: S.xl }}>
+        {retry ? (
+          <RestoreOfflineNotice
+            busy={busy}
+            onRetry={retry}
+            onNewAccount={() => (router.canGoBack() ? router.back() : router.replace('/onboarding'))}
+          />
+        ) : null}
         <Group
           title="Le plus simple"
           footer="Sur ton autre appareil : Profil → Réglages → Sécurité → Lier un appareil. Un QR code s’affiche.">

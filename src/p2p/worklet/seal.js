@@ -24,4 +24,18 @@ function open(ciphertext, keyPair) {
   return sodium.crypto_box_seal_open(m, ciphertext, keyPair.publicKey, keyPair.secretKey) ? m : null
 }
 
-module.exports = { boxKeyPair, seal, open }
+/** X25519 public key of an Ed25519 signing key (device keys), to seal a secret to a device. */
+function signToBoxPublicKey(edPublicKey) {
+  const pk = b4a.alloc(sodium.crypto_box_PUBLICKEYBYTES)
+  sodium.crypto_sign_ed25519_pk_to_curve25519(pk, edPublicKey)
+  return pk
+}
+
+/** X25519 key pair of an Ed25519 signing key pair `{ publicKey, secretKey }`. */
+function signToBoxKeyPair(ed) {
+  const secretKey = b4a.alloc(sodium.crypto_box_SECRETKEYBYTES)
+  sodium.crypto_sign_ed25519_sk_to_curve25519(secretKey, ed.secretKey)
+  return { publicKey: signToBoxPublicKey(ed.publicKey), secretKey }
+}
+
+module.exports = { boxKeyPair, seal, open, signToBoxPublicKey, signToBoxKeyPair }
