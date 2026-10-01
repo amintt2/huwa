@@ -100,7 +100,13 @@ function WatchScreen({ id }: { id: string }) {
     if (currentRef.current) src.markBad(currentRef.current, message);
   };
   const nextProp = next ? { label: episodeLabel(next), onPlay: () => router.replace(`/watch/${next.id}`) } : null;
-  const sourceLabel = src.current ? `${src.current.name ?? 'Source'} · ${qualityLabel(src.quality)}` : 'Sources';
+  const sourceLabel = (() => {
+    if (!src.current) return 'Sources';
+    // Addon names often already carry the quality ("HLS 720p"): don't repeat it.
+    const name = (src.current.name ?? 'Source').split('\n')[0].trim();
+    const q = qualityLabel(src.quality);
+    return name.toLowerCase().includes(q.toLowerCase()) ? name : `${name} · ${q}`;
+  })();
   const renderComments = () => (
     <CommentsPanel
       target={target}
