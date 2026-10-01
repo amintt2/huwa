@@ -257,3 +257,14 @@ test('speed labels for the sources menu', () => {
   assert.equal(speedLabel(undefined, undefined, true), 'test…');
   assert.equal(speedLabel(undefined, undefined, false), null);
 });
+
+test('HLS / DASH manifests are judged on response time, not throughput', () => {
+  const enc = (t: string) => new TextEncoder().encode(t);
+  const hls = evaluateMeasure({ status: 200, contentType: 'text/plain', head: enc('#EXTM3U\n#EXT-X-VERSION:3'), bytes: 900, ttfbMs: 300, totalMs: 320 });
+  assert.equal(hls.alive, true);
+  assert.equal(hls.adaptive, true);
+  assert.equal(speedVerdict(hls, 7), 'fast');
+  const dash = evaluateMeasure({ status: 200, contentType: 'application/dash+xml', head: enc('<?xml version="1.0"?><MPD'), bytes: 2000, ttfbMs: 4000, totalMs: 4100 });
+  assert.equal(dash.alive, true);
+  assert.equal(speedVerdict(dash, 7), 'ok');
+});

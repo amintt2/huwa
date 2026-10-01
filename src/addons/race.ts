@@ -50,6 +50,11 @@ export type RaceResult = {
   ranged?: boolean;
   /** Headers came back but the body did not finish before the deadline. */
   stalled?: boolean;
+  /**
+   * HLS / DASH manifest: a few KB of text, so no throughput figure; the player adapts its
+   * bitrate to the connection, so only the response time matters.
+   */
+  adaptive?: boolean;
   /** Epoch ms of the measurement (cache TTL). */
   at: number;
 };
@@ -69,6 +74,16 @@ function looksLikeMarkup(head: Uint8Array | null | undefined): boolean {
   while (i < head.length && (head[i] === 0x20 || head[i] === 0x0a || head[i] === 0x0d || head[i] === 0x09)) i++;
   const start = String.fromCharCode(...head.subarray(i, i + 15)).toLowerCase();
   return start.startsWith('<!doctype') || start.startsWith('<html') || start.startsWith('<?xml') || start.startsWith('{"') || start.startsWith('{"error');
+}
+
+const ADAPTIVE_TYPES = /^(application\/(vnd\.apple\.mpegurl|x-mpegurl|mpegurl|dash\+xml)|audio\/(x-)?mpegurl)$/;
+
+/** HLS playlist (`#EXTM3U`) or DASH manifest (`<MPD`) from its type or first bytes. */
+function isAdaptive(type: string, head: Uint8Array | null | undefined): boolean {
+  if (ADAPTIVE_TYPES.test(type)) return true;
+  if (!head || !head.length) return false;
+  const start = String.fromCharCode(...head.subarray(0, 200)).replace(/^\uFEFF/, '').trimStart();
+  return start.startsWith('#EXTM3U') || /^(<\?xml[^>]*>\s*)?<MPD[\s>]/i.test(start);
 }
 
 /** Total size from `Content-Range: bytes a-b/total` (`*` = unknown). */
@@ -92,6 +107,8 @@ export function evaluateMeasure(raw: RawMeasure, now = Date.now()): RaceResult {
   if (raw.status === 416) return { ...base, alive: false, dead: 'empty' };
   if (raw.status >= 400 || raw.status < 200) return { ...base, alive: false, dead: 'http' };
   const type = (raw.contentType ?? '').split(';')[0].trim().toLowerCase();
+  // Checked first: playlists are often served as text/plain, and a DASH manifest is XML.
+  if (isAdaptive(type, raw.head)) return { ...base, alive: true, adaptive: true, stalled: raw.timedOut || undefined };
   if (NOT_MEDIA_TYPES.test(type) || looksLikeMarkup(raw.head)) return { ...base, alive: false, dead: 'not-media' };
   const size = sizeFromContentRange(raw.contentRange);
   if (size === 0) return { ...base, alive: false, dead: 'empty' };
@@ -166,6 +183,7 @@ export function speedVerdict(r: RaceResult, bitrateMbps: number): Speed {
   if (!r.alive) return 'dead';
   if (r.stalled) return 'slow';
   const ttfb = r.ttfbMs ?? Infinity;
+  if (r.adaptive) return ttfb <= FAST_TTFB_MS ? 'fast' : ttfb <= OK_TTFB_MS ? 'ok' : 'slow';
   if (r.mbps == null) {
     // Range ignored (no throughput figure): judge on the response time alone, never "fast".
     return ttfb <= FAST_TTFB_MS ? 'ok' : 'slow';
