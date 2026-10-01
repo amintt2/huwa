@@ -3,11 +3,12 @@
 // getItemLayout (no measuring while scrolling). Used by the Manhwa tab; reusable by Anime.
 import Ionicons from '@expo/vector-icons/Ionicons';
 import type { ReactElement } from 'react';
-import { ActivityIndicator, FlatList, Pressable, StyleSheet, View, useWindowDimensions, type ListRenderItem } from 'react-native';
+import { ActivityIndicator, FlatList, Pressable, StyleSheet, Text, View, useWindowDimensions, type ListRenderItem } from 'react-native';
 
 import type { Palette } from '@/data/catalog';
 import { C, F, R, S } from '@/theme/tokens';
 
+import { ScoreBadge } from './cards';
 import { Cover, Press, Txt } from './ui';
 
 export const POSTER_RATIO = 1.42;
@@ -35,16 +36,13 @@ export type TileProps = {
 export function PosterTile({ title, image, imageHeaders, palette, width, rating, badge, busy, onPress, accessibilityLabel }: TileProps) {
   return (
     <Press onPress={onPress} style={{ width, height: tileHeight(width), gap: GAP }} accessibilityRole="button" accessibilityLabel={accessibilityLabel ?? title}>
-      <Cover palette={palette} image={image} imageHeaders={imageHeaders} width={width} height={Math.round(width * POSTER_RATIO)} radius={R.card}>
+      <Cover palette={palette} image={image} imageHeaders={imageHeaders} width={width} height={Math.round(width * POSTER_RATIO)}>
         {!!rating && rating > 0 && (
-          <View style={[styles.tag, { right: 6, top: 6 }]}>
-            <Ionicons name="star" size={9} color="#FFC857" />
-            <Txt v="caption" color={C.text} style={{ fontSize: 10 }}>{rating.toFixed(1).replace('.', ',')}</Txt>
-          </View>
+          <ScoreBadge rating={rating} style={{ right: 6, top: 6 }} />
         )}
         {!!badge && (
           <View style={[styles.tag, { left: 6, bottom: 6, maxWidth: width - 12 }]}>
-            <Txt v="caption" color={C.text} style={{ fontSize: 9 }} numberOfLines={1}>{badge}</Txt>
+            <Text maxFontSizeMultiplier={1.3} style={styles.tagText} numberOfLines={1}>{badge}</Text>
           </View>
         )}
         {busy && (
@@ -53,7 +51,7 @@ export function PosterTile({ title, image, imageHeaders, palette, width, rating,
           </View>
         )}
       </Cover>
-      <Txt v="caption" color={C.text} numberOfLines={2} style={styles.title}>{title}</Txt>
+      <Txt v="footnote" color={C.body} numberOfLines={2} maxFontSizeMultiplier={1.2} style={styles.title}>{title}</Txt>
     </Press>
   );
 }
@@ -63,17 +61,22 @@ export function RailHeader({ title, subtitle, icon, onMore, right }: { title: st
     <View style={styles.head}>
       {icon}
       <View style={{ flexShrink: 1 }}>
-        <Txt v="label" style={{ fontSize: 17, ...F.heavy }} numberOfLines={1}>{title}</Txt>
-        {!!subtitle && <Txt v="small" style={{ fontSize: 12 }} numberOfLines={1}>{subtitle}</Txt>}
+        <Txt v="section" numberOfLines={1} accessibilityRole="header">{title}</Txt>
+        {!!subtitle && <Txt v="footnote" numberOfLines={1}>{subtitle}</Txt>}
       </View>
       {right}
       <View style={{ flex: 1 }} />
-      {onMore && <Ionicons name="chevron-forward" size={18} color={C.text2} />}
+      {onMore && (
+        <View style={styles.more}>
+          <Txt v="small" color={C.text2} style={F.semibold}>Tout voir</Txt>
+          <Ionicons name="chevron-forward" size={14} color={C.text2} />
+        </View>
+      )}
     </View>
   );
   if (!onMore) return head;
   return (
-    <Pressable onPress={onMore} accessibilityRole="button" accessibilityLabel={`${title}, voir tout`} hitSlop={4}>
+    <Pressable onPress={onMore} accessibilityRole="button" accessibilityLabel={`${title}, voir tout`} hitSlop={4} style={({ pressed }) => pressed && { opacity: 0.6 }}>
       {head}
     </Pressable>
   );
@@ -108,16 +111,19 @@ export function Rail<T>({
   const step = tileWidth + S.md;
   const render: ListRenderItem<T> = ({ item }) => renderTile(item, tileWidth);
   return (
-    <View style={{ gap: S.sm }}>
+    <View style={{ gap: S.md }}>
       <RailHeader title={title} subtitle={subtitle} icon={icon} onMore={data.length ? onMore : undefined} />
       {loading && !data.length ? (
         <View style={{ flexDirection: 'row', gap: S.md, paddingHorizontal: S.lg, overflow: 'hidden' }}>
           {[0, 1, 2, 3].map((i) => (
-            <View key={i} style={{ width: tileWidth, height: Math.round(tileWidth * POSTER_RATIO), borderRadius: R.card, backgroundColor: C.surface }} />
+            <View key={i} style={{ gap: GAP }}>
+              <View style={{ width: tileWidth, height: Math.round(tileWidth * POSTER_RATIO), borderRadius: R.poster, borderCurve: 'continuous', backgroundColor: C.surface }} />
+              <View style={{ width: tileWidth * 0.7, height: 10, borderRadius: 5, backgroundColor: C.surface }} />
+            </View>
           ))}
         </View>
       ) : !data.length ? (
-        <Txt v="small" style={{ paddingHorizontal: S.lg, fontSize: 12 }} numberOfLines={2}>{error ?? empty ?? 'Rien pour le moment.'}</Txt>
+        <Txt v="footnote" style={{ paddingHorizontal: S.lg }} numberOfLines={2}>{error ?? empty ?? 'Rien pour le moment.'}</Txt>
       ) : (
         <FlatList
           horizontal
@@ -152,9 +158,11 @@ export const gridRowLayout = (tileW: number, header = 0) => (_: unknown, index: 
 const styles = StyleSheet.create({
   tag: {
     position: 'absolute', flexDirection: 'row', alignItems: 'center', gap: 3,
-    paddingVertical: 3, paddingHorizontal: 6, borderRadius: R.chip, backgroundColor: 'rgba(5,7,13,0.78)',
+    paddingVertical: 3, paddingHorizontal: 6, borderRadius: 6, borderCurve: 'continuous', backgroundColor: 'rgba(5,7,13,0.78)',
   },
+  tagText: { color: C.text, fontSize: 10, ...F.semibold },
+  more: { flexDirection: 'row', alignItems: 'center', gap: 1 },
   busy: { backgroundColor: 'rgba(5,7,13,0.55)', alignItems: 'center', justifyContent: 'center' },
-  title: { textAlign: 'center', fontSize: 11, lineHeight: 15, ...F.heavy, letterSpacing: 0.4, height: TITLE_H },
-  head: { flexDirection: 'row', alignItems: 'center', gap: S.sm, paddingHorizontal: S.lg, minHeight: 36 },
+  title: { ...F.semibold, lineHeight: 16, height: TITLE_H },
+  head: { flexDirection: 'row', alignItems: 'flex-end', gap: S.sm, paddingHorizontal: S.lg, minHeight: 36 },
 });

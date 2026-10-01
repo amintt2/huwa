@@ -26,16 +26,17 @@ import { continuationChapter } from '@/data/bridge';
 import { episodeLabel, getEpisode } from '@/data/catalog';
 import type { Series } from '@/data/catalog';
 import { franchiseTarget, resolvePrequels, useFranchiseTarget } from '@/data/franchise';
-import { C, S } from '@/theme/tokens';
+import { toggleMyList, useStore } from '@/store/store';
+import { C, F, S } from '@/theme/tokens';
 
 import { PRIORITY, usePresearch } from './presearch';
-import { Button, Chip, Cover, Txt } from './ui';
+import { ActionTile, Button, Cover, MetaLine, Txt } from './ui';
 
 /**
  * Hero height: the full 2:3 poster at the screen width (AniList covers), so its top — usually
  * the characters' faces and the logo — isn't cut under the status bar and the HUWA header.
  */
-const heroHeight = (width: number) => Math.min(780, Math.max(560, Math.round(width * 1.5)));
+const heroHeight = (width: number) => Math.min(760, Math.max(560, Math.round(width * 1.42)));
 /** Time each featured series stays on screen before the next one slides in. */
 const AUTO_MS = 6000;
 const SLIDE_MS = 700;
@@ -338,6 +339,7 @@ function Slide({
       ? seasonNumber && seasonNumber > 1 ? `Saison ${seasonNumber} terminée` : 'Saison terminée'
       : `${seasonNumber ? `Saison ${seasonNumber} · ` : ''}${eps.length} épisodes`
     : `${series.manhwa!.chapters.length} chapitres`;
+  const inList = useStore((s) => s.myList.includes(series.id));
 
   const open = () => router.push(seriesHref(series));
 
@@ -371,34 +373,37 @@ function Slide({
       accessibilityElementsHidden={clone}
       style={{ width, height: heroHeight(width), overflow: 'hidden' }}>
       <Animated.View style={[StyleSheet.absoluteFill, art]}>
-        <Cover palette={series.palette} image={series.image} width={width} height={heroHeight(width)} radius={0} shade="strong" />
+        <Cover palette={series.palette} image={series.image} width={width} height={heroHeight(width)} radius={0} outline={false} />
       </Animated.View>
-      {/* Top scrim so the brand and status bar stay legible on busy key art. */}
-      <LinearGradient pointerEvents="none" colors={['rgba(5,7,13,0.8)', 'rgba(5,7,13,0)']} style={styles.topScrim} />
+      {/* Scrims: top keeps the brand and status bar legible; bottom melts the art into the page. */}
+      <LinearGradient pointerEvents="none" colors={['rgba(5,7,13,0.85)', 'rgba(5,7,13,0.35)', 'rgba(5,7,13,0)']} locations={[0, 0.45, 1]} style={styles.topScrim} />
+      <LinearGradient
+        pointerEvents="none"
+        colors={['rgba(5,7,13,0)', 'rgba(5,7,13,0.55)', 'rgba(5,7,13,0.92)', C.bg]}
+        locations={[0, 0.35, 0.72, 1]}
+        style={styles.bottomScrim}
+      />
       <Animated.View style={[styles.copy, copy]}>
-        <Chip kind="accent" label={status} />
-        <Txt v="display" numberOfLines={2} style={{ fontSize: 34, lineHeight: 38 }} onPress={open} accessibilityRole="link"
+        <Txt v="display" numberOfLines={2} adjustsFontSizeToFit minimumFontScale={0.7} style={styles.title} onPress={open} accessibilityRole="link"
           accessibilityHint="Ouvre la fiche de la série">
           {series.title}
         </Txt>
-        <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6 }}>
-          {series.anime && <Chip kind="anime" />}
-          {series.manhwa && <Chip kind="manhwa" />}
-          {series.genres.map((g) => <Chip key={g} kind="neutral" label={g} />)}
-        </View>
-        <Txt v="body" numberOfLines={2} color={C.body}>{series.synopsis}</Txt>
-        <View style={{ flexDirection: 'row', gap: S.sm, marginTop: 4 }}>
-          {eps.length > 0 && (
-            <Button icon="play" label={target?.label ?? 'Regarder'} onPress={play} style={{ flex: 1 }} />
+        <MetaLine center color={C.body} items={[series.anime ? 'Anime' : 'Manhwa', ...status.split(' · '), ...series.genres.slice(0, 2)]} />
+        <View style={styles.actions}>
+          <ActionTile icon={inList ? 'checkmark' : 'add'} label="Ma liste" active={inList} onPress={() => toggleMyList(series.id)}
+            accessibilityLabel={inList ? 'Retirer de ma liste' : 'Ajouter à ma liste'} />
+          {eps.length > 0 ? (
+            <Button icon="play" label={target?.label ?? 'Lecture'} onPress={play} style={{ flex: 1 }} />
+          ) : nextCh ? (
+            <Button icon="book" label={`Lire · Ch. ${nextCh.number}`} onPress={() => router.push(`/read/${nextCh.id}`)} style={{ flex: 1 }} />
+          ) : (
+            <View style={{ flex: 1 }} />
           )}
-          {nextCh && (
-            <Button
-              variant="soft"
-              icon="book"
-              label={`Lire · Ch. ${nextCh.number}`}
-              onPress={() => router.push(`/read/${nextCh.id}`)}
-              style={{ flex: eps.length ? undefined : 1 }}
-            />
+          {eps.length > 0 && nextCh ? (
+            <ActionTile icon="book-outline" label={`Ch. ${nextCh.number}`} onPress={() => router.push(`/read/${nextCh.id}`)}
+              accessibilityLabel={`Lire le manhwa, chapitre ${nextCh.number}`} />
+          ) : (
+            <ActionTile icon="information-circle-outline" label="Infos" onPress={open} accessibilityLabel="Plus d’infos" />
           )}
         </View>
       </Animated.View>
@@ -450,9 +455,12 @@ function Dot({
 }
 
 const styles = StyleSheet.create({
-  topScrim: { position: 'absolute', left: 0, right: 0, top: 0, height: 170 },
-  copy: { position: 'absolute', left: S.lg, right: S.lg, bottom: 44, gap: 10 },
-  dots: { position: 'absolute', bottom: 18, left: 0, right: 0, flexDirection: 'row', justifyContent: 'center', gap: 6 },
-  dot: { height: DOT, borderRadius: DOT / 2, backgroundColor: 'rgba(127,176,255,0.35)', overflow: 'hidden' },
-  dotFill: { height: DOT, borderRadius: DOT / 2, backgroundColor: C.accentText },
+  topScrim: { position: 'absolute', left: 0, right: 0, top: 0, height: 200 },
+  bottomScrim: { position: 'absolute', left: 0, right: 0, bottom: 0, height: '62%' },
+  copy: { position: 'absolute', left: S.lg, right: S.lg, bottom: 40, gap: 12, alignItems: 'center' },
+  title: { fontSize: 38, lineHeight: 42, letterSpacing: -1.2, textAlign: 'center', ...F.black, textShadowColor: 'rgba(0,0,0,0.45)', textShadowRadius: 18 },
+  actions: { flexDirection: 'row', alignItems: 'center', gap: S.md, alignSelf: 'stretch', marginTop: 6 },
+  dots: { position: 'absolute', bottom: 14, left: 0, right: 0, flexDirection: 'row', justifyContent: 'center', gap: 6 },
+  dot: { height: DOT, borderRadius: DOT / 2, backgroundColor: 'rgba(255,255,255,0.22)', overflow: 'hidden' },
+  dotFill: { height: DOT, borderRadius: DOT / 2, backgroundColor: C.white },
 });

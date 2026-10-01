@@ -6,7 +6,7 @@
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { router, type Href } from 'expo-router';
 import { useEffect, useMemo, useState } from 'react';
-import { ActivityIndicator, Alert, FlatList, Pressable, ScrollView, StyleSheet, TextInput, View } from 'react-native';
+import { ActivityIndicator, Alert, FlatList, Pressable, ScrollView, StyleSheet, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { browseHref, useBrowse, type BrowseItem } from '@/data/browse';
@@ -34,9 +34,9 @@ import { useContinueItems } from '@/store/derived';
 import { C, F, R, S } from '@/theme/tokens';
 
 import { ContinueCard } from './cards';
-import { ChipGroup, FilterPills, FilterSection, FilterSheet, Stepper } from './filter-sheet';
+import { ChipGroup, FilterPills, FilterSection, FilterSheet, SearchFilterBar, Stepper } from './filter-sheet';
 import { gridRowLayout, PosterTile, Rail, RailHeader, useGridTile } from './rails';
-import { Button, Txt } from './ui';
+import { Button, ScreenTitle, Txt } from './ui';
 
 const THIS_YEAR = new Date().getFullYear();
 
@@ -67,43 +67,6 @@ export function AnimeTile({ item, width, showScore = true }: { item: BrowseItem;
       onPress={() => open(item)}
       accessibilityLabel={`${item.title}${item.score ? `, note ${item.score}` : ''}`}
     />
-  );
-}
-
-// ---------- search bar ----------
-
-/** Search field + "Filtres" button, outside the lists so typing never loses focus. */
-function SearchBar({ value, onChange, count, onFilters }: { value: string; onChange: (v: string) => void; count: number; onFilters: () => void }) {
-  return (
-    <View style={styles.searchRow}>
-      <View style={styles.search}>
-        <Ionicons name="search" size={16} color={C.text2} />
-        <TextInput
-          value={value}
-          onChangeText={onChange}
-          placeholder="Rechercher un anime"
-          placeholderTextColor={C.text2}
-          style={styles.input}
-          returnKeyType="search"
-          autoCorrect={false}
-          accessibilityLabel="Rechercher un anime"
-        />
-        {!!value && (
-          <Pressable onPress={() => onChange('')} hitSlop={10} accessibilityLabel="Effacer la recherche">
-            <Ionicons name="close-circle" size={17} color={C.text2} />
-          </Pressable>
-        )}
-      </View>
-      <Pressable onPress={onFilters} style={[styles.filterBtn, count > 0 && styles.on]} accessibilityRole="button" accessibilityLabel={count ? `Filtres, ${count} actifs` : 'Filtres'}>
-        <Ionicons name="options-outline" size={18} color={count ? C.accentText : C.text} />
-        <Txt v="small" color={count ? C.accentText : C.text} style={F.semibold}>Filtres</Txt>
-        {count > 0 && (
-          <View style={styles.badge}>
-            <Txt v="caption" color={C.onAccent} style={{ fontSize: 10 }}>{count}</Txt>
-          </View>
-        )}
-      </Pressable>
-    </View>
   );
 }
 
@@ -280,11 +243,8 @@ export function AnimeHome() {
   return (
     <View style={{ flex: 1, backgroundColor: C.bg }}>
       <View style={{ paddingTop: insets.top + S.sm, gap: S.md, paddingBottom: S.sm }}>
-        <View style={{ flexDirection: 'row', alignItems: 'center', gap: S.sm, paddingHorizontal: S.lg }}>
-          <View style={{ width: 5, height: 22, borderRadius: 3, backgroundColor: C.accentText }} />
-          <Txt v="display" style={{ fontSize: 28 }}>Anime</Txt>
-        </View>
-        <SearchBar value={text} onChange={setText} count={pills.length} onFilters={() => setSheet(true)} />
+        <ScreenTitle title="Anime" />
+        <SearchFilterBar value={text} onChange={setText} placeholder="Rechercher un anime" count={pills.length} onFilters={() => setSheet(true)} />
       </View>
       {showGrid ? (
         <AnimeGrid
@@ -300,7 +260,7 @@ export function AnimeHome() {
         <FlatList
           data={rows}
           keyExtractor={(r) => r.id}
-          contentContainerStyle={{ gap: S.xl, paddingTop: S.md, paddingBottom: insets.bottom + S.xxl * 2 }}
+          contentContainerStyle={{ gap: 28, paddingTop: S.md, paddingBottom: insets.bottom + S.xxl * 2 }}
           initialNumToRender={3}
           windowSize={5}
           keyboardDismissMode="on-drag"
@@ -311,7 +271,7 @@ export function AnimeHome() {
                   <RailHeader title="Continuer" />
                   <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingHorizontal: S.lg, gap: S.md }}>
                     {cont.slice(0, 12).map((c) => (
-                      <ContinueCard key={c.key} item={c} width={200} />
+                      <ContinueCard key={c.key} item={c} width={208} badge={false} />
                     ))}
                   </ScrollView>
                 </View>
@@ -329,18 +289,7 @@ export function AnimeHome() {
 }
 
 const styles = StyleSheet.create({
-  searchRow: { flexDirection: 'row', alignItems: 'center', gap: S.sm, paddingHorizontal: S.lg },
-  search: {
-    flex: 1, flexDirection: 'row', alignItems: 'center', gap: S.sm, minHeight: 44, paddingHorizontal: S.md,
-    borderRadius: R.control, borderCurve: 'continuous', backgroundColor: C.surface, borderWidth: 1, borderColor: C.border,
-  },
-  input: { flex: 1, color: C.text, ...F.regular, fontSize: 15, paddingVertical: 10 },
-  filterBtn: {
-    flexDirection: 'row', alignItems: 'center', gap: 6, minHeight: 44, paddingHorizontal: S.md,
-    borderRadius: R.control, borderCurve: 'continuous', backgroundColor: C.surface, borderWidth: 1, borderColor: C.border,
-  },
   on: { backgroundColor: C.accentSoft, borderColor: C.accentLine },
-  badge: { minWidth: 18, height: 18, borderRadius: 9, paddingHorizontal: 4, backgroundColor: C.accent, alignItems: 'center', justifyContent: 'center' },
   back: { flexDirection: 'row', alignItems: 'center', gap: 2, minHeight: 32, paddingHorizontal: 10, borderRadius: R.pill, backgroundColor: C.elevated },
   sort: { minHeight: 32, justifyContent: 'center', paddingHorizontal: 10, borderRadius: R.pill, borderWidth: 1, borderColor: C.border },
   empty: { alignItems: 'center', gap: S.sm, paddingTop: 60, paddingHorizontal: S.xl },
