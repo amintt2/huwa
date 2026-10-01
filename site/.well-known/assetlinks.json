@@ -1,0 +1,10 @@
+[
+  {
+    "relation": ["delegate_permission/common.get_login_creds"],
+    "target": {
+      "namespace": "android_app",
+      "package_name": "com.amintt2.huwa",
+      "sha256_cert_fingerprints": ["TODO_ANDROID_RELEASE_CERT_SHA256"]
+    }
+  }
+]

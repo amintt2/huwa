@@ -5,9 +5,11 @@ import { useState } from 'react';
 import { KeyboardAvoidingView, Platform, Pressable, ScrollView, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
+import { CloudAccountCard } from '@/components/cloud-account';
 import { Field } from '@/components/social';
 import { Button, Txt, type IconName } from '@/components/ui';
 import { social } from '@/p2p/hooks';
+import { requestPasskeyOffer } from '@/p2p/passkey';
 import { getState } from '@/store/store';
 import { C, F, S } from '@/theme/tokens';
 
@@ -23,16 +25,20 @@ export default function Welcome() {
   const [name, setName] = useState(legacy && legacy !== 'moi' ? legacy : '');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();
+  // An iCloud account card takes the primary role: creating a new identity steps back.
+  const [cloudCard, setCloudCard] = useState(false);
 
   const create = async () => {
     if (busy) return;
     setBusy(true);
     setError(undefined);
     try {
+      requestPasskeyOffer();
       await social.createIdentity(name);
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       // The protected stack now switches to the app on its own.
     } catch (e) {
+      requestPasskeyOffer(false);
       setError(e instanceof Error ? e.message : 'Impossible de créer l’identité.');
       setBusy(false);
     }
@@ -64,6 +70,8 @@ export default function Welcome() {
 
         <View style={{ flex: 1 }} />
 
+        <CloudAccountCard onVisibleChange={setCloudCard} />
+
         <View style={{ gap: S.md }}>
           <Field
             label="Choisis un pseudo"
@@ -83,7 +91,7 @@ export default function Welcome() {
           <Txt v="small" style={{ lineHeight: 18 }}>
             Deux personnes peuvent avoir le même pseudo : une empreinte courte s’affiche à côté pour les distinguer.
           </Txt>
-          <Button label={busy ? 'Création…' : 'Créer mon identité'} icon="sparkles" onPress={create} />
+          <Button variant={cloudCard ? 'ghost' : 'solid'} label={busy ? 'Création…' : 'Créer mon identité'} icon="sparkles" onPress={create} />
           <Pressable
             onPress={() => router.push('/onboarding/restore')}
             accessibilityRole="button"

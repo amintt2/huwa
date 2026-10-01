@@ -1,7 +1,7 @@
 // Demo mode (store screenshots) must patch storage before anything reads it.
 import { isDemo } from '@/demo';
 import { DemoRoute } from '@/demo/route';
-import { DarkTheme, Stack, ThemeProvider } from 'expo-router';
+import { DarkTheme, Stack, ThemeProvider, router } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
 import { StatusBar } from 'expo-status-bar';
 import { useEffect, useState } from 'react';
@@ -17,6 +17,7 @@ import { PaperbackHost } from '@/manga-ext/PaperbackHost';
 import { hydrateMangaExt } from '@/manga-ext/registry';
 import { useEpisodeNotifications } from '@/notifications/episodes';
 import { useMe, useP2PStatus } from '@/p2p/hooks';
+import { canCarryAccount, consumePasskeyOffer, usePasskeyOfferPending, usePasskeyRecord } from '@/p2p/passkey';
 import { useJournalSync } from '@/p2p/sync';
 import { useSettings, useSettingsHydrated } from '@/settings/settings';
 import { useListsHydrated } from '@/store/lists';
@@ -64,6 +65,13 @@ export default function RootLayout() {
   const me = useMe();
   const identityKnown = p2pState !== 'starting';
   useJournalSync(hydrated && !!me);
+  // Keep the iCloud Keychain account hint ("Continuer en tant que …") in step with the profile.
+  const meName = me?.name;
+  const meFingerprint = me?.fingerprint;
+  useEffect(() => {
+    if (isDemo || !meFingerprint) return;
+    cloudBackup.syncHint({ name: meName && meName !== 'moi' ? meName : undefined, fingerprint: meFingerprint }).catch(() => {});
+  }, [meName, meFingerprint]);
   const ready = hydrated && settingsReady && listsReady && catalogReady && identityKnown;
 
   useEffect(() => {
@@ -105,6 +113,7 @@ export default function RootLayout() {
           <Stack.Screen name="settings/security" />
           <Stack.Screen name="settings/phrase" />
           <Stack.Screen name="settings/pair" options={SHEET} />
+          <Stack.Screen name="passkey" options={{ ...SHEET, sheetAllowedDetents: [0.62, 1] }} />
           <Stack.Screen name="settings/moderation" />
           <Stack.Screen name="settings/notifications" />
           <Stack.Screen name="addons" />
@@ -131,10 +140,32 @@ export default function RootLayout() {
         </Stack.Protected>
       </Stack>
       {isDemo ? <DemoRoute /> : <EpisodeNotifications />}
+      {!isDemo && me ? <PasskeyOffer /> : null}
       <OfflineBanner />
       <PaperbackHost />
     </ThemeProvider>
   );
+}
+
+/** Right after creating or restoring an account: propose « Ajoute une clé d’accès » once. */
+function PasskeyOffer() {
+  const pending = usePasskeyOfferPending();
+  const me = useMe();
+  const record = usePasskeyRecord(me?.key);
+  useEffect(() => {
+    if (!pending || !me || record === undefined) return;
+    consumePasskeyOffer();
+    if (record) return;
+    (async () => {
+      // Restored an account that already has a passkey (written by another device): nothing to offer.
+      const hint = await cloudBackup.loadHint();
+      if (hint?.passkeyAt && hint.fingerprint === me.fingerprint) return;
+      if (!(await canCarryAccount())) return;
+      // Let the protected stack switch from onboarding to the tabs first.
+      setTimeout(() => router.push('/passkey'), 700);
+    })().catch(() => {});
+  }, [pending, me, record]);
+  return null;
 }
 
 /** Schedules new-episode notifications and handles taps (needs the navigator mounted). */
