@@ -119,7 +119,7 @@ export const DEAD_TTL_MS = 2 * 60_000;
 const MAX_CACHE = 300;
 
 const results = new Map<string, RaceResult>();
-const inflight = new Map<string, Promise<RaceResult | undefined>>();
+const inflight = new Map<string, Flight>();
 const listeners = new Set<() => void>();
 let version = 0;
 const emit = () => {
@@ -153,26 +153,61 @@ export function clearRaceCache() {
 }
 
 /**
- * Measures one link (deduplicated, cached). Resolves undefined when cancelled before an answer
- * (nothing is cached then).
+ * Measures one link (deduplicated, cached). Resolves undefined when the caller's signal aborts
+ * before an answer (nothing is cached then). Callers share one request: it is only cancelled when
+ * every caller has given up, so a pre-search handing over to the watch screen keeps its probe.
  */
 export function measureUrl(url: string, headers: Record<string, string> | undefined, o: ProbeOptions, transport: Transport = defaultTransport): Promise<RaceResult | undefined> {
   const hit = cachedRace(url);
   if (hit) return Promise.resolve(hit);
-  let p = inflight.get(url);
-  if (!p) {
-    p = transport(url, headers, o)
+  let f = inflight.get(url);
+  if (!f) {
+    const ctrl = new AbortController();
+    const entry: Flight = { ctrl, waiters: 0, promise: Promise.resolve(undefined) };
+    entry.promise = transport(url, headers, { ...o, signal: ctrl.signal })
       .then((raw) => {
-        if (o.signal?.aborted) return undefined;
+        if (ctrl.signal.aborted) return undefined;
         const r = evaluateMeasure(raw);
         rememberRace(url, r);
         return r;
       })
       .catch(() => undefined)
-      .finally(() => inflight.delete(url));
-    inflight.set(url, p);
+      .finally(() => {
+        if (inflight.get(url) === entry) inflight.delete(url);
+      });
+    inflight.set(url, entry);
+    f = entry;
   }
-  return p;
+  const flight = f;
+  flight.waiters++;
+  const signal = o.signal;
+  if (!signal) return flight.promise;
+  if (signal.aborted) {
+    leave(url, flight);
+    return Promise.resolve(undefined);
+  }
+  return new Promise((resolve) => {
+    const onAbort = () => {
+      leave(url, flight);
+      resolve(undefined);
+    };
+    signal.addEventListener('abort', onAbort, { once: true });
+    flight.promise.then((r) => {
+      signal.removeEventListener('abort', onAbort);
+      if (!signal.aborted) resolve(r);
+    });
+  });
+}
+
+type Flight = { ctrl: AbortController; waiters: number; promise: Promise<RaceResult | undefined> };
+
+/** One caller gave up: cancel the shared request when nobody waits for it any more. */
+function leave(url: string, f: Flight) {
+  f.waiters--;
+  if (f.waiters <= 0) {
+    f.ctrl.abort();
+    if (inflight.get(url) === f) inflight.delete(url);
+  }
 }
 
 /** Runs `jobs` with at most `concurrency` at a time; stops starting new ones once `signal` aborts. */

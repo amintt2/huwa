@@ -114,3 +114,40 @@ test('fetch transport + verdicts: dead links, Range ignored, timeout', async () 
   assert.equal(ok?.size, FILE.length);
   assert.ok(ok?.mbps && ok.mbps > 0);
 });
+
+test('a shared probe survives the first caller giving up (pre-search → watch handover)', async () => {
+  clearRaceCache();
+  let release!: () => void;
+  let aborted = false;
+  const transport: Transport = (_u, _h, o) =>
+    new Promise((resolve) => {
+      o.signal?.addEventListener('abort', () => (aborted = true));
+      release = () => resolve({ status: 206, contentType: 'video/mp4', contentRange: 'bytes 0-99/1000', bytes: 100_000, ttfbMs: 50, totalMs: 120 });
+    });
+  const a = new AbortController();
+  const b = new AbortController();
+  const first = measureUrl('https://x.test/v.mp4', undefined, { bytes: 1, timeoutMs: 1000, signal: a.signal }, transport);
+  const second = measureUrl('https://x.test/v.mp4', undefined, { bytes: 1, timeoutMs: 1000, signal: b.signal }, transport);
+  a.abort();
+  assert.equal(await first, undefined);
+  assert.equal(aborted, false, 'still one waiter: the request must go on');
+  release();
+  const r = await second;
+  assert.equal(r?.alive, true);
+});
+
+test('the shared probe is cancelled once every caller gave up', async () => {
+  clearRaceCache();
+  let aborted = false;
+  const transport: Transport = (_u, _h, o) =>
+    new Promise(() => {
+      o.signal?.addEventListener('abort', () => (aborted = true));
+    });
+  const a = new AbortController();
+  const b = new AbortController();
+  void measureUrl('https://x.test/w.mp4', undefined, { bytes: 1, timeoutMs: 1000, signal: a.signal }, transport);
+  void measureUrl('https://x.test/w.mp4', undefined, { bytes: 1, timeoutMs: 1000, signal: b.signal }, transport);
+  a.abort();
+  b.abort();
+  assert.equal(aborted, true);
+});

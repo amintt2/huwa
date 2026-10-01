@@ -112,7 +112,7 @@ export class HybridPlayer implements EventEmitter<VideoPlayerEvents> {
   private engineListeners = new Set<() => void>();
   private nativeSubs: Subscription[] = [];
   private view: MpvViewHandle | null = null;
-  private viewWaiters: ((v: MpvViewHandle) => void)[] = [];
+  private viewWaiters: ((v: MpvViewHandle | null) => void)[] = [];
   private src: Src | null = null;
   private token = 0;
   private fallbackTried: string | null = null;
@@ -213,7 +213,8 @@ export class HybridPlayer implements EventEmitter<VideoPlayerEvents> {
     waiters.forEach((w) => w(v));
   }
 
-  private waitForView(): Promise<MpvViewHandle> {
+  /** Resolves null when the player is released before the mpv view mounts (no leaked waiter). */
+  private waitForView(): Promise<MpvViewHandle | null> {
     if (this.view && this.viewReady) return Promise.resolve(this.view);
     return new Promise((resolve) => this.viewWaiters.push(resolve));
   }
@@ -346,6 +347,9 @@ export class HybridPlayer implements EventEmitter<VideoPlayerEvents> {
 
   release() {
     this.token++;
+    const waiters = this.viewWaiters;
+    this.viewWaiters = [];
+    waiters.forEach((w) => w(null));
     this.clearWatchdog();
     this.settlePending();
     this.abortStage();
@@ -597,6 +601,7 @@ export class HybridPlayer implements EventEmitter<VideoPlayerEvents> {
     this.emit('statusChange', { status: 'loading', oldStatus: old.status });
     if (old.audio.length) this.emit('availableAudioTracksChange', { availableAudioTracks: [], oldAvailableAudioTracks: old.audio } as never);
     const view = await this.waitForView();
+    if (!view) return;
     if (token !== this.token) return;
     const loaded = new Promise<void>((resolve) => {
       this.pending = { resolve };
