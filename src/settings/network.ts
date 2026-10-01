@@ -64,3 +64,16 @@ export function useRaceBudget(): RaceBudget {
   if (net.type === NetworkStateType.CELLULAR) return RACE_METERED;
   return RACE_UNMETERED;
 }
+
+/**
+ * Torrents the on-device engine may probe at once before one is streamed ("course des
+ * torrents", src/torrent/peer-race.ts): metadata and peers only, never a piece. None when
+ * streaming is not allowed (offline, "Wi-Fi seulement" on cellular); the torrent engine's own
+ * "Wi-Fi only" setting is checked by `canProbeTorrents`.
+ */
+export function useTorrentProbeBudget(): number {
+  const policy = useStreamPolicy();
+  const net = useNetworkState();
+  if (!policy.allowed) return 0;
+  return net.type === NetworkStateType.CELLULAR ? 2 : 4;
+}
