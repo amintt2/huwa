@@ -181,6 +181,17 @@ export const fr = {
   'onb.4.title': 'Ajoute tes extensions',
   'onb.4.body': 'Huwa lit ce que tes extensions lui donnent. Commence par les essentielles, tu pourras en ajouter d’autres à tout moment.',
   'onb.4.more': 'Plus d’extensions',
+  'onb.link.title': 'Tu as un pack ou un lien ?',
+  'onb.link.placeholder': 'Lien de pack, huwa://, manifest.json…',
+  'onb.link.open': 'Utiliser ce lien',
+  'onb.link.scan': 'Scanner un QR',
+  'onb.link.scanHint': 'Vise le QR code d’un pack ou d’une extension.',
+  'onb.link.invalid': 'Ce lien n’est ni un pack, ni une extension Stremio, ni un dépôt Paperback.',
+  'onb.link.ready': 'Lien gardé : il s’ouvrira pour confirmation à la fin de l’introduction.',
+  'onb.link.pack': 'Pack « {name} » ({count} extensions) : il s’ouvrira pour confirmation à la fin de l’introduction.',
+  'onb.link.cameraWhy': 'La caméra sert uniquement à lire le QR code. Rien n’est enregistré.',
+  'onb.link.cameraAllow': 'Autoriser la caméra',
+  'onb.link.cameraSettings': 'Ouvrir les réglages',
 };
 
 export type Key = keyof typeof fr;

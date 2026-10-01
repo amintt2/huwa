@@ -26,6 +26,8 @@ import { RecommendedExtensions } from '@/components/recommended-extensions';
 import { Group, Row } from '@/components/states';
 import { Button, IconButton, Press, Txt } from '@/components/ui';
 import { useDebrid } from '@/debrid/store';
+import { classifyLink } from '@/packs/format';
+import { hrefFor } from '@/packs/routes';
 import { C, F, R, S } from '@/theme/tokens';
 
 const EXTENSIONS_SITE = 'https://huwa.mciut.fr/extensions';
@@ -43,7 +45,10 @@ export default function Extensions() {
 
   const add = () => {
     if (!url.trim()) return;
-    openInstall(url.trim());
+    // A pack link or a Paperback repository pasted here goes to its own screen.
+    const link = classifyLink(url);
+    if (link && link.kind !== 'addon') router.push(hrefFor(link));
+    else openInstall(url.trim());
     setUrl('');
   };
 
@@ -76,7 +81,7 @@ export default function Extensions() {
       <View style={{ gap: S.sm }}>
         <Txt v="section">Vidéo · addons Stremio</Txt>
         <Txt v="small">
-          Colle le lien d’un addon compatible Stremio (manifest.json, stremio://… ou lien web.stremio.com). Ses sources, catalogues et sous-titres apparaîtront dans l’app.
+          Colle le lien d’un addon compatible Stremio (manifest.json, stremio://… ou lien web.stremio.com) ou d’un pack d’extensions. Ses sources, catalogues et sous-titres apparaîtront dans l’app.
         </Txt>
         <TextInput
           value={url}
@@ -99,6 +104,15 @@ export default function Extensions() {
         <Button style={{ flex: 1 }} small variant="soft" icon="flash-outline" label={provider ? provider.name : 'Débrid'} onPress={() => router.push('/debrid' as Href)} />
       </View>
       <Button small variant="ghost" icon="book-outline" label="Extensions manhwa (Paperback)" onPress={() => router.push('/manga-sources' as Href)} />
+
+      <Press onPress={() => router.push('/pack-create' as Href)} style={styles.site} accessibilityRole="button">
+        <Ionicons name="share-social-outline" size={20} color={C.accentText} />
+        <View style={{ flex: 1, gap: 2 }}>
+          <Txt v="label">Partager mes extensions</Txt>
+          <Txt v="small">Crée un pack (lien + QR code) pour qu’un ami installe les mêmes en un geste.</Txt>
+        </View>
+        <Ionicons name="chevron-forward" size={16} color={C.text2} />
+      </Press>
 
       <View style={{ gap: S.md }}>
         <Txt v="section">Installés</Txt>

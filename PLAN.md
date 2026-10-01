@@ -123,6 +123,29 @@ Modèle des *labelers* Bluesky : chacun publie dans son core des enregistrements
 - Pont épisode↔chapitre : mapping exact communautaire, signé et voté par les pairs (remplace l'estimation).
 - Recherche et filtres, calendrier de sorties, notifications locales de nouveaux épisodes, listes perso, synchro AniList/MAL optionnelle, paramètres (langue, Wi-Fi seulement, cache, confidentialité, export/import), accessibilité, i18n FR/EN, onboarding, écrans d'erreur/hors-ligne.
 
+## Packs d'extensions (format `huwaPack` v1)
+Un pack est une liste d'extensions **créée et partagée par un utilisateur** (Extensions → « Partager mes extensions »), installée après un écran de confirmation. **Huwa ne fournit, n'héberge, ne liste ni ne recommande aucun pack.** Code : `src/packs/format.ts` (format, validation, liens — testé), `src/packs/secrets.ts` (détection des liens personnels — testé), `src/packs/install.ts`, écrans `src/app/pack.tsx` et `src/app/pack-create.tsx`, site `site/pack.html` + `site/pack-lib.js` (mêmes règles en JS).
+
+```json
+{
+  "huwaPack": 1,
+  "name": "Mon pack",
+  "description": "facultatif, 500 caractères max",
+  "author": "facultatif, 60 caractères max",
+  "video": [{ "manifest": "https://exemple.org/manifest.json", "name": "facultatif" }],
+  "manga": [{ "repo": "https://exemple.org/extensions/versioning.json", "sources": ["SourceId"], "name": "facultatif" }]
+}
+```
+- `huwaPack` : version du format (entier). Une version plus grande que celle connue est refusée avec « mets l'app à jour ».
+- `video[].manifest` : manifest Stremio ; `manga[].repo` : dépôt Paperback (base ou `versioning.json`), `sources` = ids à installer (absent = ajouter le dépôt seul).
+- **Validation stricte** : `http(s)` uniquement, pas d'hôte local (`localhost`, `127.*`, link-local) ni d'identifiants dans l'URL, URL ≤ 2048 caractères, 50 extensions max, 50 sources max par dépôt, ids de source `[A-Za-z0-9_.-]{1,64}`, textes nettoyés (caractères de contrôle et de direction) et tronqués (nom 80), champs inconnus ignorés, doublons fusionnés (URL canonique), JSON ≤ 64 Ko, pack vide refusé.
+- **Lien qui contient le pack** (aucun serveur) : `d` = base64url du JSON minifié, ou `z` + base64url de son DEFLATE brut (`fflate` côté app, `CompressionStream('deflate-raw')` côté site) si plus court ; ≤ 48 Ko ; décompression bornée (anti-bombe).
+  - App : `huwa://pack?d=<d>` ; web : `https://huwa.mciut.fr/pack.html#<d>` (fragment : jamais envoyé au serveur).
+  - Pack hébergé : `huwa://pack?url=<URL du JSON encodée>` ou `https://huwa.mciut.fr/pack.html#url=<…>`.
+- **Installation** : écran de confirmation obligatoire (nom, auteur, description, lignes cochables avec hôte et « déjà installé », rappel « Huwa ne fournit ni ne vérifie ces extensions… »), puis installation une par une avec résultat par ligne (installé, déjà installé, échec + raison) via les chemins habituels (`previewAddon`/`installAddon`, `addRepo`/`installSource`). Un addon déjà installé avec une autre URL (même id) n'est pas remplacé : la configuration de l'utilisateur est conservée.
+- **Création** : addons installés (hors démo) et dépôts avec leurs sources installées. Les liens qui semblent personnels (clé débrid, `token`/`apikey`, JWT, UUID, config encodée en base64, long segment opaque, identifiants) sont **décochés par défaut** avec un avertissement. Partage : feuille de partage native (lien https), QR code si le lien fait ≤ 1200 caractères, lien `huwa://`, fichier JSON à héberger soi-même.
+- **Onboarding (variante complète uniquement)** : « Tu as un pack ou un lien ? » (coller ou scanner un QR) ; le lien est ouvert sur son écran de confirmation à la fin de l'introduction. Build App Store : pas d'invite, mais les liens `huwa://pack` fonctionnent partout.
+
 ## Phase 9 — Distribution et mises à jour
 Modèle suivi : Stremio (retiré de l'App Store iOS en janvier 2026, distribué depuis en IPA à installer soi-même). **Cœur sans contenu, addons saisis par l'utilisateur.**
 - **Android (priorité)** : APK signé sur GitHub Releases, suivi par **Obtainium** ; IzzyOnDroid si le code est open source. Faire la **vérification développeur Google (25 $)** dès maintenant (obligatoire mondialement en 2027). **Même clé de signature à vie.**

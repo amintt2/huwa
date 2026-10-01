@@ -1,0 +1,280 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Huwa — pack d’extensions</title>
+  <meta name="description" content="Un pack d’extensions partagé par un utilisateur de Huwa. Huwa ne fournit ni ne vérifie ces extensions.">
+  <meta name="referrer" content="no-referrer">
+  <meta name="robots" content="noindex">
+  <meta name="theme-color" content="#05070D">
+  <meta property="og:title" content="Pack d’extensions Huwa">
+  <meta property="og:description" content="Ouvre ce pack dans Huwa pour choisir les extensions à installer.">
+  <meta property="og:image" content="/altstore/icon.png">
+  <link rel="icon" href="/icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="/altstore/icon.png">
+  <style>
+    :root {
+      --bg: #05070D; --surface: #0C111C; --elevated: #141B2B; --border: rgba(120,140,180,.18);
+      --text: #F2F5FA; --text2: #9AA5BA; --body: #C3CBDA; --accent: #2F6BEB; --accent-text: #7FB0FF;
+      --accent-soft: rgba(47,107,235,.18); --warn: rgba(255,196,0,.35); --danger: #FF8A8A;
+    }
+    * { box-sizing: border-box; }
+    html { -webkit-text-size-adjust: 100%; }
+    body {
+      margin: 0; background: var(--bg); color: var(--body);
+      font: 16px/1.55 -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto, sans-serif;
+    }
+    a { color: var(--accent-text); }
+    .wrap { max-width: 760px; margin: 0 auto; padding: 0 16px; }
+    header { display: flex; align-items: center; justify-content: space-between; padding: 20px 0; }
+    .brand { display: flex; align-items: center; gap: 10px; color: var(--text); font-weight: 900; letter-spacing: .04em; text-decoration: none; font-size: 20px; }
+    .brand img { width: 32px; height: 32px; }
+    .gh { color: var(--text2); text-decoration: none; font-size: 14px; }
+    h1 { margin: 0; color: var(--text); font-size: clamp(28px, 6vw, 44px); line-height: 1.08; font-weight: 900; letter-spacing: -.01em; overflow-wrap: anywhere; }
+    h2 { margin: 0 0 10px; color: var(--text); font-size: 14px; font-weight: 800; text-transform: uppercase; letter-spacing: .08em; }
+    .kicker { font-size: 12px; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; color: var(--accent-text); }
+    .card { background: var(--surface); border: 1px solid var(--border); border-radius: 16px; padding: 20px; min-width: 0; }
+    .stack { display: grid; gap: 20px; padding-bottom: 48px; }
+    .muted { color: var(--text2); font-size: 14px; }
+    .desc { margin: 0; overflow-wrap: anywhere; }
+    .warn { border-color: var(--warn); }
+    .btn {
+      display: inline-flex; align-items: center; justify-content: center; gap: 10px; min-height: 56px; padding: 0 24px; border-radius: 14px;
+      font: inherit; font-weight: 800; text-decoration: none; letter-spacing: .02em; border: 1px solid transparent; cursor: pointer;
+      transition: transform .12s ease, background-color .15s ease;
+    }
+    .btn:active { transform: scale(.97); }
+    .btn-primary { background: var(--accent); color: #fff; font-size: 18px; width: 100%; }
+    .btn-primary:hover { background: #3a76f5; }
+    .btn-soft { background: var(--accent-soft); color: var(--accent-text); border-color: rgba(127,176,255,.3); min-height: 44px; font-size: 14px; }
+    .btn svg { width: 22px; height: 22px; flex: none; }
+    .open { display: grid; gap: 16px; grid-template-columns: 1fr auto; align-items: center; }
+    @media (max-width: 600px) { .open { grid-template-columns: 1fr; justify-items: center; } .open .actions { width: 100%; } }
+    .actions { display: grid; gap: 10px; }
+    .row2 { display: flex; gap: 10px; flex-wrap: wrap; }
+    .row2 .btn { flex: 1 1 160px; }
+    .qr { background: #fff; padding: 12px; border-radius: 14px; width: 204px; height: 204px; }
+    .qr canvas, .qr img { width: 180px !important; height: 180px !important; display: block; }
+    .qr[hidden] { display: none; }
+    ul.ext { list-style: none; margin: 0; padding: 0; border: 1px solid var(--border); border-radius: 14px; overflow: hidden; background: var(--elevated); }
+    ul.ext li { padding: 12px 14px; display: grid; gap: 2px; min-width: 0; }
+    ul.ext li + li { border-top: 1px solid var(--border); }
+    ul.ext strong { color: var(--text); font-weight: 700; overflow-wrap: anywhere; }
+    ul.ext span { color: var(--text2); font-size: 13px; overflow-wrap: anywhere; }
+    label { color: var(--text); font-weight: 700; font-size: 15px; }
+    textarea {
+      width: 100%; min-height: 96px; padding: 12px 14px; border-radius: 14px; border: 1px solid var(--border); resize: vertical;
+      background: var(--elevated); color: var(--text); font: inherit; font-size: 15px;
+    }
+    textarea:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+    .error { color: var(--danger); }
+    [hidden] { display: none !important; }
+    footer { padding: 32px 0 48px; border-top: 1px solid var(--border); font-size: 14px; color: var(--text2); }
+    @media (prefers-reduced-motion: reduce) { .btn { transition: none; } }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <header>
+      <a class="brand" href="/"><img src="/icon.svg" alt="" width="32" height="32">HUWA</a>
+      <a class="gh" href="/extensions">Extensions</a>
+    </header>
+
+    <main class="stack">
+      <!-- A shared pack -->
+      <div id="view" class="stack" hidden>
+        <div style="display:grid;gap:8px">
+          <span class="kicker">Pack d’extensions partagé</span>
+          <h1 id="name"></h1>
+          <p class="muted" id="meta" style="margin:0"></p>
+          <p class="desc" id="desc" hidden></p>
+        </div>
+
+        <div class="card warn">
+          <p style="margin:0">Huwa ne fournit ni ne vérifie ces extensions : elles viennent de la personne qui a partagé ce pack. Tu es responsable de ce que tu installes.</p>
+        </div>
+
+        <div class="card open">
+          <div class="actions">
+            <a class="btn btn-primary" id="openApp" href="#">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 4h6v6M20 4l-9 9M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5"/></svg>
+              Ouvrir dans Huwa
+            </a>
+            <p class="muted" style="margin:0">Huwa affiche la liste et te laisse choisir quoi installer. Rien n’est installé sans ta confirmation.</p>
+            <p class="muted" id="qrHint" style="margin:0">Sur ordinateur, scanne le QR code avec ton téléphone.</p>
+            <div class="row2">
+              <button class="btn btn-soft" type="button" id="copyPage">Copier le lien de cette page</button>
+              <button class="btn btn-soft" type="button" id="copyApp">Copier le lien huwa://</button>
+            </div>
+          </div>
+          <div class="qr" id="qr" role="img" aria-label="QR code du lien huwa://pack"></div>
+        </div>
+
+        <section id="videoSec" hidden>
+          <h2>Vidéo · addons Stremio</h2>
+          <ul class="ext" id="video"></ul>
+        </section>
+        <section id="mangaSec" hidden>
+          <h2>Manhwa · dépôts Paperback</h2>
+          <ul class="ext" id="manga"></ul>
+        </section>
+
+        <p class="muted" style="margin:0">Pas encore Huwa ? <a href="/">Installe l’app</a>, puis reviens sur ce lien.</p>
+      </div>
+
+      <!-- Hosted pack whose content cannot be read from the browser -->
+      <div id="remote" class="stack" hidden>
+        <div style="display:grid;gap:8px">
+          <span class="kicker">Pack d’extensions hébergé</span>
+          <h1>Pack sur <span id="remoteHost"></span></h1>
+          <p class="muted" id="remoteMsg" style="margin:0"></p>
+        </div>
+      </div>
+
+      <!-- Error -->
+      <div id="err" class="card warn" hidden>
+        <p class="error" id="errMsg" style="margin:0"></p>
+      </div>
+
+      <!-- No pack in the link: build one from a URL / JSON -->
+      <div id="tool" class="card" style="display:grid;gap:14px">
+        <span class="kicker">Installer un pack partagé</span>
+        <label for="input">Adresse d’un fichier de pack, lien de pack ou JSON du pack</label>
+        <textarea id="input" autocomplete="off" autocapitalize="none" spellcheck="false"
+          placeholder="https://exemple.org/mon-pack.json&#10;huwa://pack?d=…&#10;{ &quot;huwaPack&quot;: 1, … }"></textarea>
+        <p class="error" id="toolErr" hidden style="margin:0"></p>
+        <p class="muted" style="margin:0">Un pack est créé dans Huwa (Extensions → Partager mes extensions) ou écrit à la main au <a href="https://github.com/amintt2/huwa/blob/huwa-v1/PLAN.md">format documenté</a>. Tout reste dans ton navigateur.</p>
+      </div>
+    </main>
+
+    <footer>
+      Huwa · <a href="/">Accueil</a> · <a href="/extensions">Extensions</a> · <a href="/privacy.html">Confidentialité</a> · <a href="https://github.com/amintt2/huwa/blob/huwa-v1/distribution/LEGAL.md">Conditions et signalements</a>
+    </footer>
+  </div>
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js" integrity="sha512-CNgIRecGo7nphbeZ04Sc13ka07paqdeTu0WR1IM4kNcpmBAUSHSQX0FslNhTDadL4O5SAGapGt4FodqL8My0mA==" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+  <script src="/pack-lib.js"></script>
+  <script>
+    (() => {
+      const P = window.HuwaPack;
+      const $ = (id) => document.getElementById(id);
+      let seq = 0;
+
+      function li(title, sub) {
+        const el = document.createElement('li');
+        const s = document.createElement('strong');
+        s.textContent = title;
+        const d = document.createElement('span');
+        d.textContent = sub;
+        el.append(s, d);
+        return el;
+      }
+
+      function setLinks(ref) {
+        const app = P.appLink(ref);
+        $('openApp').href = app;
+        $('copyApp').dataset.copy = app;
+        $('copyPage').dataset.copy = P.pageLink(ref);
+        const ok = P.qr($('qr'), app);
+        $('qr').hidden = !ok;
+        $('qrHint').textContent = ok ? 'Sur ordinateur, scanne le QR code avec ton téléphone.' : 'Ce pack est trop long pour un QR code : ouvre cette page sur ton téléphone.';
+      }
+
+      function showPack(pack, ref) {
+        $('name').parentElement.hidden = false;
+        $('name').textContent = pack.name;
+        const n = pack.video.length + pack.manga.length;
+        $('meta').textContent = [pack.author && 'par ' + pack.author, n + ' extension' + (n > 1 ? 's' : ''), ref.url && 'hébergé sur ' + P.host(ref.url)].filter(Boolean).join(' · ');
+        $('desc').hidden = !pack.description;
+        $('desc').textContent = pack.description || '';
+        $('video').replaceChildren(...pack.video.map((v) => li(v.name || P.host(v.manifest), P.host(v.manifest))));
+        $('manga').replaceChildren(...pack.manga.map((m) => li(m.name || P.host(m.repo),
+          P.host(m.repo) + ' · ' + (m.sources && m.sources.length ? m.sources.length + ' source' + (m.sources.length > 1 ? 's' : '') + ' : ' + m.sources.join(', ') : 'dépôt seul'))));
+        $('videoSec').hidden = !pack.video.length;
+        $('mangaSec').hidden = !pack.manga.length;
+        document.title = pack.name + ' — pack Huwa';
+        setLinks(ref);
+        $('view').hidden = false;
+      }
+
+      function reset() {
+        ['view', 'remote', 'err'].forEach((id) => { $(id).hidden = true; });
+        $('tool').hidden = false;
+      }
+
+      async function render() {
+        const mine = ++seq;
+        reset();
+        const frag = location.hash.slice(1);
+        if (!frag) return;
+        $('tool').hidden = true;
+        let ref;
+        try {
+          ref = await P.parseInput('huwa://pack?' + (/^(d|url)=/.test(frag) ? frag : 'd=' + frag));
+        } catch (e) {
+          return showError(e.message);
+        }
+        if (ref.d) {
+          try {
+            const pack = await P.decode(ref.d);
+            if (mine === seq) showPack(pack, ref);
+          } catch (e) {
+            if (mine === seq) showError(e.message);
+          }
+          return;
+        }
+        // Hosted pack: read it if the host allows it (CORS); the app reads it anyway.
+        try {
+          const pack = await P.fetchPack(ref.url);
+          if (mine === seq) showPack(pack, ref);
+        } catch (e) {
+          if (mine !== seq) return;
+          $('remoteHost').textContent = P.host(ref.url);
+          $('remoteMsg').textContent = 'Le contenu de ce pack ne peut pas être lu depuis le navigateur (' + e.message + '). Huwa le lira et te montrera la liste avant d’installer quoi que ce soit.';
+          $('remote').hidden = false;
+          $('view').hidden = false;
+          ['videoSec', 'mangaSec'].forEach((id) => { $(id).hidden = true; });
+          $('name').parentElement.hidden = true;
+          setLinks(ref);
+        }
+      }
+
+      function showError(msg) {
+        $('errMsg').textContent = msg + '. Demande à la personne qui l’a partagé de te renvoyer le lien complet.';
+        $('err').hidden = false;
+        $('tool').hidden = false;
+      }
+
+      // Paste tool: turns a URL / link / JSON into this page's fragment.
+      let t;
+      $('input').addEventListener('input', () => {
+        clearTimeout(t);
+        t = setTimeout(async () => {
+          const err = $('toolErr');
+          err.hidden = true;
+          try {
+            const r = await P.parseInput($('input').value);
+            if (!r) return;
+            const ref = r.json ? { d: await P.encode(r.json) } : r;
+            location.hash = ref.d ? ref.d : 'url=' + encodeURIComponent(ref.url);
+          } catch (e) {
+            err.textContent = e.message;
+            err.hidden = false;
+          }
+        }, 300);
+      });
+
+      ['copyPage', 'copyApp'].forEach((id) => $(id).addEventListener('click', async (ev) => {
+        const b = ev.currentTarget;
+        const label = b.textContent;
+        try { await navigator.clipboard.writeText(b.dataset.copy); b.textContent = 'Copié'; } catch { prompt('Copie ce lien :', b.dataset.copy); }
+        setTimeout(() => { b.textContent = label; }, 1500);
+      }));
+
+      window.addEventListener('hashchange', render);
+      render();
+    })();
+  </script>
+</body>
+</html>
