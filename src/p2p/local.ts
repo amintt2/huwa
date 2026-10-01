@@ -39,6 +39,8 @@ import { DEMO_WELCOME, demoComments, demoJournal, demoKeyOf, demoLabels, demoPro
 import { randomBytes, secure } from './secure';
 
 const DB_KEY = 'huwa/p2p/local/v1';
+/** Data of an identity whose keys are gone from this device, set aside until its phrase is typed. */
+const ORPHAN_KEY = 'huwa/p2p/local/orphan/v1';
 const LEGACY_KEY = 'huwa/state/v1';
 const K_PHRASE = 'huwa.identity.phrase';
 const K_ROOT = 'huwa.identity.root';
@@ -232,7 +234,12 @@ export function createLocalP2P(): P2P {
     }
     const device = deviceKeysFromSeed(hexToBytes(deviceSeed));
     secret = keys.secretKey;
-    if (db.profile?.key !== profile.key) {
+    if (db.profile && db.profile.key !== profile.key) {
+      // Another identity's comments, DMs, likes and journal (its key is not on this device any
+      // more): never mixed into this one. Kept aside for a restore with its phrase.
+      await AsyncStorage.setItem(ORPHAN_KEY, JSON.stringify(db)).catch(() => {});
+      db = empty();
+    } else if (!db.profile) {
       db.devices = [];
       db.migrated = false;
     }
@@ -301,6 +308,20 @@ export function createLocalP2P(): P2P {
       const words = phrase.map((w) => w.trim().toLowerCase()).filter(Boolean);
       if (!isValidPhrase(words)) throw new Error('Phrase invalide : vérifie l’orthographe et l’ordre des 24 mots.');
       const { publicKey } = rootKeysFromPhrase(words);
+      if (db.profile?.key !== publicKey) {
+        // The data set aside when another identity was created over this one.
+        const raw = await AsyncStorage.getItem(ORPHAN_KEY).catch(() => null);
+        try {
+          const orphan = raw ? ({ ...empty(), ...JSON.parse(raw) } as DB) : undefined;
+          if (orphan?.profile?.key === publicKey) {
+            if (db.profile) await AsyncStorage.setItem(ORPHAN_KEY, JSON.stringify(db)).catch(() => {});
+            else await AsyncStorage.removeItem(ORPHAN_KEY).catch(() => {});
+            db = orphan;
+          }
+        } catch {
+          // unreadable: start clean
+        }
+      }
       const known = db.profile?.key === publicKey ? db.profile : undefined;
       const profile: Profile = known ?? {
         key: publicKey,

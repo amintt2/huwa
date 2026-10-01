@@ -11,7 +11,6 @@ const EXCLUDED_KEYS = new Set([
   'huwa/franchise/v1', // AniList relations cache
   'huwa/episode-offsets/v1', // downloaded offsets index
   'huwa/downloads/v1', // index of chapter files on this device (files are not exported)
-  'huwa/p2p/local/v1', // single-device P2P backend: bound to the keys of this device's Keychain
   'huwa/p2p/bare/migrated',
   'huwa/cloud-backup/v1', // iCloud Keychain switch, follows the Keychain item of this device
 ]);
@@ -20,6 +19,7 @@ const EXCLUDED_PREFIXES = [
   'huwa/pb/state/', // extension cookies / session state
   'huwa/secure/', // web fallback of the secure store
   'huwa/passkey/', // passkey record of this device's account
+  'huwa/p2p/local/', // single-device P2P backend: bound to the keys of this device's Keychain
 ];
 
 export const isExportable = (key: string) =>
