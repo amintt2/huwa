@@ -3,6 +3,8 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 
+import { extraKey, rankSubtitles, type SubMatch } from '@/subtitles/request';
+
 import { firstUseful, withRetry } from './fetch-policy';
 import { requestsFor, type AddonRequest } from './id-candidates';
 import { useAnimeIds, type AnimeIds } from './ids';
@@ -22,6 +24,8 @@ import {
   type Resource,
   searchableCatalogs,
   type StreamItem,
+  type SubtitleExtra,
+  type SubtitleItem,
 } from './protocol';
 import type { Quality } from './quality';
 import { dropAnswer, freshness, readAnswer, writeAnswer } from './stream-cache';
@@ -390,6 +394,8 @@ function useAggregate<T>(
   load: Loader<T>,
   enabled = true,
   opts: JobOptions<T> = {},
+  /** Distinguishes requests of one resource that differ by their extras (exact-file subtitles). */
+  variant = '',
 ) {
   const list = useAddons();
   const ids = useAnimeIds(seriesId);
@@ -404,7 +410,7 @@ function useAggregate<T>(
         .filter((j) => j.reqs.length > 0)
     : [];
   const key = idsReady && enabled
-    ? `${resource}|${seriesId}|${episode}|${specs.map((j) => `${j.a.baseUrl}>${j.reqs.map((r) => `${r.type}/${r.id}`).join(',')}`).join('|')}`
+    ? `${resource}${variant ? `#${variant}` : ''}|${seriesId}|${episode}|${specs.map((j) => `${j.a.baseUrl}>${j.reqs.map((r) => `${r.type}/${r.id}`).join(',')}`).join('|')}`
     : '';
   // eslint-disable-next-line react-hooks/exhaustive-deps
   const job = useMemo(() => (key ? obtainJob<T>(key, resource, specs, opts) : null), [key]);
@@ -451,15 +457,42 @@ export function useStreams(seriesId: string, episode: number, enabled = true) {
   return { streams, infos, pending: r.pending, failed: r.failed, asked: r.asked, fromCache: r.fromCache, refreshed: r.refreshed, refresh: r.refresh };
 }
 
-export type Subtitle = { url: string; lang: string; addonName: string; id?: string };
+export type Subtitle = {
+  url: string;
+  lang: string;
+  addonName: string;
+  id?: string;
+  /** Matches the playing file (see `rankSubtitles`). */
+  match?: SubMatch;
+};
 
-const subtitleOpts: JobOptions<Subtitle> = { same: (a, b) => a.url === b.url };
+type RawSubtitle = Subtitle & Pick<SubtitleItem, 'm' | 'hashMatch' | 'release' | 'filename'>;
 
-/** Subtitles from every installed addon with the `subtitles` resource (e.g. OpenSubtitles v3). */
-export function useSubtitles(seriesId: string, episode: number, enabled = true): Subtitle[] {
-  return useAggregate<Subtitle>('subtitles', seriesId, episode, async (a, req) =>
-    (await fetchSubtitles(a.baseUrl, req.type, req.id)).map((s) => ({ url: s.url, lang: s.lang, id: s.id, addonName: a.manifest.name })),
+const subtitleOpts: JobOptions<RawSubtitle> = { same: (a, b) => a.url === b.url };
+
+/**
+ * Subtitles from every installed addon with the `subtitles` resource (e.g. OpenSubtitles v3).
+ * `video` (the playing stream's `videoHash` / `videoSize` / `filename`) adds a second, exact-file
+ * request, asked again whenever the file changes; the plain answer stays meanwhile. Ranked: files
+ * matching the video first, then the user's languages.
+ */
+export function useSubtitles(seriesId: string, episode: number, enabled = true, video?: SubtitleExtra | null, subLangs: string[] = []): Subtitle[] {
+  const toSub = (a: InstalledAddon, list: SubtitleItem[]): RawSubtitle[] =>
+    list.map((s) => ({ url: s.url, lang: s.lang, id: s.id, addonName: a.manifest.name, m: s.m, hashMatch: s.hashMatch, release: s.release, filename: s.filename }));
+  const plain = useAggregate<RawSubtitle>('subtitles', seriesId, episode, async (a, req) =>
+    toSub(a, await fetchSubtitles(a.baseUrl, req.type, req.id)),
   enabled, subtitleOpts).items;
+  const vKey = extraKey(video);
+  const exact = useAggregate<RawSubtitle>('subtitles', seriesId, episode, async (a, req) =>
+    toSub(a, await fetchSubtitles(a.baseUrl, req.type, req.id, video ?? undefined)),
+  enabled && !!vKey, subtitleOpts, vKey).items;
+  const langsKey = subLangs.join(',');
+  return useMemo(() => {
+    const seen = new Set<string>();
+    const all = [...exact, ...plain].filter((s) => !seen.has(s.url) && !!seen.add(s.url));
+    return rankSubtitles(all, subLangs, video).map(({ url, lang, id, addonName, match }) => ({ url, lang, id, addonName, match }));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [exact, plain, langsKey, vKey]);
 }
 
 // ---------- catalogs (Découvrir) ----------

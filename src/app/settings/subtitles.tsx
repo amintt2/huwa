@@ -7,6 +7,7 @@ import { StylePreview } from '@/components/player/subtitles/StylePreview';
 import { FLAG } from '@/components/language-prefs';
 import { FilterChip, Group, ScreenHeader } from '@/components/states';
 import { Button, Txt } from '@/components/ui';
+import { prepareModel, statusOf, translationSupported, useTranslateStatuses } from '@/components/player/subtitles/translation';
 import { LANG_CODES, setSetting, useSettings } from '@/settings/settings';
 import { langName } from '@/subtitles/lang';
 import { resetSubtitleStyle, setSubtitlePrefs, useSubtitlePrefs } from '@/subtitles/prefs';
@@ -16,7 +17,7 @@ export default function SubtitleSettings() {
   const insets = useSafeAreaInsets();
   const prefs = useSubtitlePrefs();
   // Same list as onboarding / Général → Langues (`subLangs`, 1 to 5 languages).
-  const langs = useSettings().subLangs;
+  const { subLangs: langs, autoTranslateSubs } = useSettings();
   const setLangs = (v: string[]) => setSetting('subLangs', v);
   const move = (i: number, d: -1 | 1) => {
     const next = [...langs];
@@ -70,6 +71,18 @@ export default function SubtitleSettings() {
           </View>
         </Group>
 
+        <Group title="Traduction automatique">
+          <View style={styles.block}>
+            <SwitchLine
+              label="Traduire automatiquement si ta langue manque"
+              hint={`Pas de sous-titres en ${langName(langs[0]).toLowerCase()} mais en anglais (ou une autre langue) : ils sont traduits sur ton iPhone pendant la lecture. Rien n’est envoyé en ligne.`}
+              value={autoTranslateSubs}
+              onChange={(v) => setSetting('autoTranslateSubs', v)}
+            />
+            <TranslationModels target={langs[0]} />
+          </View>
+        </Group>
+
         <Group title="Style">
           <View style={styles.block}>
             <StyleControls prefs={prefs} />
@@ -82,6 +95,36 @@ export default function SubtitleSettings() {
           Le décalage de synchro se règle pendant la lecture et est mémorisé par épisode.
         </Txt>
       </ScrollView>
+    </View>
+  );
+}
+
+const MODEL_SOURCES = ['en', 'es', 'pt', 'de', 'it', 'ja'];
+const STATUS_LABEL = { installed: 'Installé', supported: 'À télécharger', unsupported: 'Non disponible' } as const;
+
+/** Language models of the on-device translator into the primary language (status + download). */
+function TranslationModels({ target }: { target: string }) {
+  const sources = MODEL_SOURCES.filter((l) => l !== target);
+  const statuses = useTranslateStatuses(sources.map((l) => [l, target]));
+  if (!translationSupported()) {
+    return <Txt v="small">Traduction sur l’appareil : iPhone avec iOS 18 ou plus récent (et une version d’Huwa qui l’inclut).</Txt>;
+  }
+  return (
+    <View style={{ gap: S.sm }}>
+      <Txt v="caption">Modèles vers {langName(target).toLowerCase()}</Txt>
+      {sources.map((l) => {
+        const st = statusOf(statuses, l, target);
+        return (
+          <View key={l} style={styles.langRow}>
+            <Txt v="label" style={{ flex: 1 }}>{FLAG[l] ? `${FLAG[l]}  ` : ''}{langName(l)}</Txt>
+            {st === 'supported' ? (
+              <Button small variant="soft" icon="download-outline" label="Télécharger" onPress={() => void prepareModel(l, target)} />
+            ) : (
+              <Txt v="small" style={{ color: st === 'installed' ? C.accentText : C.text2 }}>{st ? STATUS_LABEL[st] : '…'}</Txt>
+            )}
+          </View>
+        );
+      })}
     </View>
   );
 }

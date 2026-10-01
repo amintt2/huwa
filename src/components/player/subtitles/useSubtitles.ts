@@ -3,16 +3,23 @@
 //     external files from addons (drawn by SubtitleOverlay), local files picked by the user
 //   - automatic choice from the preferred languages until the user picks a track
 //   - per-episode sync offset
+//   - on-device translation (./translation): no full track in the primary language but one in
+//     another → a "Français (traduit automatiquement)" track, chosen by default when the model is
+//     there (or not offered yet: its system download prompt then shows once)
 import * as DocumentPicker from 'expo-document-picker';
 import { File } from 'expo-file-system';
 import { useEffect, useMemo, useState } from 'react';
 import { Platform } from 'react-native';
 
 import { useSettings } from '@/settings/settings';
+import { fromLangPhrase } from '@/subtitles/lang';
 import { formatFromName, parseSubtitleBytes, parseSubtitleText, SubtitleParseError, type ParsedFile } from '@/subtitles/parse';
 import { preferLanguage, setSubtitleOffset, setSubtitlePrefs, useSubtitleOffset, useSubtitlePrefs } from '@/subtitles/prefs';
-import { buildTracks, chooseTrack, groupTracks, type EmbeddedInput, type Track } from '@/subtitles/select';
+import { buildTracks, chooseTrack, fullTrackLangs, groupTracks, type EmbeddedInput, type Track } from '@/subtitles/select';
+import { translatedTrack, translationSources, translationTarget } from '@/subtitles/translate';
 import type { SubtitleDoc, SubtitleFormat } from '@/subtitles/types';
+
+import { prepareModel, statusOf, usePrompted, useTranslatedDoc, useTranslateStatuses } from './translation';
 
 export type ExternalSubtitle = {
   url: string;
@@ -22,6 +29,8 @@ export type ExternalSubtitle = {
   source?: string;
   format?: SubtitleFormat;
   forced?: boolean;
+  /** Matches the playing file (OpenSubtitles hash / release name). */
+  match?: 'hash' | 'release';
 };
 
 // ---------- loading ----------
@@ -82,20 +91,23 @@ export function useSubtitleController({
   external,
   embedded,
   mediaKey,
+  time = 0,
 }: {
   external: ExternalSubtitle[];
   embedded: EmbeddedInput[];
   /** Episode id: the sync offset is remembered per episode. */
   mediaKey?: string;
+  /** Player time (s): drives the translation window. */
+  time?: number;
 }) {
   const prefs = useSubtitlePrefs();
-  const { subLangs, watchMode } = useSettings();
+  const { subLangs, watchMode, autoTranslateSubs } = useSettings();
   const [locals, setLocals] = useState<LocalTrack[]>([]);
   const [userKey, setUserKey] = useState<string | undefined>();
   const [picking, setPicking] = useState(false);
   const [pickError, setPickError] = useState<string | undefined>();
 
-  const tracks = useMemo(
+  const baseTracks = useMemo(
     () =>
       buildTracks(
         embedded,
@@ -104,15 +116,39 @@ export function useSubtitleController({
       ),
     [embedded, external, locals],
   );
+
+  // ---- translation: first source file whose language pair the device can translate ----
+  const target = translationTarget(baseTracks, { subLangs, watchMode });
+  const sources = useMemo(() => translationSources(baseTracks, { subLangs, watchMode }), [baseTracks, subLangs, watchMode]);
+  const pairs = useMemo(() => [...new Set(sources.map((t) => t.lang))].map((l) => [l, target!] as [string, string]), [sources, target]);
+  const statuses = useTranslateStatuses(pairs);
+  const trSource = sources.find((t) => {
+    const st = statusOf(statuses, t.lang, target!);
+    return st === 'installed' || st === 'supported';
+  });
+  const trStatus = trSource ? statusOf(statuses, trSource.lang, target!) : undefined;
+  const prompted = usePrompted(trSource?.lang, target ?? undefined);
+  const trTrack = useMemo(() => (trSource && target ? translatedTrack(trSource, target) : null), [trSource, target]);
+  const tracks = useMemo(() => (trTrack ? [...baseTracks, trTrack] : baseTracks), [baseTracks, trTrack]);
+  // Picked automatically when the model is there, or before its one-time download prompt.
+  const autoTranslated = !!trTrack && autoTranslateSubs && (trStatus === 'installed' || (trStatus === 'supported' && prompted === false));
+
   const autoKey = useMemo(
-    () => chooseTrack(tracks, { enabled: prefs.enabled, languages: subLangs, forcedOnly: watchMode === 'dub' }),
-    [tracks, prefs.enabled, subLangs, watchMode],
+    () => chooseTrack(autoTranslated ? tracks : baseTracks, { enabled: prefs.enabled, languages: subLangs, forcedOnly: watchMode === 'dub' }),
+    [tracks, baseTracks, autoTranslated, prefs.enabled, subLangs, watchMode],
   );
   const key = userKey && (userKey === 'off' || tracks.some((t) => t.key === userKey)) ? userKey : autoKey;
   const selected = tracks.find((t) => t.key === key);
+  const translating = selected?.kind === 'translated';
 
-  // External file for the selected track.
-  const url = selected?.kind === 'external' ? selected.url : undefined;
+  // Translated track selected but its model is missing: the system download sheet, once per pair.
+  const askModel = translating && trStatus === 'supported' && prompted === false;
+  useEffect(() => {
+    if (askModel && trSource && target) void prepareModel(trSource.lang, target);
+  }, [askModel, trSource, target]);
+
+  // External file for the selected track (the translated track reads its source file).
+  const url = selected?.kind === 'external' || translating ? selected?.url : undefined;
   const [load, setLoad] = useState<LoadState>({ doc: null });
   useEffect(() => {
     if (!url) return;
@@ -126,7 +162,23 @@ export function useSubtitleController({
   }, [url]);
   const current = !!url && load.url === url;
   const local = selected?.kind === 'local' ? locals.find((l) => l.track.key === selected.key) : undefined;
-  const doc = local ? local.doc : current ? load.doc : null;
+  const tr = useTranslatedDoc(current ? load.doc : null, url, selected?.fromLang, selected?.lang, time, translating && trStatus === 'installed');
+  const doc = local ? local.doc : !current ? null : translating ? tr.doc : load.doc;
+  const trError = translating && trStatus !== undefined && trStatus !== 'installed' && prompted
+    ? 'Modèle de traduction non téléchargé : Réglages → Sous-titres pour l’installer.'
+    : tr.error;
+
+  // "Translated automatically" badge, the first time per episode and track (once lines arrive).
+  const [badge, setBadge] = useState<{ key: string; text: string | null }>({ key: '', text: null });
+  const badgeKey = translating && tr.started && selected ? `${mediaKey ?? ''}|${selected.key}` : '';
+  if (badgeKey && badge.key !== badgeKey && selected) {
+    setBadge({ key: badgeKey, text: `Sous-titres traduits automatiquement ${fromLangPhrase(selected.fromLang ?? 'und')}` });
+  }
+  useEffect(() => {
+    if (!badge.text) return;
+    const id = setTimeout(() => setBadge((b) => ({ ...b, text: null })), 6000);
+    return () => clearTimeout(id);
+  }, [badge.text]);
 
   const offset = useSubtitleOffset(mediaKey);
 
@@ -135,7 +187,9 @@ export function useSubtitleController({
     setPickError(undefined);
     if (k === 'off') return setSubtitlePrefs({ enabled: false });
     const t = tracks.find((x) => x.key === k);
-    if (t && t.kind !== 'local') preferLanguage(t.lang);
+    if (t && t.kind !== 'local' && t.kind !== 'translated') preferLanguage(t.lang);
+    // Picking the translation by hand before the model is there: offer the download now.
+    if (t?.kind === 'translated' && trStatus === 'supported' && t.fromLang) void prepareModel(t.fromLang, t.lang);
   };
 
   const addLocalFile = async () => {
@@ -175,7 +229,11 @@ export function useSubtitleController({
     /** Parsed document to draw (external or local track), null for embedded / off. */
     doc,
     loading: !!url && !current,
-    error: current ? load.error : pickError,
+    error: current ? load.error ?? trError : pickError,
+    /** Short notice over the video (translated subtitles shown for the first time). */
+    badge: badge.text,
+    /** Languages with a full track (embedded included once the video is loaded, translation included). */
+    fullLangs: fullTrackLangs(tracks),
     /** Index in `availableSubtitleTracks` to enable natively, -1 for none. */
     embeddedIndex: selected?.kind === 'embedded' ? selected.embeddedIndex ?? -1 : -1,
     offset,

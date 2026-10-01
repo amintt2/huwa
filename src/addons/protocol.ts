@@ -111,7 +111,21 @@ export type MetaDetail = MetaPreview & {
   videos?: MetaVideo[];
 };
 
-export type SubtitleItem = { id?: string; url: string; lang: string };
+export type SubtitleItem = {
+  id?: string;
+  url: string;
+  lang: string;
+  /** OpenSubtitles v3: how the file was matched (`h` = video hash, `i` = id only…). */
+  m?: string;
+  /** Some addons say it plainly. */
+  hashMatch?: boolean;
+  /** Release / file name of the subtitle, when the addon gives it. */
+  release?: string;
+  filename?: string;
+};
+
+/** Extras of a `subtitles` request that pin the exact video file (Stremio `subtitles` resource). */
+export type SubtitleExtra = { videoHash?: string; videoSize?: number; filename?: string };
 
 /** Entry of an `addon_catalog` answer: another addon, described by its manifest. */
 export type AddonDescriptor = { transportUrl: string; transportName?: string; manifest: Manifest };
@@ -253,11 +267,17 @@ export async function fetchMeta(baseUrl: string, type: string, id: string): Prom
   return res.meta ?? null;
 }
 
-export async function fetchSubtitles(baseUrl: string, type: string, id: string, extra?: Record<string, string>): Promise<SubtitleItem[]> {
-  const res = await getJson<{ subtitles?: SubtitleItem[] }>(
-    `${baseUrl}/subtitles/${type}/${encodeURIComponent(id)}${extraPath(extra)}.json`,
-    10000,
-  );
+/**
+ * `/subtitles/{type}/{id}[/videoHash=…&videoSize=…&filename=…].json`: the extras are one
+ * query-string segment (as Stremio sends them), in that order, empty ones left out.
+ */
+export function subtitlesUrl(baseUrl: string, type: string, id: string, extra?: SubtitleExtra): string {
+  const ordered = extra ? { videoHash: extra.videoHash, videoSize: extra.videoSize, filename: extra.filename } : undefined;
+  return `${baseUrl}/subtitles/${type}/${encodeURIComponent(id)}${extraPath(ordered)}.json`;
+}
+
+export async function fetchSubtitles(baseUrl: string, type: string, id: string, extra?: SubtitleExtra): Promise<SubtitleItem[]> {
+  const res = await getJson<{ subtitles?: SubtitleItem[] }>(subtitlesUrl(baseUrl, type, id, extra), 10000);
   return (res.subtitles ?? []).filter((s) => s?.url && /^https?:\/\//i.test(s.url));
 }
 

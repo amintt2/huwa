@@ -8,6 +8,7 @@ import { languageMismatch } from '@/addons/audio';
 import { useAnimeIds } from '@/addons/ids';
 import type { NoSourceAction } from '@/addons/no-source';
 import { useSubtitles } from '@/addons/registry';
+import { subtitleExtraOf } from '@/subtitles/request';
 import { isTorrent } from '@/addons/protocol';
 import { traceMark } from '@/addons/timing';
 import { qualityLabel, useSource } from '@/addons/use-source';
@@ -53,11 +54,15 @@ function WatchScreen({ id }: { id: string }) {
     [thread],
   );
   const ids = useAnimeIds(series.id);
-  const addonSubs = useSubtitles(series.id, episode.number);
+  const langPrefs = useSettings();
 
   // ---- Source: auto (first that works, then better quality) or manual via the menu ----
   const torrentSettings = useTorrentSettings();
   const src = useSource(series.id, episode.number, { engineAvailable: torrentEngineLinked() && !torrentSettings.enabled });
+  // Subtitle addons, asked again with the playing file (hash / size / name) for exact matches.
+  const playing = src.current;
+  const video = useMemo(() => subtitleExtraOf(playing), [playing]);
+  const addonSubs = useSubtitles(series.id, episode.number, true, video, langPrefs.subLangs);
   // Dev timings (tap → sources → choice → first frame), see addons/timing.ts.
   useEffect(() => traceMark(id, 'screen'), [id]);
   const hasSources = src.ranked.length > 0;
@@ -73,13 +78,17 @@ function WatchScreen({ id }: { id: string }) {
   const streamAddon = src.current?.addonName ?? 'Flux';
   const subtitles = useMemo<ExternalSubtitle[]>(() => {
     const all = [
-      ...streamSubtitles.map((x) => ({ url: x.url, lang: x.lang, addonName: streamAddon })),
+      ...streamSubtitles.map((x) => ({ url: x.url, lang: x.lang, addonName: streamAddon, match: undefined })),
       ...addonSubs,
     ].filter((x, i, arr) => arr.findIndex((y) => y.url === x.url) === i);
-    // Several files of one language from one source: number them ("Piste 2").
+    // Several files of one language from one source: number them ("Piste 2"); files synced to
+    // this very video say so.
     return all.map((x) => {
       const same = all.filter((y) => y.lang === x.lang && y.addonName === x.addonName);
-      return { url: x.url, lang: x.lang, source: x.addonName, label: same.length > 1 ? `Piste ${same.indexOf(x) + 1}` : '' };
+      const { match } = x;
+      const num = same.length > 1 ? `Piste ${same.indexOf(x) + 1}` : '';
+      const label = match ? [num, match === 'hash' ? 'synchro exacte' : 'même release'].filter(Boolean).join(' · ') : num;
+      return { url: x.url, lang: x.lang, source: x.addonName, label, match };
     });
   }, [addonSubs, streamSubtitles, streamAddon]);
   // Loading bar before playback: share of addons that answered, then the race / torrent step.
@@ -95,8 +104,10 @@ function WatchScreen({ id }: { id: string }) {
   const [notice, setNotice] = useState('');
   // The chosen source doesn't match the user's languages (e.g. no VOSTFR: Spanish audio, English
   // subtitles only): say it instead of letting them find out. Once per source, then a banner.
-  const langPrefs = useSettings();
-  const mismatch = src.current && (src.url || src.web) ? languageMismatch(src.current, langPrefs, subtitles.map((x) => x.lang)) : null;
+  // Full tracks the player knows of (embedded in the file once loaded, translation): per source.
+  const [playerSubs, setPlayerSubs] = useState<{ key?: string; langs: string[] }>({ langs: [] });
+  const knownSubLangs = [...subtitles.map((x) => x.lang), ...(playerSubs.key === src.currentKey ? playerSubs.langs : [])];
+  const mismatch = src.current && (src.url || src.web) ? languageMismatch(src.current, langPrefs, knownSubLangs) : null;
   const [mismatchShown, setMismatchShown] = useState<string | undefined>();
   if (mismatch && src.currentKey && mismatchShown !== src.currentKey) {
     setMismatchShown(src.currentKey);
@@ -257,6 +268,7 @@ function WatchScreen({ id }: { id: string }) {
             artwork={series.image}
             subtitles={subtitles}
             mediaKey={id}
+            onSubtitleLangs={(langs) => setPlayerSubs({ key: src.currentKey, langs })}
             malId={ids?.mal}
             episodeNumber={episode.number}
             notice={notice}

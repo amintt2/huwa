@@ -32,6 +32,8 @@ export type Settings = {
   subLangs: LangList;
   /** Dub languages, primary first (used when watchMode is 'dub'). */
   dubLangs: LangList;
+  /** No subtitle in the primary language but one in another: translate it on the device. */
+  autoTranslateSubs: boolean;
   /** Reads manhwa at all (bridge prompts and manhwa suggestions). */
   readsManhwa: boolean;
   /** Chapter languages, primary first (chapter lists are filtered with it). */
@@ -51,6 +53,7 @@ export const DEFAULT_SETTINGS: Settings = {
   watchMode: 'sub',
   subLangs: ['fr', 'en'],
   dubLangs: ['fr'],
+  autoTranslateSubs: true,
   readsManhwa: true,
   mangaLangs: ['fr', 'en'],
 };
@@ -86,6 +89,7 @@ function sanitize(raw: unknown): Settings {
     watchMode: pick('watchMode', (x) => x === 'sub' || x === 'dub'),
     subLangs: pick('subLangs', langs),
     dubLangs: pick('dubLangs', langs),
+    autoTranslateSubs: pick('autoTranslateSubs', bool),
     readsManhwa: pick('readsManhwa', bool),
     mangaLangs: pick('mangaLangs', langs),
   };

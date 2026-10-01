@@ -60,3 +60,10 @@ export function langMatches(key: string, pref: string): boolean {
   if (p === 'und' || key === 'und') return false;
   return key === p || key.split('-')[0] === p;
 }
+
+/** "depuis l’anglais", "depuis le portugais", "depuis une autre langue". */
+export function fromLangPhrase(key: string): string {
+  if (key === 'und') return 'depuis une autre langue';
+  const name = langName(key).toLowerCase();
+  return /^(?!hongrois)[aeiouhéè]/.test(name) ? `depuis l’${name}` : `depuis le ${name}`;
+}

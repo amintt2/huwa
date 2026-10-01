@@ -1,0 +1,7 @@
+{
+  "name": "huwa-translate",
+  "version": "0.1.0",
+  "private": true,
+  "description": "On-device subtitle translation with Apple's Translation framework (no text leaves the device)",
+  "main": "index.ts"
+}

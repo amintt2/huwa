@@ -45,10 +45,11 @@ export const normLang = (l: string) => {
   return LANG[s] ?? s;
 };
 
-function toTrack(t: MpvTrack): AudioTrack & SubtitleTrack {
+/** `forced` is not part of expo-video's track type: read by the subtitle controller (EmbeddedInput). */
+function toTrack(t: MpvTrack): AudioTrack & SubtitleTrack & { forced?: boolean } {
   const language = normLang(t.lang) || 'und';
   const label = t.title || (t.lang ? t.lang.toUpperCase() : `Piste ${t.id}`);
-  return { id: `mpv:${t.id}`, language, label, name: t.title || undefined, isDefault: t.default };
+  return { id: `mpv:${t.id}`, language, label, name: t.title || undefined, isDefault: t.default, forced: !!t.forced };
 }
 function parseTracks(json: string): MpvTrack[] {
   try {
