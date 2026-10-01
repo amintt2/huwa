@@ -80,11 +80,17 @@ async function revokeStep(view, host, writer, device) {
 
 // ---- comment room: one Autobase per work -----------------------------------
 
-function rateOk(stats, ts) {
+/**
+ * Per identity: one comment every 15 s and 20 per hour. Timestamps only have to grow per device
+ * (`dev`): the devices of one identity have their own, possibly skewed, clocks.
+ */
+function rateOk(stats, ts, dev) {
   if (!stats) return { ok: true, recent: [] }
-  if (ts <= stats.last) return { ok: false }
-  if (stats.last && ts - stats.last < RATE.minIntervalMs) return { ok: false }
-  const recent = stats.recent.filter((r) => ts - r < RATE.hourMs)
+  const devLast = dev === undefined ? stats.last : (stats.devs && stats.devs[dev]) || 0
+  if (ts <= devLast) return { ok: false }
+  if (stats.last && Math.abs(ts - stats.last) < RATE.minIntervalMs) return { ok: false }
+  const recent = stats.recent.filter((r) => Math.abs(ts - r) < RATE.hourMs)
+  if (recent.some((r) => Math.abs(ts - r) < RATE.minIntervalMs)) return { ok: false }
   if (recent.length >= RATE.perHour) return { ok: false }
   return { ok: true, recent }
 }
@@ -100,7 +106,7 @@ async function roomStep(view, node, writer, work) {
     if (b.id !== commentId(author, v.ts, b.target, b.text)) return false
     if (await get(view, 'c/' + b.id)) return false
     if (b.parentId && !(await get(view, 'c/' + b.parentId))) return false
-    const rate = rateOk(stats, v.ts)
+    const rate = rateOk(stats, v.ts, writer.who.dev)
     if (!rate.ok) return false
     await view.put('c/' + b.id, {
       id: b.id,
@@ -119,7 +125,8 @@ async function roomStep(view, node, writer, work) {
       n: (stats ? stats.n : 0) + 1,
       last: v.ts,
       recent: rate.recent.concat(v.ts),
-      vouched: !!(stats && stats.vouched)
+      vouched: !!(stats && stats.vouched),
+      devs: { ...((stats && stats.devs) || {}), [writer.who.dev]: v.ts }
     })
     return true
   }
@@ -315,12 +322,14 @@ async function dmStep(view, node, writer, pair) {
   const state = (await get(view, 's/' + from)) || { last: 0, seen: 0 }
   if (v.t === 'dm') {
     if (b.to !== other) return false
-    if (v.ts <= state.last) return false
+    // Increasing per device (each device of an identity has its own clock).
+    const devs = state.devs || {}
+    if (v.ts <= (devs[writer.who.dev] || 0)) return false
     if (!pow.check(pow.powPayload(v, writer.w), v.nonce, pow.DIFFICULTY.dm)) return false
     if (await get(view, 'mi/' + b.id)) return false
     await view.put('mi/' + b.id, 1)
     await view.put('m/' + pad(v.ts) + '/' + b.id, { id: b.id, from, to: b.to, ts: v.ts, r: b.r, s: b.s })
-    await view.put('s/' + from, { ...state, last: v.ts })
+    await view.put('s/' + from, { ...state, last: Math.max(state.last, v.ts), devs: { ...devs, [writer.who.dev]: v.ts } })
     return true
   }
   if (v.t === 'seen') {

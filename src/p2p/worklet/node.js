@@ -25,6 +25,8 @@ const ROOM_IDLE_MS = 60_000
 const LOOKUP_MS = 6_000
 const PAIRING_TTL_MS = 10 * 60_000
 const MAX_COMMENTS = 1000
+/** Comments dated further in the future are not listed (yet): they would pin to the end. */
+const FUTURE_SKEW_MS = 10 * 60_000
 // Restore: how long the devices of the account get to answer (pointer core or hello).
 const RESTORE_LOOKUP_MS = 15_000
 
@@ -843,7 +845,8 @@ class HuwaNode {
     const room = await this._room(work)
     const view = room.base.view
     const me = this.secret ? this.secret.identity : null
-    const all = (await rangeValues(view, 'c/')).map((e) => e.value)
+    const horizon = Date.now() + FUTURE_SKEW_MS
+    const all = (await rangeValues(view, 'c/')).map((e) => e.value).filter((cm) => cm.createdAt <= horizon)
     all.sort((a, b) => a.createdAt - b.createdAt)
     const out = all.slice(-MAX_COMMENTS)
     for (const cm of out) cm.likedByMe = me ? !!(await valueOf(view, 'l/' + cm.id + '/' + me)) : false
@@ -860,7 +863,7 @@ class HuwaNode {
       const me = this.secret.identity
       const stats = await valueOf(room.base.view, 'a/' + me)
       const ts = Date.now()
-      if (!rateOk(stats, ts).ok) throw new Error('Trop de messages : patiente un peu')
+      if (!rateOk(stats, ts, this.secret.device.publicKey).ok) throw new Error('Trop de messages : patiente un peu')
       const text = String(input.text || '').trim()
       const body = {
         id: commentId(me, ts, target, text),

@@ -474,3 +474,42 @@ test('home: box rotation updates the profile box and keeps every rotation', asyn
   await apply([await node(alice, w1, 'box', 'home', { box: box0, seeds: { nope: 'aa' } }, { withAuth: false })], view, null)
   assert.equal((await view.get('profile')).value.box, toHex(kp.publicKey))
 })
+
+test('two devices of one identity with skewed clocks both get their comments and DMs in', async () => {
+  const alice = await makeUser()
+  const bob = await makeUser()
+  const laggy = secondDevice(alice) // clock 2 minutes behind
+  const view = new FakeView()
+  const apply = createRoomApply('77')
+  const w1 = alice.writer()
+  const w2 = alice.writer()
+  const at = (user, w, ts, text) => {
+    const body = commentBody(user, ts, text)
+    return node(user, w, 'comment', 'work:77', body, { bits: 16, ts })
+  }
+  const t0 = tick(RATE.minIntervalMs)
+  await apply([await at(alice, w1, t0, 'un')], view, null)
+  await apply([await at(laggy, w2, t0 - 120_000 + 30_000, 'deux')], view, null) // 30 s later, real time
+  assert.equal([...view.map.keys()].filter((k) => k.startsWith('c/')).length, 2, 'skewed device accepted')
+  // Still increasing per device, and the identity-wide interval still holds.
+  await apply([await at(laggy, w2, t0 - 120_000 + 20_000, 'trois')], view, null)
+  await apply([await at(alice, w1, t0 + 5_000, 'quatre')], view, null)
+  assert.equal([...view.map.keys()].filter((k) => k.startsWith('c/')).length, 2)
+
+  const pair = [alice.identity, bob.identity].sort()
+  const dmApply = createDmApply(pair)
+  const dmView = new FakeView()
+  const box = sealMod.boxKeyPair(crypto.randomBytes(32))
+  const dm = (user, w, ts) => {
+    const id = toHex(crypto.randomBytes(16))
+    const sealed = toHex(sealMod.seal(JSON.stringify({ id, from: user.identity, ts, text: 'x' }), box.publicKey))
+    return node(user, w, 'dm', 'dm', { id, to: bob.identity, r: sealed, s: sealed }, { bits: powMod.DIFFICULTY.dm, ts })
+  }
+  const t1 = tick(1000)
+  await dmApply([await dm(alice, alice.writer(), t1)], dmView, null)
+  const wl = alice.writer()
+  await dmApply([await dm(laggy, wl, t1 - 60_000)], dmView, null)
+  assert.equal([...dmView.map.keys()].filter((k) => k.startsWith('m/')).length, 2, 'skewed device DM accepted')
+  await dmApply([await node(laggy, wl, 'dm', 'dm', (await dm(laggy, wl, t1 - 70_000)).value.body, { bits: powMod.DIFFICULTY.dm, ts: t1 - 70_000, withAuth: false })], dmView, null)
+  assert.equal([...dmView.map.keys()].filter((k) => k.startsWith('m/')).length, 2, 'per-device order still enforced')
+})
