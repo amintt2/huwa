@@ -28,6 +28,7 @@ import {
   type SubtitleItem,
 } from './protocol';
 import type { Quality } from './quality';
+import { parseSavedAddons } from './saved';
 import { dropAnswer, freshness, readAnswer, writeAnswer } from './stream-cache';
 import { timedAddon } from '@/stats/addon-timing';
 import { registerRehydrate } from '@/settings/rehydrate';
@@ -104,7 +105,7 @@ export async function hydrateAddons() {
     const [raw, rawPrefs] = await Promise.all([AsyncStorage.getItem(KEY), AsyncStorage.getItem(PREFS_KEY)]);
     let addons = state.addons;
     if (raw) {
-      const saved = JSON.parse(raw) as InstalledAddon[];
+      const saved = parseSavedAddons(JSON.parse(raw), builtin);
       addons = saved.map((a) => (a.baseUrl === builtin.baseUrl ? { ...builtin, enabled: a.enabled } : a));
       if (!addons.some((a) => a.baseUrl === builtin.baseUrl)) addons = [builtin, ...addons];
     }
