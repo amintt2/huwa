@@ -7,7 +7,7 @@ import { useT } from '@/i18n';
 import { useLists, type WatchStatus } from '@/store/lists';
 import { C, S } from '@/theme/tokens';
 
-import { Cover, Press, Txt } from './ui';
+import { ActionTile, Cover, Press, Txt } from './ui';
 
 export const STATUS_ICON: Record<WatchStatus, 'time-outline' | 'play-circle-outline' | 'checkmark-circle-outline' | 'close-circle-outline'> = {
   planned: 'time-outline',
@@ -17,10 +17,21 @@ export const STATUS_ICON: Record<WatchStatus, 'time-outline' | 'play-circle-outl
 };
 
 /** Square button on series pages: opens the list / status sheet. Shows the current status icon. */
-export function ListsButton({ seriesId, style }: { seriesId: string; style?: object }) {
+export function ListsButton({ seriesId, style, tile }: { seriesId: string; style?: object; /** Icon-over-label action (series pages). */ tile?: boolean }) {
   const t = useT();
   const status = useLists((s) => s.status[seriesId]);
   const inCustom = useLists((s) => s.lists.some((l) => l.seriesIds.includes(seriesId)));
+  if (tile) {
+    return (
+      <ActionTile
+        icon={status ? STATUS_ICON[status] : 'albums-outline'}
+        label={status ? t(`lists.status.${status}`) : 'Listes'}
+        active={!!status || inCustom}
+        onPress={() => router.push({ pathname: '/list-picker', params: { seriesId } })}
+        accessibilityLabel={status ? `${t('lists.addTo')} · ${t(`lists.status.${status}`)}` : t('lists.addTo')}
+      />
+    );
+  }
   return (
     <Press
       onPress={() => router.push({ pathname: '/list-picker', params: { seriesId } })}

@@ -4,10 +4,10 @@
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { router, type Href } from 'expo-router';
 import { useEffect, useMemo, useState } from 'react';
-import { ActivityIndicator, FlatList, Pressable, ScrollView, StyleSheet, TextInput, View } from 'react-native';
+import { ActivityIndicator, FlatList, Pressable, ScrollView, StyleSheet, View } from 'react-native';
 
 import { ContinueCard } from '@/components/cards';
-import { ChipGroup, FilterPills, FilterSection, FilterSheet, Stepper } from '@/components/filter-sheet';
+import { ChipGroup, FilterPills, FilterSection, FilterSheet, SearchFilterBar, Stepper } from '@/components/filter-sheet';
 import { gridRowLayout, PosterTile, Rail, RailHeader, useGridTile } from '@/components/rails';
 import { Button, Txt } from '@/components/ui';
 import { openBrowseSeries, useBrowse, useManhwaHome, type BrowseSeries } from '@/data/manhwa-browse';
@@ -37,37 +37,7 @@ const open = (s: BrowseSeries) => router.push(openBrowseSeries(s) as Href);
 
 /** Search field + "Filtres" button, kept outside the lists so typing never loses focus. */
 export function HuwaSearchBar({ value, onChange, count, onFilters }: { value: string; onChange: (v: string) => void; count: number; onFilters: () => void }) {
-  return (
-    <View style={styles.searchRow}>
-      <View style={styles.search}>
-        <Ionicons name="search" size={16} color={C.text2} />
-        <TextInput
-          value={value}
-          onChangeText={onChange}
-          placeholder="Rechercher un manhwa"
-          placeholderTextColor={C.text2}
-          style={styles.input}
-          returnKeyType="search"
-          autoCorrect={false}
-          accessibilityLabel="Rechercher un manhwa"
-        />
-        {!!value && (
-          <Pressable onPress={() => onChange('')} hitSlop={10} accessibilityLabel="Effacer la recherche">
-            <Ionicons name="close-circle" size={17} color={C.text2} />
-          </Pressable>
-        )}
-      </View>
-      <Pressable onPress={onFilters} style={[styles.filterBtn, count > 0 && styles.filterOn]} accessibilityRole="button" accessibilityLabel={count ? `Filtres, ${count} actifs` : 'Filtres'}>
-        <Ionicons name="options-outline" size={18} color={count ? C.accentText : C.text} />
-        <Txt v="small" color={count ? C.accentText : C.text} style={F.semibold}>Filtres</Txt>
-        {count > 0 && (
-          <View style={styles.badge}>
-            <Txt v="caption" color={C.onAccent} style={{ fontSize: 10 }}>{count}</Txt>
-          </View>
-        )}
-      </Pressable>
-    </View>
-  );
+  return <SearchFilterBar value={value} onChange={onChange} placeholder="Rechercher un manhwa" count={count} onFilters={onFilters} />;
 }
 
 export function useHuwaFilters() {
@@ -129,7 +99,7 @@ function HomeSections({ bottomInset, onMore }: { bottomInset: number; onMore: (s
     <FlatList
       data={rows}
       keyExtractor={(r) => r.id}
-      contentContainerStyle={{ gap: S.xl, paddingTop: S.md, paddingBottom: bottomInset + S.xxl }}
+      contentContainerStyle={{ gap: 28, paddingTop: S.md, paddingBottom: bottomInset + S.xxl }}
       initialNumToRender={3}
       windowSize={5}
       ListFooterComponent={home.error ? <Txt v="small" style={{ paddingHorizontal: S.lg, fontSize: 12 }}>Hors ligne : catalogue enregistré.</Txt> : null}
@@ -140,7 +110,7 @@ function HomeSections({ bottomInset, onMore }: { bottomInset: number; onMore: (s
               <RailHeader title="Continuer" />
               <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingHorizontal: S.lg, gap: S.md }}>
                 {cont.slice(0, 12).map((c) => (
-                  <ContinueCard key={c.key} item={c} width={200} />
+                  <ContinueCard key={c.key} item={c} width={208} badge={false} />
                 ))}
               </ScrollView>
             </View>
@@ -308,18 +278,6 @@ function FiltersForm({ value: f, onChange }: { value: MangaFilters; onChange: (u
 }
 
 const styles = StyleSheet.create({
-  searchRow: { flexDirection: 'row', alignItems: 'center', gap: S.sm, paddingHorizontal: S.lg },
-  search: {
-    flex: 1, flexDirection: 'row', alignItems: 'center', gap: S.sm, minHeight: 44, paddingHorizontal: S.md,
-    borderRadius: R.control, borderCurve: 'continuous', backgroundColor: C.surface, borderWidth: 1, borderColor: C.border,
-  },
-  input: { flex: 1, color: C.text, ...F.regular, fontSize: 15, paddingVertical: 10 },
-  filterBtn: {
-    flexDirection: 'row', alignItems: 'center', gap: 6, minHeight: 44, paddingHorizontal: S.md,
-    borderRadius: R.control, borderCurve: 'continuous', backgroundColor: C.surface, borderWidth: 1, borderColor: C.border,
-  },
-  filterOn: { backgroundColor: C.accentSoft, borderColor: C.accentLine },
-  badge: { minWidth: 18, height: 18, borderRadius: 9, paddingHorizontal: 4, backgroundColor: C.accent, alignItems: 'center', justifyContent: 'center' },
   back: { flexDirection: 'row', alignItems: 'center', gap: 2, minHeight: 32, paddingHorizontal: 10, borderRadius: R.pill, backgroundColor: C.elevated },
   sort: { minHeight: 32, justifyContent: 'center', paddingHorizontal: 10, borderRadius: R.pill, borderWidth: 1, borderColor: C.border },
   sortOn: { backgroundColor: C.accentSoft, borderColor: C.accentLine },

@@ -1,7 +1,7 @@
 import { Ionicons } from '@expo/vector-icons';
 import { router, type Href } from 'expo-router';
 import { useState } from 'react';
-import { Linking, Modal, ScrollView, StyleSheet, View } from 'react-native';
+import { Linking, StyleSheet, View } from 'react-native';
 
 import { detectLangs } from '@/addons/audio';
 import { isTorrent, type AddonStream } from '@/addons/protocol';
@@ -11,9 +11,10 @@ import { enableTorrentEngine, isAvailable as torrentEngineAvailable } from '@/to
 import { hostOf } from '@/addons/web-player';
 import { AddonInfos } from '@/components/addon-infos';
 import { EngineBadge } from '@/components/player/engines';
-import { Button, Chip, IconButton, InfoPill, Press, Txt } from '@/components/ui';
+import { Sheet, SheetLabel } from '@/components/sheet';
+import { Button, Chip, InfoPill, Press, Txt } from '@/components/ui';
 import { YouTubePlayer } from '@/components/youtube-player';
-import { C, R, S } from '@/theme/tokens';
+import { C, R, S, SHADOW } from '@/theme/tokens';
 
 type Source = ReturnType<typeof useSource>;
 
@@ -26,13 +27,15 @@ export function SourceButton({ src, onOpen }: { src: Source; onOpen: () => void 
     : src.url ? `${qualityLabel(quality)} · ${current.addonName}` : `Préparation · ${current.addonName}`;
   return (
     <Press onPress={onOpen} style={styles.button} accessibilityRole="button" accessibilityLabel={`Sources : ${status}`}>
-      <Ionicons name="layers-outline" size={20} color={C.accentText} />
+      <View style={styles.buttonIcon}>
+        <Ionicons name="layers-outline" size={18} color={C.accentText} />
+      </View>
       <View style={{ flex: 1, gap: 2 }}>
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
           <Txt v="label" numberOfLines={1} style={{ flexShrink: 1 }}>{status}</Txt>
           <EngineBadge />
         </View>
-        <Txt v="small" numberOfLines={1}>
+        <Txt v="footnote" numberOfLines={1} tabular>
           {auto ? 'Automatique' : 'Choix manuel'} · {ranked.length} source{ranked.length > 1 ? 's' : ''}
           {pending > 0 ? ` · ${pending} addon${pending > 1 ? 's' : ''} en attente` : ''}
         </Txt>
@@ -74,65 +77,64 @@ export function SourcesMenu({ src, visible, onClose }: { src: Source; visible: b
   };
 
   return (
-    <Modal visible={visible} animationType="slide" presentationStyle="pageSheet" onRequestClose={onClose}
-      supportedOrientations={['portrait', 'landscape-left', 'landscape-right']}>
-      <View style={{ flex: 1, backgroundColor: C.surface }}>
-        <View style={styles.header}>
-          <Txt v="section" style={{ flex: 1 }}>Sources</Txt>
-          <IconButton icon="close" label="Fermer" onPress={onClose} />
+    <Sheet
+      visible={visible}
+      onClose={onClose}
+      title="Sources"
+      subtitle={`${ranked.length} source${ranked.length > 1 ? 's' : ''}${pending > 0 ? ` · ${pending} addon${pending > 1 ? 's' : ''} en attente` : ''}`}
+      detents={['medium', 'large']}>
+      <EngineBadge variant="row" />
+      <Press onPress={() => { src.pick('auto'); onClose(); }} scaleTo={0.98} style={[styles.row, auto && styles.active]}
+        accessibilityRole="button" accessibilityState={{ selected: auto }} accessibilityLabel="Automatique">
+        <View style={[styles.autoIcon, auto && { backgroundColor: C.accent }]}>
+          <Ionicons name="sparkles" size={16} color={C.white} />
         </View>
-        <ScrollView contentContainerStyle={{ padding: S.lg, gap: S.lg, paddingBottom: S.xxl }}>
-          <EngineBadge variant="row" />
-          <Press onPress={() => { src.pick('auto'); onClose(); }} style={[styles.row, auto && styles.active]}>
-            <Ionicons name="sparkles-outline" size={20} color={C.accentText} />
-            <View style={{ flex: 1, gap: 2 }}>
-              <Txt v="label">Automatique</Txt>
-              <Txt v="small">
-                Teste la vitesse des meilleurs liens, écarte ceux qui sont hors ligne et lance le plus rapide dans ta langue. Si une meilleure qualité s’avère assez rapide, elle prend le relais sans couper la lecture (sinon, elle sert pour l’épisode suivant). Les lecteurs web ne servent que s’il n’y a pas de lien direct.
+        <View style={{ flex: 1, gap: 3 }}>
+          <Txt v="label" color={auto ? C.accentText : C.text}>Automatique</Txt>
+          <Txt v="footnote">
+            Teste la vitesse des meilleurs liens, écarte ceux qui sont hors ligne et lance le plus rapide dans ta langue. Si une meilleure qualité s’avère assez rapide, elle prend le relais sans couper la lecture (sinon, elle sert pour l’épisode suivant). Les lecteurs web ne servent que s’il n’y a pas de lien direct.
+          </Txt>
+          {src.raceStats.enabled ? (
+            src.raceStats.measured > 0 && (
+              <Txt v="footnote" color={C.text3} tabular>
+                {src.raceStats.measured} lien{src.raceStats.measured > 1 ? 's' : ''} testé{src.raceStats.measured > 1 ? 's' : ''}
+                {src.raceStats.dead > 0 ? ` · ${src.raceStats.dead} hors ligne écarté${src.raceStats.dead > 1 ? 's' : ''}` : ''}
               </Txt>
-              {src.raceStats.enabled ? (
-                src.raceStats.measured > 0 && (
-                  <Txt v="small" color={C.text2}>
-                    {src.raceStats.measured} lien{src.raceStats.measured > 1 ? 's' : ''} testé{src.raceStats.measured > 1 ? 's' : ''}
-                    {src.raceStats.dead > 0 ? ` · ${src.raceStats.dead} hors ligne écarté${src.raceStats.dead > 1 ? 's' : ''}` : ''}
-                  </Txt>
-                )
-              ) : (
-                <Txt v="small" color={C.text2}>Test de vitesse désactivé sur ce réseau (données mobiles limitées ou hors ligne).</Txt>
-              )}
-            </View>
-            {auto && <Ionicons name="checkmark" size={20} color={C.accentText} />}
-          </Press>
-
-          {GROUPS.map((g) => {
-            const items = ranked.filter((s) => g.match(detectQuality(s)));
-            if (!items.length) return null;
-            return (
-              <View key={g.label} style={{ gap: S.sm }}>
-                <Txt v="caption" color={C.text2}>{g.label.toUpperCase()} · {items.length}</Txt>
-                {items.map((s) => <SourceRow key={streamKey(s)} s={s} src={src} active={streamKey(s) === currentKey} onPress={() => choose(s)} />)}
-              </View>
-            );
-          })}
-
-          {pending > 0 && <Txt v="small">Recherche en cours… ({pending} addon{pending > 1 ? 's' : ''})</Txt>}
-          {pending === 0 && ranked.length === 0 && <Txt v="small">Aucune source. Active ou installe un addon dans Profil → Extensions.</Txt>}
-          {failed.length > 0 && <Txt v="small">Injoignable : {failed.join(', ')}</Txt>}
-          <AddonInfos infos={src.infos} />
-          {!resolverLabel && ranked.some(isTorrent) && (
-            <View style={{ gap: S.sm }}>
-              {engineOff && (
-                <Button small icon="flash-outline" label="Lire les torrents avec le moteur intégré"
-                  onPress={() => { enableTorrentEngine().catch(() => {}); }} />
-              )}
-              <Button small variant="soft" icon="cloud-outline" label={engineOff ? 'Ou via un service débrid (plus rapide)' : 'Lire les torrents via un service débrid'}
-                onPress={() => { onClose(); router.push('/debrid' as Href); }} />
-            </View>
+            )
+          ) : (
+            <Txt v="footnote" color={C.text3}>Test de vitesse désactivé sur ce réseau (données mobiles limitées ou hors ligne).</Txt>
           )}
-        </ScrollView>
-      </View>
+        </View>
+        {auto && <Ionicons name="checkmark" size={20} color={C.accentText} />}
+      </Press>
+
+      {GROUPS.map((g) => {
+        const items = ranked.filter((s) => g.match(detectQuality(s)));
+        if (!items.length) return null;
+        return (
+          <View key={g.label} style={{ gap: S.sm }}>
+            <SheetLabel>{`${g.label} · ${items.length}`}</SheetLabel>
+            {items.map((s) => <SourceRow key={streamKey(s)} s={s} src={src} active={streamKey(s) === currentKey} onPress={() => choose(s)} />)}
+          </View>
+        );
+      })}
+
+      {pending > 0 && <Txt v="small">Recherche en cours… ({pending} addon{pending > 1 ? 's' : ''})</Txt>}
+      {pending === 0 && ranked.length === 0 && <Txt v="small">Aucune source. Active ou installe un addon dans Profil → Extensions.</Txt>}
+      {failed.length > 0 && <Txt v="small">Injoignable : {failed.join(', ')}</Txt>}
+      <AddonInfos infos={src.infos} />
+      {!resolverLabel && ranked.some(isTorrent) && (
+        <View style={{ gap: S.sm }}>
+          {engineOff && (
+            <Button small icon="flash-outline" label="Lire les torrents avec le moteur intégré"
+              onPress={() => { enableTorrentEngine().catch(() => {}); }} />
+          )}
+          <Button small variant="soft" icon="cloud-outline" label={engineOff ? 'Ou via un service débrid (plus rapide)' : 'Lire les torrents via un service débrid'}
+            onPress={() => { onClose(); router.push('/debrid' as Href); }} />
+        </View>
+      )}
       <YouTubePlayer ytId={yt?.id ?? null} title={yt?.title} onClose={() => setYt(null)} />
-    </Modal>
+    </Sheet>
   );
 }
 
@@ -155,12 +157,13 @@ function SourceRow({ s, src, active, onPress }: { s: AddonStream; src: Source; a
   const dim = st === 'failed' || st === 'unusable' || speed?.speed === 'dead' || (st === 'needs-debrid' && !torrentEngineAvailable());
   const langLabel = detectLangs(s).label;
   return (
-    <Press onPress={onPress} disabled={st === 'unusable'} style={[styles.row, active && styles.active, dim && { opacity: 0.5 }]}>
-      <View style={{ flex: 1, gap: 2 }}>
-        <Txt v="label" numberOfLines={1}>{(s.name ?? 'Flux').replace(/\n/g, ' ') + (s.title ? ` · ${s.title.split('\n')[0]}` : '')}</Txt>
+    <Press onPress={onPress} disabled={st === 'unusable'} scaleTo={0.98} style={[styles.row, active && styles.active, dim && { opacity: 0.5 }]}
+      accessibilityRole="button" accessibilityState={{ selected: active, disabled: st === 'unusable' }}>
+      <View style={{ flex: 1, gap: 4 }}>
+        <Txt v="label" numberOfLines={1} color={active ? C.accentText : C.text}>{(s.name ?? 'Flux').replace(/\n/g, ' ') + (s.title ? ` · ${s.title.split('\n')[0]}` : '')}</Txt>
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: S.sm }}>
           {!!web && <InfoPill icon="globe-outline" label="Lecteur web" />}
-          <Txt v="small" numberOfLines={2} style={{ flexShrink: 1 }}>{detail}</Txt>
+          <Txt v="footnote" numberOfLines={2} style={{ flexShrink: 1 }}>{detail}</Txt>
         </View>
         {speed && (
           <View style={{ flexDirection: 'row' }}>
@@ -173,14 +176,21 @@ function SourceRow({ s, src, active, onPress }: { s: AddonStream; src: Source; a
         )}
       </View>
       {!!langLabel && <Chip kind="neutral" label={langLabel} />}
-      {active && <Chip kind="accent" label={st === 'playing' ? 'EN COURS' : '…'} />}
+      {active && <Chip kind="accent" label={st === 'playing' ? 'En cours' : '…'} />}
     </Press>
   );
 }
 
 const styles = StyleSheet.create({
-  button: { flexDirection: 'row', alignItems: 'center', gap: S.md, padding: S.md, borderRadius: R.card, backgroundColor: C.surface },
-  header: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: S.lg, paddingTop: S.lg, paddingBottom: S.sm },
-  row: { flexDirection: 'row', alignItems: 'center', gap: S.md, padding: S.md, borderRadius: R.card, backgroundColor: C.elevated },
-  active: { backgroundColor: C.accentSoft, borderWidth: 1, borderColor: C.accentLine },
+  button: {
+    flexDirection: 'row', alignItems: 'center', gap: S.md, padding: S.md, minHeight: 60, borderRadius: R.card, borderCurve: 'continuous',
+    backgroundColor: C.surface, borderWidth: 1, borderColor: C.border, boxShadow: SHADOW.inset,
+  },
+  buttonIcon: { width: 36, height: 36, borderRadius: 10, borderCurve: 'continuous', alignItems: 'center', justifyContent: 'center', backgroundColor: C.accentSoft },
+  row: {
+    flexDirection: 'row', alignItems: 'center', gap: S.md, padding: 14, borderRadius: R.control, borderCurve: 'continuous',
+    backgroundColor: C.elevated, borderWidth: 1, borderColor: 'rgba(255,255,255,0.05)',
+  },
+  active: { backgroundColor: C.accentSoft, borderColor: C.accentLine },
+  autoIcon: { width: 32, height: 32, borderRadius: 16, alignSelf: 'flex-start', alignItems: 'center', justifyContent: 'center', backgroundColor: C.surface },
 });

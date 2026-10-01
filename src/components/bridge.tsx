@@ -10,7 +10,7 @@ import type { Episode, Series } from '@/data/catalog';
 import { proposeCorrection } from '@/data/mapping-sync';
 import { useSeasonState, type FieldState } from '@/data/mapping-store';
 import { useStore } from '@/store/store';
-import { BRIDGE_SOFT, C, R, S } from '@/theme/tokens';
+import { BRIDGE_SOFT, C, R, S, SHADOW } from '@/theme/tokens';
 
 import { Button, Chip, Cover, Press, Txt } from './ui';
 
@@ -20,7 +20,7 @@ function Frame({ children, reverse }: { children: React.ReactNode; reverse?: boo
       colors={reverse ? [BRIDGE_SOFT[1], BRIDGE_SOFT[0]] : BRIDGE_SOFT}
       start={{ x: 0, y: 0 }}
       end={{ x: 1, y: 0 }}
-      style={[styles.frame, { borderLeftColor: reverse ? C.accent : C.accent, borderRightColor: reverse ? C.accent : C.accent }]}>
+      style={[styles.frame, { borderLeftColor: C.border, borderRightColor: C.border }]}>
       {children}
     </LinearGradient>
   );
@@ -36,8 +36,8 @@ export function BridgeToManhwa({ series }: { series: Series }) {
   if (!next) return null;
   return (
     <Frame>
-      <Chip kind="bridge" label="ANIME → MANHWA" />
-      <Txt v="section" style={{ fontSize: 17 }}>L’anime s’arrête à l’épisode {eps.length}</Txt>
+      <Chip kind="bridge" label="Anime → Manhwa" />
+      <Txt v="headline">L’anime s’arrête à l’épisode {eps.length}</Txt>
       <Txt v="body" style={{ fontSize: 13, lineHeight: 19 }}>
         {series.estimated ? `La suite commence vers le chapitre ${next.number} (estimation).` : `La suite commence au chapitre ${next.number}.`} Ta progression est synchronisée entre les deux.
       </Txt>
@@ -55,8 +55,8 @@ export function BridgeToManhwa({ series }: { series: Series }) {
       <Button
         label={`Continuer au chapitre ${next.number}`}
         icon="arrow-forward"
-        color={C.accent}
-        textColor={C.onAccent}
+        iconRight
+        variant="soft"
         onPress={() => router.push(`/read/${next.id}`)}
         style={{ paddingVertical: 12, borderRadius: R.card, flexDirection: 'row-reverse' }}
       />
@@ -81,7 +81,7 @@ export function BridgeToAnime({ series }: { series: Series }) {
             </View>
           </Cover>
           <View style={{ flex: 1, gap: 4 }}>
-            <Chip kind="anime" label="AUSSI EN ANIME" />
+            <Chip kind="anime" label="Aussi en anime" />
             <Txt v="label">{approx(series)}Ch. {animeStartChapter(series)}–{animeEndChapter(series)} adaptés en {eps.length} épisodes</Txt>
             <Txt v="small">
               {watched > 0 ? `Tu as vu ${watched}/${eps.length} · reprendre ép. ${resume.number}` : 'Pas encore commencé'}
@@ -196,8 +196,8 @@ export function MappingProvenance({ series, episode }: { series: Series; episode
 
 const styles = StyleSheet.create({
   frame: {
-    padding: S.lg, gap: 10, borderRadius: 20, borderWidth: 1.5,
-    borderTopColor: C.border, borderBottomColor: C.border,
+    padding: S.lg, gap: 12, borderRadius: R.card + 4, borderCurve: 'continuous', borderWidth: 1,
+    borderTopColor: C.accentLine, borderBottomColor: C.border, boxShadow: SHADOW.raised,
   },
   seg: { height: 6, borderRadius: 3 },
   provenance: { gap: 8, paddingTop: 10, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: C.border },

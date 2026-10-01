@@ -1,7 +1,8 @@
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { router, useLocalSearchParams } from 'expo-router';
 import { useMemo, useState } from 'react';
-import { ActionSheetIOS, Alert, FlatList, Platform, Pressable, StyleSheet, View } from 'react-native';
+import { ActionSheetIOS, Alert, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
+import Animated, { useAnimatedScrollHandler, useSharedValue } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { BridgeToAnime } from '@/components/bridge';
@@ -24,11 +25,12 @@ import {
 } from '@/components/reader/downloads';
 import { isDemo } from '@/demo/flags';
 import { useSourceLink } from '@/manga-ext/link';
-import { Button, Chip, Cover, IconButton, Press, Progress, Txt } from '@/components/ui';
+import { DetailBackdrop, DetailNav, DetailTabs, Synopsis } from '@/components/detail';
+import { ActionTile, Button, Chip, MetaLine, Press, Progress, Txt } from '@/components/ui';
 import { episodeForChapter } from '@/data/bridge';
 import { getSeries, type Chapter } from '@/data/catalog';
 import { toggleMyList, useStore } from '@/store/store';
-import { C, F, S } from '@/theme/tokens';
+import { C, F, R, S, TABULAR } from '@/theme/tokens';
 
 export default function ManhwaDetail() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -38,6 +40,8 @@ export default function ManhwaDetail() {
   const episodes = useStore((s) => s.episodes);
   const inList = useStore((s) => s.myList.includes(id));
   const [newestFirst, setNewestFirst] = useState(true);
+  const scrollY = useSharedValue(0);
+  const onScroll = useAnimatedScrollHandler({ onScroll: (e) => { scrollY.set(e.contentOffset.y); } });
   // Covers of a source-only page may need the source's headers (Referer).
   const coverHeaders = useSourceLink(id)?.imageHeaders;
   const downloads = useDownloads();
@@ -113,28 +117,28 @@ export default function ManhwaDetail() {
     const seenInAnime = !!ep && !!episodes[ep.id]?.done;
     const muted = p?.done || seenInAnime;
     return (
-      <Press onPress={() => router.push(`/read/${c.id}`)} onLongPress={canDownload || d ? () => chapterMenu(c, d) : undefined} style={styles.row} accessibilityLabel={`Chapitre ${c.number}${d ? `, ${downloadLabel(d, blocked)}` : ''}`}>
-        <View style={[styles.num, muted && { backgroundColor: 'transparent' }]}>
-          <Txt v="label" color={muted ? C.text2 : C.text} style={{ fontSize: c.number >= 1000 ? 13 : 16, ...F.heavy }} numberOfLines={1} adjustsFontSizeToFit>
+      <Press onPress={() => router.push(`/read/${c.id}`)} onLongPress={canDownload || d ? () => chapterMenu(c, d) : undefined} scaleTo={0.98} style={styles.row} accessibilityLabel={`Chapitre ${c.number}${p?.done ? ', lu' : ''}${d ? `, ${downloadLabel(d, blocked)}` : ''}`}>
+        <View style={[styles.num, muted && styles.numMuted, c.id === resume?.id && !muted && styles.numNext]}>
+          <Text maxFontSizeMultiplier={1.2} style={[styles.numText, { fontSize: c.number >= 1000 ? 13 : 16 }, muted && { color: C.text3 }]} numberOfLines={1} adjustsFontSizeToFit>
             {Number.isInteger(c.number) ? c.number : c.number.toFixed(1)}
-          </Txt>
-          {p?.done && <Ionicons name="checkmark" size={11} color={C.text2} />}
+          </Text>
+          {p?.done && <Ionicons name="checkmark" size={11} color={C.text3} />}
         </View>
         <View style={{ flex: 1, gap: 4, opacity: muted ? 0.6 : 1 }}>
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: S.sm, flexWrap: 'wrap' }}>
             <Txt v="label" color={muted ? C.text2 : C.text}>Chapitre {c.number}</Txt>
             {c.releasedDaysAgo === 0 && (
-              <View style={styles.new}><Txt v="caption" color={C.onAccent} style={{ fontSize: 9 }}>NOUVEAU</Txt></View>
+              <View style={styles.new}><Text maxFontSizeMultiplier={1.3} style={styles.newText}>Nouveau</Text></View>
             )}
-            {ep && seenInAnime && <Chip kind="anime" label={`VU EN ANIME · ÉP. ${ep.number}`} />}
+            {ep && seenInAnime && <Chip kind="anime" label={`Vu en anime · Ép. ${ep.number}`} />}
           </View>
           {p && !p.done ? (
             <>
-              <Txt v="small" color={C.accent} style={{ ...F.semibold }}>En cours · {Math.round(p.ratio * 100)} %</Txt>
-              <Progress value={p.ratio} color={C.accent} />
+              <Txt v="footnote" color={C.accentText} tabular style={{ ...F.semibold }}>En cours · {Math.round(p.ratio * 100)} %</Txt>
+              <Progress value={p.ratio} />
             </>
           ) : (
-            <Txt v="small">
+            <Txt v="footnote" tabular>
               {p?.done ? 'Lu' : c.releasedDaysAgo < 0 ? (c.title || 'Chapitre') : c.releasedDaysAgo === 0 ? 'Aujourd’hui' : `il y a ${c.releasedDaysAgo} j`}
               {ep && !seenInAnime ? ` · adapté dans l’ép. ${ep.number}` : ''}
             </Txt>
@@ -145,74 +149,79 @@ export default function ManhwaDetail() {
     );
   };
 
+  const headers = series.id.startsWith('px') ? coverHeaders : undefined;
+  const started = !!(inProgress || lastRead);
+
   return (
-    <FlatList
-      style={{ flex: 1, backgroundColor: C.bg }}
-      data={list}
-      keyExtractor={(c) => c.id}
-      renderItem={renderRow}
-      extraData={downloads}
-      initialNumToRender={12}
-      contentContainerStyle={{ paddingBottom: insets.bottom + S.xxl, gap: S.md }}
-      ListHeaderComponent={
-        <View style={{ gap: S.lg, paddingBottom: S.xs }}>
-          <View style={{ height: 350 }}>
-            <Cover palette={series.palette} image={series.image} imageHeaders={series.id.startsWith('px') ? coverHeaders : undefined} height={350} radius={0} dim style={StyleSheet.absoluteFill} />
-            <View style={[styles.nav, { top: insets.top + S.sm }]}>
-              <IconButton icon="chevron-back" label="Retour" onPress={() => router.back()} />
-            </View>
-            <View style={styles.info}>
-              <Cover palette={series.palette} image={series.image} imageHeaders={series.id.startsWith('px') ? coverHeaders : undefined} width={128} height={190} radius={14} />
-              <View style={{ flex: 1, gap: S.sm }}>
-                <Chip kind="manhwa" />
-                <Txt v="title" style={{ fontSize: 24, lineHeight: 28 }}>{series.title}</Txt>
-                <Txt v="small" style={{ fontSize: 13 }}>{series.author}</Txt>
-                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                  <View style={{ width: 7, height: 7, borderRadius: 4, backgroundColor: series.status === 'ongoing' ? C.success : C.text2 }} />
-                  <Txt v="small">{series.status === 'ongoing' ? 'En cours' : 'Terminé'} · {all.length} ch.</Txt>
+    <View style={{ flex: 1, backgroundColor: C.bg }}>
+      <Animated.FlatList
+        style={{ flex: 1 }}
+        data={list}
+        keyExtractor={(c) => c.id}
+        renderItem={renderRow}
+        extraData={downloads}
+        initialNumToRender={12}
+        onScroll={onScroll}
+        scrollEventThrottle={16}
+        contentInsetAdjustmentBehavior="never"
+        showsVerticalScrollIndicator={false}
+        contentContainerStyle={{ paddingBottom: insets.bottom + S.xxl, gap: 6 }}
+        ListHeaderComponent={
+          <View style={{ gap: S.lg, paddingBottom: S.sm }}>
+            <DetailBackdrop series={series} headers={headers} scrollY={scrollY}>
+              <Txt v="display" numberOfLines={3} style={styles.title}>{series.title}</Txt>
+              <MetaLine
+                items={[
+                  <View key="st" style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                    <View style={{ width: 7, height: 7, borderRadius: 4, backgroundColor: series.status === 'ongoing' ? C.success : C.text2 }} />
+                    <Txt v="small" color={C.body} style={F.medium}>{series.status === 'ongoing' ? 'En cours' : 'Terminé'}</Txt>
+                  </View>,
+                  `${all.length} chapitres`,
+                  series.author,
+                ]}
+              />
+              <Txt v="small" color={C.text2} numberOfLines={1}>{['Manhwa', ...series.genres].join(' · ')}</Txt>
+            </DetailBackdrop>
+
+            <View style={{ paddingHorizontal: S.lg, gap: S.lg }}>
+              <Button
+                large
+                icon="book"
+                label={!resume ? 'Aucun chapitre' : started ? `Continuer · Ch. ${resume.number}` : `Lire · Ch. ${resume.number}`}
+                disabled={!resume}
+                onPress={() => resume && router.push(`/read/${resume.id}`)}
+              />
+              <View style={styles.tiles}>
+                <ActionTile icon={inList ? 'checkmark' : 'add'} label="Ma liste" active={inList} onPress={() => toggleMyList(series.id)}
+                  accessibilityLabel={inList ? 'Retirer de ma liste' : 'Ajouter à ma liste'} />
+                <ListsButton seriesId={series.id} tile />
+                {canDownload && (
+                  <ActionTile icon="arrow-down-circle-outline" label={dlDone.length ? `${dlDone.length} hors ligne` : 'Télécharger'} onPress={downloadMenu}
+                    active={dlDone.length > 0} accessibilityLabel="Télécharger des chapitres" />
+                )}
+              </View>
+              <SourcePanel series={series} />
+              <Synopsis text={series.synopsis} />
+              {series.anime && <BridgeToAnime series={series} />}
+              <View style={{ gap: S.sm }}>
+                <DetailTabs tabs={[{ label: `${all.length} chapitres`, active: true }]} />
+                <View style={styles.listHead}>
+                  <Txt v="footnote" tabular>
+                    {dlDone.length > 0 ? `${dlDone.length} hors ligne · ${formatBytes(dlBytes)}` : started ? `Lu jusqu’au ch. ${lastRead || resume?.number}` : 'Aucun chapitre lu'}
+                  </Txt>
+                  <Pressable onPress={() => setNewestFirst((v) => !v)} hitSlop={10} accessibilityRole="button"
+                    style={({ pressed }) => [styles.sort, pressed && { opacity: 0.6 }]}>
+                    <Ionicons name="swap-vertical" size={14} color={C.text2} />
+                    <Txt v="footnote" style={F.semibold}>{newestFirst ? 'Plus récents' : 'Plus anciens'}</Txt>
+                  </Pressable>
                 </View>
               </View>
             </View>
           </View>
-
-          <View style={{ paddingHorizontal: S.lg, gap: S.lg }}>
-            <View style={{ flexDirection: 'row', gap: 10 }}>
-              <Button
-                style={{ flex: 1 }}
-                color={C.accent}
-                textColor={C.onAccent}
-                label={!resume ? 'Aucun chapitre' : inProgress || lastRead ? `Continuer · Ch. ${resume.number}` : `Lire · Ch. ${resume.number}`}
-                onPress={() => resume && router.push(`/read/${resume.id}`)}
-              />
-              <Press onPress={() => toggleMyList(series.id)} style={styles.square} accessibilityLabel={inList ? 'Retirer de ma liste' : 'Ajouter à ma liste'}>
-                <Ionicons name={inList ? 'checkmark' : 'add'} size={24} color={C.text} />
-              </Press>
-              <ListsButton seriesId={series.id} />
-              {canDownload && (
-                <Press onPress={downloadMenu} style={styles.square} accessibilityLabel="Télécharger des chapitres">
-                  <Ionicons name="arrow-down-circle-outline" size={24} color={C.text} />
-                </Press>
-              )}
-            </View>
-            <SourcePanel series={series} />
-            <Txt v="body">{series.synopsis}</Txt>
-            {series.anime && <BridgeToAnime series={series} />}
-            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
-              <View style={{ gap: 2 }}>
-                <Txt v="section" style={{ fontSize: 17 }}>{all.length} chapitres</Txt>
-                {dlDone.length > 0 && (
-                  <Txt v="small" style={{ fontSize: 12 }}>{dlDone.length} hors-ligne · {formatBytes(dlBytes)}</Txt>
-                )}
-              </View>
-              <Pressable onPress={() => setNewestFirst((v) => !v)} hitSlop={10} style={{ flexDirection: 'row', alignItems: 'center', gap: 4, minHeight: 44 }}>
-                <Txt v="small" style={{ fontSize: 13, ...F.medium }}>{newestFirst ? 'Plus récents' : 'Plus anciens'}</Txt>
-                <Ionicons name="swap-vertical" size={14} color={C.text2} />
-              </Pressable>
-            </View>
-          </View>
-        </View>
-      }
-    />
+        }
+      />
+      <DetailNav title={series.title} scrollY={scrollY} />
+    </View>
   );
 }
 
@@ -235,15 +244,20 @@ function DownloadBadge({ entry: d, label, onPress }: { entry?: DownloadEntry; la
 }
 
 const styles = StyleSheet.create({
-  badge: { width: 40, height: 40, alignItems: 'center', justifyContent: 'center' },
+  title: { fontSize: 36, lineHeight: 40, letterSpacing: -1.1, ...F.black, textShadowColor: 'rgba(0,0,0,0.4)', textShadowRadius: 16 },
+  tiles: { flexDirection: 'row', justifyContent: 'space-around', paddingVertical: 2 },
+  listHead: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', minHeight: 32 },
+  sort: { flexDirection: 'row', alignItems: 'center', gap: 4, minHeight: 32, paddingHorizontal: 10, borderRadius: R.pill, backgroundColor: C.surface },
+  badge: { width: 44, height: 44, alignItems: 'center', justifyContent: 'center' },
   num: {
-    width: 48, height: 48, borderRadius: 12, borderCurve: 'continuous', alignItems: 'center', justifyContent: 'center',
-    backgroundColor: C.elevated, borderWidth: 1, borderColor: C.border,
+    width: 48, height: 48, borderRadius: R.control, borderCurve: 'continuous', alignItems: 'center', justifyContent: 'center',
+    backgroundColor: C.surface, borderWidth: 1, borderColor: C.border, boxShadow: '0px 1px 0px rgba(255,255,255,0.05) inset',
   },
+  numMuted: { backgroundColor: 'transparent', borderColor: 'transparent', boxShadow: undefined },
+  numNext: { backgroundColor: C.accentSoft, borderColor: C.accentLine },
+  numText: { color: C.text, ...F.heavy, ...TABULAR },
   ring: { width: 24, height: 24, borderRadius: 12, borderWidth: 2, borderColor: C.accentLine, alignItems: 'center', justifyContent: 'center' },
-  nav: { position: 'absolute', left: S.lg },
-  info: { position: 'absolute', left: S.lg, right: S.lg, bottom: S.md, flexDirection: 'row', alignItems: 'flex-end', gap: S.lg },
-  square: { width: 52, height: 52, borderRadius: 16, backgroundColor: C.elevated, alignItems: 'center', justifyContent: 'center' },
-  row: { flexDirection: 'row', alignItems: 'center', gap: S.md, paddingHorizontal: S.lg },
+  row: { flexDirection: 'row', alignItems: 'center', gap: S.md, paddingHorizontal: S.lg, paddingVertical: 6 },
   new: { paddingVertical: 2, paddingHorizontal: 6, borderRadius: 5, backgroundColor: C.accent },
+  newText: { color: C.onAccent, fontSize: 10, ...F.bold },
 });

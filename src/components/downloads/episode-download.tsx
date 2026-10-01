@@ -2,8 +2,7 @@
 // (this episode / the next N / the season, quality, Wi-Fi only, pause / resume / delete).
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { useState } from 'react';
-import { Modal, Pressable, StyleSheet, Switch, View } from 'react-native';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { Pressable, StyleSheet, Switch, View } from 'react-native';
 
 import type { AddonStream } from '@/addons/protocol';
 import type { Episode, Series } from '@/data/catalog';
@@ -24,6 +23,7 @@ import {
 import type { Pick } from '@/downloads/pick';
 import { C, F, R, S } from '@/theme/tokens';
 
+import { Sheet } from '../sheet';
 import { Button, Progress, Txt, type IconName } from '../ui';
 
 const QUALITY_LABEL: Record<string, string> = { auto: 'Auto', 1080: '1080p', 720: '720p', 480: '480p' };
@@ -101,7 +101,6 @@ export function DownloadSheet({
   /** Watch screen: subtitle files to save with the episode. */
   subtitles?: { url: string; lang: string; label?: string }[];
 }) {
-  const insets = useSafeAreaInsets();
   const settings = useDlSettings();
   const items = useDownloadItems();
   const item = items[episode.id];
@@ -129,91 +128,87 @@ export function DownloadSheet({
   };
 
   return (
-    <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
-      <Pressable style={styles.backdrop} onPress={onClose} accessibilityLabel="Fermer" />
-      <View style={[styles.sheet, { paddingBottom: insets.bottom + S.lg }]}>
-        <View style={styles.grabber} />
-        <View style={{ gap: 2 }}>
-          <Txt v="caption" color={C.text2}>{series.title}</Txt>
-          <Txt v="title" numberOfLines={1}>{episode.title ? `Ép. ${episode.number} — ${episode.title}` : `Épisode ${episode.number}`}</Txt>
-        </View>
-
-        {item && item.status !== 'failed' ? (
-          <View style={{ gap: S.md }}>
-            <View style={styles.card}>
-              <Txt v="label">{item.status === 'done' ? 'Disponible hors ligne' : 'Téléchargement'}</Txt>
-              <Txt v="small">{statusLine(item)}</Txt>
-              {item.status === 'downloading' && <Progress value={progressOf(item)} height={4} />}
-              {item.compress?.reason && item.compress.state !== 'done' && <Txt v="small">{item.compress.reason}</Txt>}
-            </View>
-            <View style={{ flexDirection: 'row', gap: S.sm }}>
-              {(item.status === 'downloading' || item.status === 'resolving' || item.status === 'queued' || item.status === 'waiting-network') && (
-                <Button style={{ flex: 1 }} variant="ghost" icon="pause" label="Pause" onPress={() => void pauseDownload(item.id)} />
-              )}
-              {item.status === 'paused' && <Button style={{ flex: 1 }} variant="soft" icon="play" label="Reprendre" onPress={() => resumeDownload(item.id)} />}
-              <Button
-                style={{ flex: 1 }}
-                variant="ghost"
-                icon="trash-outline"
-                label={item.status === 'done' ? 'Supprimer' : 'Annuler'}
-                onPress={() => {
-                  removeDownload(item.id);
-                  onClose();
-                }}
-              />
-            </View>
+    <Sheet
+      visible={visible}
+      onClose={onClose}
+      detents="fit"
+      title={episode.title ? `Ép. ${episode.number} — ${episode.title}` : `Épisode ${episode.number}`}
+      subtitle={series.title}>
+      {item && item.status !== 'failed' ? (
+        <View style={{ gap: S.md }}>
+          <View style={styles.card}>
+            <Txt v="label">{item.status === 'done' ? 'Disponible hors ligne' : 'Téléchargement'}</Txt>
+            <Txt v="small">{statusLine(item)}</Txt>
+            {item.status === 'downloading' && <Progress value={progressOf(item)} height={4} />}
+            {item.compress?.reason && item.compress.state !== 'done' && <Txt v="small">{item.compress.reason}</Txt>}
           </View>
-        ) : (
-          <>
-            {item?.status === 'failed' && (
-              <View style={[styles.card, { borderColor: 'rgba(255,107,107,0.35)' }]}>
-                <Txt v="label">Le téléchargement a échoué</Txt>
-                <Txt v="small">{item.error}</Txt>
-              </View>
+          <View style={{ flexDirection: 'row', gap: S.sm }}>
+            {(item.status === 'downloading' || item.status === 'resolving' || item.status === 'queued' || item.status === 'waiting-network') && (
+              <Button style={{ flex: 1 }} variant="ghost" icon="pause" label="Pause" onPress={() => void pauseDownload(item.id)} />
             )}
-            {blocked && (
-              <View style={styles.card}>
-                <Txt v="label">Source actuelle non téléchargeable</Txt>
-                <Txt v="small">{blocked} Une autre source de la liste sera cherchée.</Txt>
-              </View>
-            )}
+            {item.status === 'paused' && <Button style={{ flex: 1 }} variant="soft" icon="play" label="Reprendre" onPress={() => resumeDownload(item.id)} />}
+            <Button
+              style={{ flex: 1 }}
+              variant="ghost"
+              icon="trash-outline"
+              label={item.status === 'done' ? 'Supprimer' : 'Annuler'}
+              onPress={() => {
+                removeDownload(item.id);
+                onClose();
+              }}
+            />
+          </View>
+        </View>
+      ) : (
+        <>
+          {item?.status === 'failed' && (
+            <View style={[styles.card, { borderColor: 'rgba(255,107,107,0.35)' }]}>
+              <Txt v="label">Le téléchargement a échoué</Txt>
+              <Txt v="small">{item.error}</Txt>
+            </View>
+          )}
+          {blocked && (
+            <View style={styles.card}>
+              <Txt v="label">Source actuelle non téléchargeable</Txt>
+              <Txt v="small">{blocked} Une autre source de la liste sera cherchée.</Txt>
+            </View>
+          )}
+          <View style={{ gap: S.sm }}>
+            <Txt v="caption" color={C.text2}>Qualité</Txt>
+            <View style={styles.row}>
+              {(['auto', 1080, 720, 480] as DlQuality[]).map((q) => (
+                <Choice key={q} label={QUALITY_LABEL[q]} on={quality === q} onPress={() => setQuality(q)} />
+              ))}
+            </View>
+            <Txt v="small">{quality === 'auto' ? 'La source que le lecteur choisit (ou celle que tu as choisie).' : 'La source la plus proche de cette qualité.'}</Txt>
+            {hlsWarn && <Txt v="small" color="#F5B544">Source HLS : le téléchargement hors ligne demande un iPhone et la dernière version de l’app.</Txt>}
+          </View>
+          <View style={[styles.row, { justifyContent: 'space-between', alignItems: 'center' }]}>
+            <View style={{ flex: 1 }}>
+              <Txt v="label">Wi-Fi uniquement</Txt>
+              <Txt v="small">Attend le Wi-Fi avant de télécharger.</Txt>
+            </View>
+            <Switch value={wifiOnly} onValueChange={setWifiOnly} trackColor={{ true: C.accent }} />
+          </View>
+          {done ? (
+            <Txt v="label" color={C.accentText} style={{ textAlign: 'center', paddingVertical: S.md }}>{done}</Txt>
+          ) : (
             <View style={{ gap: S.sm }}>
-              <Txt v="caption" color={C.text2}>Qualité</Txt>
-              <View style={styles.row}>
-                {(['auto', 1080, 720, 480] as DlQuality[]).map((q) => (
-                  <Choice key={q} label={QUALITY_LABEL[q]} on={quality === q} onPress={() => setQuality(q)} />
-                ))}
-              </View>
-              <Txt v="small">{quality === 'auto' ? 'La source que le lecteur choisit (ou celle que tu as choisie).' : 'La source la plus proche de cette qualité.'}</Txt>
-              {hlsWarn && <Txt v="small" color="#F5B544">Source HLS : le téléchargement hors ligne demande un iPhone et la dernière version de l’app.</Txt>}
+              <Button icon="arrow-down" label={item?.status === 'failed' ? 'Réessayer' : 'Télécharger cet épisode'} onPress={() => go('one')} />
+              {remaining > 1 && (
+                <View style={{ flexDirection: 'row', gap: S.sm, alignItems: 'center' }}>
+                  <Button style={{ flex: 1 }} variant="soft" label={`Les ${Math.min(count, remaining)} suivants`} onPress={() => go('next')} />
+                  {NEXT_COUNTS.filter((n) => n <= Math.max(remaining, 3)).map((n) => (
+                    <Choice key={n} label={String(n)} on={count === n} onPress={() => setCount(n)} />
+                  ))}
+                </View>
+              )}
+              {eps.length > 1 && <Button variant="ghost" label={`Toute la saison (${seasonLeft} ép.)`} onPress={() => go('season')} />}
             </View>
-            <View style={[styles.row, { justifyContent: 'space-between', alignItems: 'center' }]}>
-              <View style={{ flex: 1 }}>
-                <Txt v="label">Wi-Fi uniquement</Txt>
-                <Txt v="small">Attend le Wi-Fi avant de télécharger.</Txt>
-              </View>
-              <Switch value={wifiOnly} onValueChange={setWifiOnly} trackColor={{ true: C.accent }} />
-            </View>
-            {done ? (
-              <Txt v="label" color={C.accentText} style={{ textAlign: 'center', paddingVertical: S.md }}>{done}</Txt>
-            ) : (
-              <View style={{ gap: S.sm }}>
-                <Button icon="arrow-down" label={item?.status === 'failed' ? 'Réessayer' : 'Télécharger cet épisode'} onPress={() => go('one')} />
-                {remaining > 1 && (
-                  <View style={{ flexDirection: 'row', gap: S.sm, alignItems: 'center' }}>
-                    <Button style={{ flex: 1 }} variant="soft" label={`Les ${Math.min(count, remaining)} suivants`} onPress={() => go('next')} />
-                    {NEXT_COUNTS.filter((n) => n <= Math.max(remaining, 3)).map((n) => (
-                      <Choice key={n} label={String(n)} on={count === n} onPress={() => setCount(n)} />
-                    ))}
-                  </View>
-                )}
-                {eps.length > 1 && <Button variant="ghost" label={`Toute la saison (${seasonLeft} ép.)`} onPress={() => go('season')} />}
-              </View>
-            )}
-          </>
-        )}
-      </View>
-    </Modal>
+          )}
+        </>
+      )}
+    </Sheet>
   );
 }
 
@@ -228,12 +223,6 @@ function Choice({ label, on, onPress }: { label: string; on: boolean; onPress: (
 const styles = StyleSheet.create({
   btn: { width: 40, height: 40, alignItems: 'center', justifyContent: 'center' },
   pct: { width: 26, height: 26, borderRadius: 13, borderWidth: 2, borderColor: C.accentText, alignItems: 'center', justifyContent: 'center' },
-  backdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)' },
-  sheet: {
-    position: 'absolute', left: 0, right: 0, bottom: 0, padding: S.lg, gap: S.lg, backgroundColor: C.surface,
-    borderTopLeftRadius: R.sheet, borderTopRightRadius: R.sheet, borderCurve: 'continuous', borderWidth: 1, borderColor: C.border,
-  },
-  grabber: { alignSelf: 'center', width: 40, height: 5, borderRadius: 3, backgroundColor: C.borderStrong },
   card: { padding: S.md, gap: 6, borderRadius: R.card, borderCurve: 'continuous', backgroundColor: C.elevated, borderWidth: 1, borderColor: C.border },
   row: { flexDirection: 'row', flexWrap: 'wrap', gap: S.sm },
   choice: {
