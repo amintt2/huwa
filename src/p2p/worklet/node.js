@@ -266,9 +266,16 @@ class HuwaNode {
     }
     if (!info || toHex(info.identityPublicKey) !== m.id) return
     if (this.secret && m.id === this.secret.identity) return
+    // A device revoked in its owner's personal base is not listened to (it still holds a valid proof).
+    const peerHome = this.homes.get(m.id)
+    if (peerHome && info.devicePublicKey && (await valueOf(peerHome.base.view, 'rev/' + toHex(info.devicePublicKey)))) return
     const prev = this.peers.get(m.id) || {}
-    if (prev.home !== m.home || prev.box !== m.box) {
-      const next = { ...prev, home: m.home, box: m.box }
+    // The box published in the personal base wins over the one a device presents (a revoked device
+    // would present the pre-rotation box it still holds), and a known personal base is kept.
+    const box = prev.boxSrc === 'profile' && prev.box ? prev.box : m.box
+    const home = prev.home || m.home
+    if (prev.home !== home || prev.box !== box) {
+      const next = { ...prev, home, box }
       this.peers.set(m.id, next)
       await this.local.put('peer/' + m.id, next)
     }
@@ -300,6 +307,12 @@ class HuwaNode {
   _box() {
     if (!this._boxKeyPair) this._boxKeyPair = seal.boxKeyPair(fromHex(this.secret.boxSeed))
     return this._boxKeyPair
+  }
+
+  /** Current box first, then the ones replaced by a rotation (older messages are sealed to them). */
+  _boxes() {
+    if (!this._oldBoxKeyPairs) this._oldBoxKeyPairs = (this.secret.oldBoxSeeds || []).map((seed) => seal.boxKeyPair(fromHex(seed)))
+    return [this._box(), ...this._oldBoxKeyPairs]
   }
 
   _requireIdentity() {
@@ -334,6 +347,7 @@ class HuwaNode {
   }
 
   async _onHomeUpdate() {
+    await this._syncBox().catch((err) => this.log('box sync', err.message))
     const p = await valueOf(this.home.view, 'profile')
     const next = p ? this._profile(this.secret.identity, p) : undefined
     if (canon(next || null) !== canon(this.meProfile || null)) {
@@ -341,6 +355,106 @@ class HuwaNode {
       this.onevent({ ev: 'me', data: next || null })
     }
     this._notify('labels')
+    const revs = (await rangeValues(this.home.view, 'rev/')).length
+    if (revs !== this._revCount) {
+      const first = this._revCount === undefined
+      this._revCount = revs
+      if (revs && !first) this._propagateAll().catch(noop)
+    }
+  }
+
+  // ---- device revocation: DM box rotation, revocations in shared bases ---------
+
+  /**
+   * Adopts the box published in my personal base when it is not mine any more (rotated by another
+   * device), and re-shares the current box with devices that joined after the last rotation.
+   */
+  async _syncBox() {
+    if (!this.secret || !this.home || this._boxBusy) return
+    const p = await valueOf(this.home.view, 'profile')
+    if (!p || !p.box) return
+    const entries = await rangeValues(this.home.view, 'box/')
+    if (!entries.length) return
+    this._boxBusy = true
+    try {
+      const me = this.secret.device.publicKey
+      if (p.box !== toHex(this._box().publicKey)) {
+        const mine = seal.signToBoxKeyPair(this._device())
+        const seeds = new Map()
+        for (const e of entries) {
+          const tries = [[e.value.seeds[me], mine]]
+          if (this._rootBox) tries.push([e.value.seeds.root, this._rootBox])
+          for (const [sealed, kp] of tries) {
+            const seed = sealed ? seal.open(fromHex(sealed), kp) : null
+            if (seed && seed.byteLength === 32 && toHex(seal.boxKeyPair(seed).publicKey) === e.value.box) seeds.set(e.value.box, toHex(seed))
+          }
+        }
+        const current = seeds.get(p.box)
+        if (!current) return // not shared with this device yet
+        const old = [this.secret.boxSeed, ...(this.secret.oldBoxSeeds || []), ...seeds.values()]
+        const oldBoxSeeds = [...new Set(old)].filter((x) => x !== current).slice(0, 16)
+        await this._saveSecret({ ...this.secret, boxSeed: current, oldBoxSeeds })
+        this._broadcastHello()
+        return
+      }
+      // I hold the current box: share it with the devices missing from the last rotation.
+      const last = entries[entries.length - 1].value
+      if (last.box !== p.box) return
+      const devices = await this._boxDevices(p)
+      if (devices.every((d) => last.seeds[d])) return
+      await this._appendHome('box', this._boxBody(fromHex(this.secret.boxSeed), devices, p.rot))
+    } finally {
+      this._boxBusy = false
+    }
+  }
+
+  /** Remaining (not revoked) devices a box seed is sealed to, within the node size bound. */
+  async _boxDevices(p) {
+    const devices = (await rangeValues(this.home.view, 'dev/')).filter((e) => !e.value.revoked).map((e) => e.key.slice(4))
+    const me = this.secret.device.publicKey
+    const others = devices.filter((d) => d !== me)
+    return (devices.includes(me) ? [me, ...others] : others).slice(0, p.rot ? 23 : 24)
+  }
+
+  _boxBody(seed, devices, rot) {
+    const seeds = {}
+    for (const d of devices) seeds[d] = toHex(seal.seal(seed, seal.signToBoxPublicKey(fromHex(d))))
+    if (rot) seeds.root = toHex(seal.seal(seed, fromHex(rot)))
+    return { box: toHex(seal.boxKeyPair(seed).publicKey), seeds }
+  }
+
+  /** New DM box after a revocation: the revoked device cannot open messages sealed from now on. */
+  async _rotateBox() {
+    const p = await valueOf(this.home.view, 'profile')
+    if (!p) return
+    const devices = await this._boxDevices(p)
+    if (!devices.includes(this.secret.device.publicKey)) return
+    const seed = crypto.randomBytes(32)
+    await this._appendHome('box', this._boxBody(seed, devices, p.rot))
+    await this._onHomeUpdate()
+  }
+
+  /** Publishes the revocations of my personal base in a shared base where my writer is bound. */
+  async _propagateRevocations(base, room) {
+    if (!this.secret || !this.home || base.closed) return
+    const revs = await rangeValues(this.home.view, 'rev/')
+    if (!revs.length || revs.some((e) => e.key.slice(4) === this.secret.device.publicKey)) return
+    await base.ready()
+    // Only once my writer is bound there: older peers would not bind a writer from a `revoke`.
+    if (!(await valueOf(base.view, 'w/' + toHex(base.local.key)))) return
+    for (const e of revs) {
+      const dev = e.key.slice(4)
+      if (await valueOf(base.view, 'rv/' + this.secret.identity + '/' + dev)) continue
+      await this._append(base, 'revoke', room, { device: dev }, { nonceBits: room === 'dm' ? 0 : pow.DIFFICULTY.like })
+    }
+  }
+
+  async _propagateAll() {
+    for (const [work, room] of this.rooms) await this._propagateRevocations(room.base, 'work:' + work).catch(noop)
+    for (const e of await rangeValues(this.local, 'conv/')) {
+      const base = await this._openDm(e.key.slice(5)).catch(() => null)
+      if (base) await this._propagateRevocations(base, 'dm').catch(noop)
+    }
   }
 
   _profile(key, p) {
@@ -373,6 +487,7 @@ class HuwaNode {
   async _saveSecret(s) {
     this.secret = s
     this._boxKeyPair = null
+    this._oldBoxKeyPairs = null
     await this.local.put('secret', s)
   }
 
@@ -381,6 +496,9 @@ class HuwaNode {
     const out = {
       identity: toHex(ik.identityPublicKey),
       boxSeed: toHex(ik.getEncryptionKey(b4a.from('huwa/box/v1'))),
+      // Only its public half is published: rotated box seeds are also sealed to it, so a restore
+      // from the phrase recovers them while a revoked device (no root) cannot.
+      rot: seal.boxKeyPair(ik.getEncryptionKey(b4a.from('huwa/box-rotate/v1'))),
       pointer: { publicKey: b4a.from(ik.profileDiscoveryKeyPair.publicKey), secretKey: b4a.from(ik.profileDiscoveryKeyPair.secretKey) },
       bootstrap: (device) => ik.bootstrap(device)
     }
@@ -400,6 +518,7 @@ class HuwaNode {
     const device = crypto.keyPair()
     const proof = await out.bootstrap(device.publicKey)
     ik.clear() // the root secret does not stay on the device
+    this._rootBox = out.rot // memory only, for this session (see _syncBox)
 
     const pointer = this.store.get({ keyPair: out.pointer })
     await pointer.ready()
@@ -419,7 +538,8 @@ class HuwaNode {
     if (existingHome) {
       await this._openMyself()
       await this._appendHome('bind', {})
-      await this._waitFor(async () => valueOf(this.home.view, 'profile'), 10_000)
+      const p = await this._waitFor(async () => valueOf(this.home.view, 'profile'), 10_000)
+      if (p && !p.rot) await this._appendHome('profile', { rot: toHex(out.rot.publicKey) }).catch(noop)
     } else {
       this.home = this._openHomeBase(out.identity, null, 'home')
       await this.home.ready()
@@ -427,6 +547,7 @@ class HuwaNode {
       await this.home.close()
       await this._openMyself()
       await this._appendHome('inception', { name, box: toHex(this._box().publicKey), device: this.deviceName })
+      await this._appendHome('profile', { rot: toHex(out.rot.publicKey) })
       await pointer.append(b4a.from(JSON.stringify({ home: this.secret.home })))
     }
     await pointer.close()
@@ -545,8 +666,8 @@ class HuwaNode {
     const p = await valueOf(base.view, 'profile')
     if (!p) return null
     const prev = this.peers.get(identity) || {}
-    if (prev.name !== p.name || prev.box !== p.box) {
-      const next = { ...prev, name: p.name, box: p.box || prev.box, home: prev.home || toHex(base.key) }
+    if (prev.name !== p.name || prev.box !== p.box || (p.box && prev.boxSrc !== 'profile')) {
+      const next = { ...prev, name: p.name, box: p.box || prev.box, boxSrc: p.box ? 'profile' : prev.boxSrc, home: prev.home || toHex(base.key) }
       this.peers.set(identity, next)
       await this.local.put('peer/' + identity, next)
       this._notify('conversations')
@@ -663,6 +784,10 @@ class HuwaNode {
     this._requireIdentity()
     if (!isKey(deviceKey)) throw new Error('Appareil inconnu')
     await this._appendHome('remove-device', { device: deviceKey })
+    // The revoked device keeps the DM box seed: rotate it, and refuse its writes in DMs and rooms.
+    await this._rotateBox().catch((err) => this.log('box rotation', err.message))
+    this._revCount = (await rangeValues(this.home.view, 'rev/')).length
+    await this._propagateAll().catch(noop)
     this.onevent({ ev: 'devices' })
   }
 
@@ -689,6 +814,7 @@ class HuwaNode {
       await room.ready
       room.discovery = this._join(base.discoveryKey)
       base.on('update', () => this._notify('comments:' + work))
+      this._propagateRevocations(base, 'work:' + work).catch(noop)
     }
     await room.ready
     return room
@@ -753,6 +879,7 @@ class HuwaNode {
       await room.base.update()
       const stored = await valueOf(room.base.view, 'c/' + body.id)
       if (!stored) throw new Error('Commentaire refusé')
+      this._propagateRevocations(room.base, 'work:' + work).catch(noop)
       return { ...stored, likedByMe: false }
     } finally {
       release()
@@ -877,6 +1004,7 @@ class HuwaNode {
       this._notify('messages:' + peer)
       this._notify('conversations')
     })
+    this._propagateRevocations(base, 'dm').catch(noop)
     return base
   }
 
@@ -896,7 +1024,9 @@ class HuwaNode {
 
   _decrypt(m) {
     const mine = m.from === this.secret.identity
-    const opened = seal.open(fromHex(mine ? m.s : m.r), this._box())
+    const sealed = fromHex(mine ? m.s : m.r)
+    let opened = null
+    for (const kp of this._boxes()) if ((opened = seal.open(sealed, kp))) break
     if (!opened) return null
     let p = null
     try {
@@ -951,7 +1081,8 @@ class HuwaNode {
     if (!text.trim() || text.length > schema.LIMITS.dmText) throw new Error('Message invalide')
     let info = this.peers.get(peer)
     if (!info || !info.box) info = await this._lookup(peer)
-    if (!info || !info.box) {
+    if (!info || !info.box || info.boxSrc !== 'profile') {
+      // Seal to the box of the personal base, not to the one a device presented in its hello.
       const base = await this._openPeerHome(peer)
       if (base) await this._waitFor(() => this._refreshPeerName(peer, base), 4000)
       info = this.peers.get(peer)
@@ -970,6 +1101,7 @@ class HuwaNode {
     value.nonce = await pow.solve(pow.powPayload(value, toHex(base.local.key)), pow.DIFFICULTY.dm)
     await base.append(value, { optimistic: !base.writable })
     await base.update()
+    this._propagateRevocations(base, 'dm').catch(noop)
     // Hint the peer (hello on their identity topic) so they open the conversation.
     this.dmHints.add(peer)
     this._join(idTopic(peer), { server: false, client: true })

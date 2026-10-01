@@ -50,6 +50,34 @@ async function accept(view, host, node, writer, { indexer = false } = {}) {
   }
 }
 
+// ---- device revocation in shared bases (rooms, DMs) --------------------------
+// A personal base cannot be read from `apply`, so a revocation is republished in each shared base
+// by a remaining device of the same identity (`revoke` node). From then on, every node of a writer
+// bound to that device is refused. An identity can only revoke its own devices (`rv/<id>/<dev>`);
+// the first revocation linearized wins, as in the personal base.
+
+const isRevoked = async (view, writer) => !!(await get(view, 'rv/' + writer.who.id + '/' + writer.who.dev))
+
+async function revokeStep(view, host, writer, device) {
+  if (device === writer.who.dev) return false
+  const key = 'rv/' + writer.who.id + '/' + device
+  if (await get(view, key)) return false
+  await view.put(key, 1)
+  if (host && host.removeWriter) {
+    for await (const e of view.createReadStream({ gt: 'dw/' + device + '/', lt: 'dw/' + device + '0' })) {
+      const w = e.key.split('/')[2]
+      const who = await get(view, 'w/' + w)
+      if (!who || who.id !== writer.who.id) continue
+      try {
+        await host.removeWriter(fromHex(w))
+      } catch {
+        // Not removable (e.g. last indexer): its nodes are refused anyway.
+      }
+    }
+  }
+  return true
+}
+
 // ---- comment room: one Autobase per work -----------------------------------
 
 function rateOk(stats, ts) {
@@ -141,7 +169,12 @@ function createRoomApply(work) {
     for (const node of nodes) {
       if (node.value === null || !schema.roomNode(node.value, work)) continue
       const writer = await resolveWriter(view, node)
-      if (!writer) continue
+      if (!writer || (await isRevoked(view, writer))) continue
+      if (node.value.t === 'revoke') {
+        if (!pow.check(pow.powPayload(node.value, writer.w), node.value.nonce, pow.DIFFICULTY.like)) continue
+        if (await revokeStep(view, host, writer, node.value.body.device)) await accept(view, host, node, writer)
+        continue
+      }
       if (await roomStep(view, node, writer, work)) await accept(view, host, node, writer)
     }
   }
@@ -222,6 +255,19 @@ async function homeStep(view, host, node, writer) {
       await logEvent(view, 'remove-device', b, v.ts, dev)
       return true
     }
+    case 'box': {
+      // DM key rotation (after a revocation): the new seed is sealed to each remaining device.
+      const profile = await get(view, 'profile')
+      if (!profile) return false
+      const meta = (await get(view, 'boxmeta')) || { n: 0 }
+      await view.put('box/' + pad(meta.n, 10), { box: b.box, seeds: b.seeds, ts: v.ts, dev })
+      await view.put('boxmeta', { n: meta.n + 1 })
+      if (profile.box !== b.box) {
+        await view.put('profile', { ...profile, box: b.box })
+        await logEvent(view, 'box', { box: b.box }, v.ts, dev)
+      }
+      return true
+    }
     case 'label':
       await view.put('lab/' + toHex(hash(canon({ t: b.target, v: b.val }), 16)), { target: b.target, val: b.val, neg: b.neg, ts: v.ts })
       return true
@@ -290,7 +336,11 @@ function createDmApply(pair) {
     for (const node of nodes) {
       if (node.value === null || !schema.dmNode(node.value)) continue
       const writer = await resolveWriter(view, node)
-      if (!writer || !pair.includes(writer.who.id)) continue
+      if (!writer || !pair.includes(writer.who.id) || (await isRevoked(view, writer))) continue
+      if (node.value.t === 'revoke') {
+        if (await revokeStep(view, host, writer, node.value.body.device)) await accept(view, host, node, writer)
+        continue
+      }
       if (await dmStep(view, node, writer, pair)) await accept(view, host, node, writer)
     }
   }

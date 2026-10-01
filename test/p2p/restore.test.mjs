@@ -11,6 +11,7 @@ import worklet from '../../src/p2p/worklet/node.js'
 
 const { HuwaNode } = worklet
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'huwa-restore-'))
+test.after(() => fs.rmSync(tmp, { recursive: true, force: true }))
 
 test('restore with every device offline fails cleanly, then succeeds on the same base', { timeout: 120000 }, async (t) => {
   const testnet = await createTestnet(3)
