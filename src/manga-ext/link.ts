@@ -18,6 +18,7 @@ import { shortHash } from './b64';
 import { buildChapters, pickLang, titlesMatch, type MatchTitles, type StoredChapter } from './chapters';
 import { getInstalled, onSourceRemoved } from './registry';
 import type { ExtChapter, ExtManga } from './validate';
+import { registerRehydrate } from '@/settings/rehydrate';
 
 export type SourceLink = {
   seriesId: string;
@@ -221,28 +222,40 @@ let hydration: Promise<void> | undefined;
 /** Restores links and their chapters (before the catalog is shown), and plugs the page source. */
 export function hydrateLinks() {
   hydration ??= (async () => {
-    try {
-      const raw = await AsyncStorage.getItem(LINKS_KEY);
-      links = raw ? (JSON.parse(raw) as Record<string, SourceLink>) : {};
-    } catch {
-      links = {};
-    }
-    await Promise.all(
-      Object.values(links).map(async (l) => {
-        try {
-          const raw = await AsyncStorage.getItem(chaptersKey(l.seriesId));
-          const all = raw ? (JSON.parse(raw) as ExtChapter[]) : [];
-          applyChapters(l.seriesId, buildChapters(l.seriesId, all, l.lang));
-        } catch {
-          // chapters will be fetched again on the series page
-        }
-      }),
-    );
-    emit();
+    await loadLinks();
     registerPageSource({ id: 'paperback', name: 'Extensions', fetchPages });
     onSourceRemoved((key) => {
       for (const l of Object.values(links)) if (l.key === key) unlink(l.seriesId);
     });
   })();
   return hydration;
+}
+
+// After a data import: drop the chapters of the old links, read the imported ones.
+registerRehydrate(async () => {
+  if (!hydration) return;
+  await hydration;
+  for (const seriesId of Object.keys(links)) applyChapters(seriesId, []);
+  await loadLinks();
+});
+
+async function loadLinks() {
+  try {
+    const raw = await AsyncStorage.getItem(LINKS_KEY);
+    links = raw ? (JSON.parse(raw) as Record<string, SourceLink>) : {};
+  } catch {
+    links = {};
+  }
+  await Promise.all(
+    Object.values(links).map(async (l) => {
+      try {
+        const raw = await AsyncStorage.getItem(chaptersKey(l.seriesId));
+        const all = raw ? (JSON.parse(raw) as ExtChapter[]) : [];
+        applyChapters(l.seriesId, buildChapters(l.seriesId, all, l.lang));
+      } catch {
+        // chapters will be fetched again on the series page
+      }
+    }),
+  );
+  emit();
 }

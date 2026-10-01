@@ -43,6 +43,7 @@ export const getLists = () => state;
 
 export async function hydrateLists(force = false) {
   if (hydrated && !force) return;
+  if (force) clearTimeout(saveTimer); // a pending save would write the stale lists back
   try {
     const raw = await AsyncStorage.getItem(LISTS_KEY);
     const v = raw ? (JSON.parse(raw) as Partial<ListsState>) : {};

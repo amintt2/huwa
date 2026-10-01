@@ -3,6 +3,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useSyncExternalStore } from 'react';
 
 import type { TorrentSettings } from './types';
+import { registerRehydrate } from '@/settings/rehydrate';
 
 const KEY = 'huwa/torrent/settings/v1';
 export const GB = 1024 * 1024 * 1024;
@@ -36,6 +37,13 @@ export function hydrateTorrentSettings() {
   }
   return hydrated;
 }
+
+registerRehydrate(() => {
+  if (!hydrated) return;
+  hydrated = undefined;
+  settings = defaults;
+  return hydrateTorrentSettings();
+});
 
 export function setTorrentSettings(patch: Partial<TorrentSettings>) {
   settings = { ...settings, ...patch };

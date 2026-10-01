@@ -2,6 +2,7 @@
 // The shared store keeps the coarse chapter ratio used across the app; this adds precision.
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useSyncExternalStore } from 'react';
+import { registerRehydrate } from '@/settings/rehydrate';
 
 export type ReadPosition = { page: number; /** 0‒1 inside the page */ offset: number };
 export type ReaderMode = 'vertical' | 'paged';
@@ -23,6 +24,17 @@ export const readerReady = AsyncStorage.getItem(KEY)
     hydrated = true;
     listeners.forEach((l) => l());
   });
+
+registerRehydrate(async () => {
+  clearTimeout(timer);
+  const raw = await AsyncStorage.getItem(KEY).catch(() => null);
+  try {
+    saved = { positions: {}, mode: 'vertical', ...(raw ? JSON.parse(raw) : {}) };
+  } catch {
+    saved = { positions: {}, mode: 'vertical' };
+  }
+  listeners.forEach((l) => l());
+});
 
 function persist() {
   listeners.forEach((l) => l());

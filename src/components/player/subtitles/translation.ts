@@ -10,6 +10,7 @@ import { bcp47, nextSegments, translateDoc, translationCacheKey } from '@/subtit
 import type { SubtitleDoc } from '@/subtitles/types';
 
 import { HuwaTranslate, type TranslateStatus } from '../../../../modules/huwa-translate';
+import { registerRehydrate } from '@/settings/rehydrate';
 
 export type { TranslateStatus };
 
@@ -83,6 +84,13 @@ function loadPrompted() {
     .finally(emit);
   return promptedLoad;
 }
+
+registerRehydrate(() => {
+  if (!promptedLoad) return;
+  promptedLoad = null;
+  prompted = null;
+  return loadPrompted();
+});
 
 /** Already offered the model download for this pair (undefined while loading). */
 export function usePrompted(from?: string, to?: string): boolean | undefined {

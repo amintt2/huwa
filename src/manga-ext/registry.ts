@@ -23,6 +23,7 @@ import {
 } from './repo';
 import type { PaperbackFormat } from './runtime/protocol';
 import { clearSourceState } from './state';
+import { registerRehydrate } from '@/settings/rehydrate';
 
 export type RepoEntry = RepoIndex & { fetchedAt: number };
 
@@ -87,6 +88,13 @@ export function hydrateMangaExt() {
 }
 export const isMangaExtHydrated = () => hydrated;
 
+registerRehydrate(() => {
+  if (!hydration) return;
+  hydration = undefined;
+  state = { repos: [], installed: [], legalAccepted: false, showAdult: false };
+  return hydrateMangaExt();
+});
+
 export const setLegalAccepted = () => commit({ legalAccepted: true });
 export const setShowAdult = (showAdult: boolean) => commit({ showAdult });
 
@@ -94,6 +102,8 @@ export const setShowAdult = (showAdult: boolean) => commit({ showAdult });
 
 const dir = () => new Directory(Paths.document, 'paperback');
 const bundleFile = (key: string) => new File(dir(), `${key}.js`);
+/** The source's code is on this device (bundles are not part of a data export). */
+export const hasSourceBundle = (key: string) => extensionsSupported && bundleFile(key).exists;
 
 setCodeLoader(async (key) => {
   const s = getInstalled(key);

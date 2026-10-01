@@ -30,6 +30,7 @@ import {
 import type { Quality } from './quality';
 import { dropAnswer, freshness, readAnswer, writeAnswer } from './stream-cache';
 import { timedAddon } from '@/stats/addon-timing';
+import { registerRehydrate } from '@/settings/rehydrate';
 
 export type InstalledAddon = { baseUrl: string; manifest: Manifest; enabled: boolean };
 
@@ -88,6 +89,13 @@ export function useAddons() {
 export function useAddonPrefs() {
   return useSyncExternalStore(subscribe, () => state.prefs, () => state.prefs);
 }
+
+registerRehydrate(() => {
+  if (!hydrated) return;
+  hydrated = false;
+  state = { addons: [builtin], prefs: { preferredQuality: 1080, legalAccepted: false } };
+  return hydrateAddons();
+});
 
 export async function hydrateAddons() {
   if (hydrated) return;

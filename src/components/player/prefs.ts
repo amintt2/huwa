@@ -1,6 +1,7 @@
 // Player preferences remembered across episodes (speed, subtitle language & size, auto-next).
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useSyncExternalStore } from 'react';
+import { registerRehydrate } from '@/settings/rehydrate';
 
 export type SubtitleSize = 'S' | 'M' | 'L' | 'XL';
 export const SUBTITLE_SIZES: Record<SubtitleSize, number> = { S: 14, M: 17, L: 21, XL: 26 };
@@ -19,16 +20,19 @@ export type PlayerPrefs = {
 };
 
 const KEY = 'huwa/player-prefs/v1';
-let prefs: PlayerPrefs = { rate: 1, subLang: 'fr', subSize: 'M', autoNext: true, commentsSide: 'right', liveComments: true };
+const DEFAULTS: PlayerPrefs = { rate: 1, subLang: 'fr', subSize: 'M', autoNext: true, commentsSide: 'right', liveComments: true };
+let prefs: PlayerPrefs = DEFAULTS;
 const listeners = new Set<() => void>();
 
-AsyncStorage.getItem(KEY)
-  .then((raw) => {
-    if (!raw) return;
-    prefs = { ...prefs, ...JSON.parse(raw) };
-    listeners.forEach((l) => l());
-  })
-  .catch(() => {});
+const load = () =>
+  AsyncStorage.getItem(KEY)
+    .then((raw) => {
+      prefs = raw ? { ...DEFAULTS, ...JSON.parse(raw) } : DEFAULTS;
+      listeners.forEach((l) => l());
+    })
+    .catch(() => {});
+load();
+registerRehydrate(load);
 
 export const getPrefs = () => prefs;
 

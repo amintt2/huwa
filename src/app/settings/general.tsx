@@ -11,7 +11,7 @@ import { Button, Txt } from '@/components/ui';
 import { useT } from '@/i18n';
 import { enableNotifications, notificationsSupported } from '@/notifications/episodes';
 import { importAniList, loginWithAniList, oauthAvailable } from '@/settings/anilist-sync';
-import { clearCache, exportData, pickBackup, restoreBackup } from '@/settings/backup';
+import { clearCache, exportData, personalAddonsInExport, pickBackup, restoreBackup } from '@/settings/backup';
 import { setSetting, useSettings, type Quality } from '@/settings/settings';
 import { C, F, R, S } from '@/theme/tokens';
 
@@ -36,14 +36,26 @@ export default function Settings() {
 
   const spinner = (key: string) => (busy === key ? <ActivityIndicator color={C.text2} /> : undefined);
 
-  const onExport = () =>
+  const doExport = (includePersonalAddons: boolean) =>
     run('export', async () => {
       try {
-        await exportData();
+        await exportData({ includePersonalAddons });
       } catch (e) {
         Alert.alert(t('settings.export'), t('settings.exportError', { e: e instanceof Error ? e.message : String(e) }));
       }
     });
+
+  // Add-on URLs can carry debrid keys / tokens: never exported silently.
+  const onExport = async () => {
+    if (busy) return;
+    const n = await personalAddonsInExport().catch(() => 0);
+    if (!n) return doExport(false);
+    Alert.alert(t('settings.exportSecretsTitle'), t('settings.exportSecrets', { n }), [
+      { text: t('common.cancel'), style: 'cancel' },
+      { text: t('settings.exportWith'), style: 'destructive', onPress: () => doExport(true) },
+      { text: t('settings.exportWithout'), style: 'default', onPress: () => doExport(false) },
+    ]);
+  };
 
   const onImport = () =>
     run('import', async () => {
@@ -63,7 +75,9 @@ export default function Settings() {
           style: 'destructive',
           onPress: () =>
             restoreBackup(b)
-              .then(() => Alert.alert(t('settings.import'), t('settings.importDone')))
+              .then(({ sourcesToReinstall: s }) =>
+                Alert.alert(t('settings.import'), s.length ? t('settings.importSources', { names: s.join(', ') }) : t('settings.importDone')),
+              )
               .catch(() => Alert.alert(t('settings.import'), t('settings.importInvalid'))),
         },
       ]);
