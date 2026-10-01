@@ -41,6 +41,24 @@ async function openResult(source: InstalledSource, item: ExtSearchItem, seriesId
   router.push(`/manhwa/${id}` as Href);
 }
 
+/** Opening a source title takes a few seconds (details, AniList match, chapters): one at a time, with a busy tile. */
+export function useOpenSourceItem() {
+  const [opening, setOpening] = useState<string | null>(null);
+  const open = async (sourceKey: string, item: Pick<ExtSearchItem, 'mangaId' | 'title'>) => {
+    if (opening) return;
+    setOpening(`${sourceKey}|${item.mangaId}`);
+    try {
+      const id = await openSourceManga(sourceKey, item.mangaId);
+      router.push(`/manhwa/${id}` as Href);
+    } catch (e) {
+      Alert.alert(item.title, e instanceof Error ? e.message : 'Impossible d’ouvrir ce titre');
+    } finally {
+      setOpening(null);
+    }
+  };
+  return { open, isOpening: (sourceKey: string, mangaId: string) => opening === `${sourceKey}|${mangaId}` };
+}
+
 function ResultCard({ source, item, width, busy, onPress, headers }: { source: InstalledSource; item: ExtSearchItem; width: number; busy: boolean; onPress: () => void; headers?: Record<string, string> }) {
   return (
     <Press onPress={onPress} style={{ width, gap: 6 }} accessibilityRole="button" accessibilityLabel={`${item.title}, ${source.name}`}>

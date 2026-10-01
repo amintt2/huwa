@@ -1,4 +1,6 @@
 // Pinch-to-zoom (1×–4×), double-tap to zoom, single tap passthrough, pan while zoomed.
+// Every gesture callback is an explicit worklet: pinch / pan run on the UI thread, and only the
+// zoomed / not-zoomed switch crosses to React (once per change, see `setZoomed`).
 // Wraps the reader list: in vertical mode the list keeps its native vertical scroll and the pan
 // only moves horizontally; in paged mode the list is frozen while zoomed and the pan is free.
 import { useState, type ReactNode } from 'react';
@@ -63,14 +65,17 @@ export function ZoomLayer({
 
   const pinch = Gesture.Pinch()
     .onStart(() => {
+      'worklet';
       base.set(scale.get());
     })
     .onUpdate((e) => {
+      'worklet';
       scale.set(Math.min(MAX, Math.max(0.8, base.get() * e.scale)));
       clampT(Math.max(1, scale.get()));
       setZoomed(scale.get() > 1.02);
     })
     .onEnd(() => {
+      'worklet';
       if (scale.get() <= 1.02) reset();
       else base.set(scale.get());
     });
@@ -81,10 +86,12 @@ export function ZoomLayer({
     .enabled(isZoomed);
   const pan = (axis === 'x' ? panBase.activeOffsetX([-8, 8]).failOffsetY([-12, 12]) : panBase.minDistance(4))
     .onBegin(() => {
+      'worklet';
       startX.set(tx.get());
       startY.set(ty.get());
     })
     .onUpdate((e) => {
+      'worklet';
       if (!zoomed.get()) return;
       tx.set(startX.get() + e.translationX);
       if (axis === 'xy') ty.set(startY.get() + e.translationY);
@@ -95,6 +102,7 @@ export function ZoomLayer({
     .numberOfTaps(2)
     .maxDelay(250)
     .onEnd(() => {
+      'worklet';
       if (scale.get() > 1.02) reset();
       else {
         scale.set(withTiming(2.2, { duration: 220 }));
@@ -106,6 +114,7 @@ export function ZoomLayer({
   const tap = Gesture.Tap()
     .maxDuration(250)
     .onEnd((_e, ok) => {
+      'worklet';
       if (ok) scheduleOnRN(onTap);
     });
 

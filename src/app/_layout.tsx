@@ -135,6 +135,7 @@ export default function RootLayout() {
           <Stack.Screen name="meta/[id]" />
           <Stack.Screen name="downloads" />
           <Stack.Screen name="offline" />
+          <Stack.Screen name="source-section" />
           <Stack.Screen name="search" />
           <Stack.Screen name="calendar" />
           <Stack.Screen name="lists" />

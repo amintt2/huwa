@@ -12,6 +12,7 @@ import { useSyncExternalStore } from 'react';
 import { Platform } from 'react-native';
 
 import { getChapter } from '@/data/catalog';
+import { isDemo } from '@/demo/flags';
 
 import { bySeries, isActive, nextChapters, nextToStart, reduce, type DownloadEntry, type Downloads, type QueueEvent } from './download-queue';
 import { remotePages } from './pageSource';
@@ -159,8 +160,10 @@ async function run(chapterId: string) {
   controllers.set(chapterId, ctrl);
   try {
     const { pages, headers, origin, error } = await remotePages(chapterId);
+    // Placeholder pages (no source answered) are never stored as an offline chapter — except in
+    // demo mode, where the fictional catalog has nothing else.
+    if (origin === 'placeholder' && !isDemo) throw new Error(error ?? 'Aucune source ne fournit ce chapitre');
     if (!pages.length) throw new Error(error ?? 'Aucune page');
-    if (origin === 'offline') throw new Error('Déjà hors-ligne');
     if (ctrl.signal.aborted) return;
     const files = pages.map((u, i) => `${String(i).padStart(4, '0')}.${extOf(u)}`);
     const dir = chapterDir(chapterId);
