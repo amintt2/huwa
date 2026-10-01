@@ -14,9 +14,10 @@ export function Pill({ icon, label, onPress, primary }: { icon: IconName; label:
       onPress={onPress}
       accessibilityRole="button"
       accessibilityLabel={label}
-      style={({ pressed }) => [overlay.pill, primary && { backgroundColor: C.accent }, pressed && { opacity: 0.8 }]}>
-      <Ionicons name={icon} size={14} color={primary ? C.white : C.bg} />
-      <Text style={[overlay.pillText, primary && { color: C.white }]}>{label}</Text>
+      hitSlop={6}
+      style={({ pressed }) => [overlay.pill, primary && overlay.pillPrimary, pressed && { opacity: 0.85, transform: [{ scale: 0.97 }] }]}>
+      <Text style={overlay.pillText}>{label}</Text>
+      <Ionicons name={icon} size={15} color={C.white} />
     </Pressable>
   );
 }
@@ -31,18 +32,18 @@ export function NextCard({ label, countdown, onCancel, onPlay, style }: {
 }) {
   return (
     <View style={[overlay.nextCard, style]}>
-      <Txt v="caption" color={C.accentText}>ÉPISODE SUIVANT DANS {countdown} S</Txt>
+      <Txt v="caption" color={C.accentText} tabular>Épisode suivant dans {countdown} s</Txt>
       <Txt v="label" numberOfLines={1}>{label}</Txt>
       <View style={overlay.countTrack}>
         <View style={[overlay.countFill, { width: `${(1 - countdown / AUTO_NEXT_SECONDS) * 100}%` }]} />
       </View>
       <View style={{ flexDirection: 'row', gap: S.sm }}>
-        <Pressable style={[overlay.cardBtn, { backgroundColor: C.elevated }]} onPress={onCancel} accessibilityRole="button">
-          <Text style={[overlay.pillText, { color: C.text }]}>Annuler</Text>
+        <Pressable style={({ pressed }) => [overlay.cardBtn, { backgroundColor: 'rgba(255,255,255,0.12)' }, pressed && { opacity: 0.7 }]} onPress={onCancel} accessibilityRole="button">
+          <Text style={overlay.pillText}>Annuler</Text>
         </Pressable>
-        <Pressable style={[overlay.cardBtn, { backgroundColor: C.accent }]} onPress={onPlay} accessibilityRole="button">
+        <Pressable style={({ pressed }) => [overlay.cardBtn, { backgroundColor: C.accent, flex: 1 }, pressed && { opacity: 0.85 }]} onPress={onPlay} accessibilityRole="button">
           <Ionicons name="play" size={14} color={C.white} />
-          <Text style={[overlay.pillText, { color: C.white }]}>Lire maintenant</Text>
+          <Text style={overlay.pillText}>Lire maintenant</Text>
         </Pressable>
       </View>
     </View>
@@ -50,19 +51,23 @@ export function NextCard({ label, countdown, onCancel, onPlay, style }: {
 }
 
 export const overlay = StyleSheet.create({
+  /** Glass pill over the video ("Passer l'opening", "Épisode suivant"). */
   pill: {
-    flexDirection: 'row', alignItems: 'center', gap: 6, paddingVertical: 9, paddingHorizontal: 14,
-    borderRadius: R.control, borderCurve: 'continuous', backgroundColor: C.white,
+    flexDirection: 'row', alignItems: 'center', gap: 8, minHeight: 44, paddingHorizontal: 18,
+    borderRadius: R.control, borderCurve: 'continuous', backgroundColor: 'rgba(16,21,34,0.78)',
+    borderWidth: 1, borderColor: 'rgba(255,255,255,0.22)', boxShadow: '0px 6px 20px -6px rgba(0,0,0,0.6)',
   },
-  pillText: { color: C.bg, fontSize: 13, ...F.bold },
+  pillPrimary: { backgroundColor: C.accent, borderColor: 'rgba(255,255,255,0.18)' },
+  pillText: { color: C.white, fontSize: 14, ...F.bold, letterSpacing: -0.1 },
   nextCard: {
-    position: 'absolute', maxWidth: 320, gap: 6, padding: S.md,
-    borderRadius: R.card, borderCurve: 'continuous', backgroundColor: 'rgba(12,17,28,0.94)', borderWidth: 1, borderColor: C.border,
+    position: 'absolute', width: 300, gap: 8, padding: S.md,
+    borderRadius: R.card, borderCurve: 'continuous', backgroundColor: 'rgba(12,17,28,0.94)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.12)',
+    boxShadow: '0px 12px 32px -8px rgba(0,0,0,0.7)',
   },
-  countTrack: { height: 3, borderRadius: 2, backgroundColor: C.elevated, overflow: 'hidden' },
-  countFill: { height: 3, backgroundColor: C.accent },
+  countTrack: { height: 3, borderRadius: 2, backgroundColor: 'rgba(255,255,255,0.14)', overflow: 'hidden' },
+  countFill: { height: 3, backgroundColor: C.accentText },
   cardBtn: {
-    flexDirection: 'row', alignItems: 'center', gap: 6, paddingVertical: 8, paddingHorizontal: 12,
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, minHeight: 40, paddingHorizontal: 14,
     borderRadius: R.control, borderCurve: 'continuous', marginTop: 4,
   },
 });

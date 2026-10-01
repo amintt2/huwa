@@ -7,6 +7,7 @@
 //   = brightness (left) / volume (right), screen lock, comments panel over the video, live comments
 // - PiP, AirPlay, resume position (`startAt`), progress saved every 5 s (`onProgress`)
 import Ionicons from '@expo/vector-icons/Ionicons';
+import { LinearGradient } from 'expo-linear-gradient';
 import { useEvent, useEventListener } from 'expo';
 import * as ScreenOrientation from 'expo-screen-orientation';
 import { StatusBar } from 'expo-status-bar';
@@ -120,20 +121,32 @@ const LIVE_COMMENT_SECONDS = 7;
 const hitSlop = 10;
 
 function Ctl({ icon, label, onPress, size = 22, big, active }: { icon: IconName; label: string; onPress: () => void; size?: number; big?: boolean; active?: boolean }) {
-  const d = big ? 64 : 40;
+  const d = big ? 76 : 44;
   return (
     <Pressable
       onPress={onPress}
       hitSlop={hitSlop}
       accessibilityRole="button"
       accessibilityLabel={label}
+      accessibilityState={active !== undefined ? { selected: active } : undefined}
       style={({ pressed }) => [
         { width: d, height: d, borderRadius: d / 2, alignItems: 'center', justifyContent: 'center' },
-        big && { backgroundColor: 'rgba(5,7,13,0.45)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.14)' },
+        big && styles.bigCtl,
         active && { backgroundColor: C.accentSoft },
-        pressed && { opacity: 0.6, transform: [{ scale: 0.94 }] },
+        pressed && { opacity: 0.7, transform: [{ scale: 0.92 }] },
       ]}>
-      <Ionicons name={icon} size={big ? 30 : size} color={active ? C.accentText : C.white} />
+      <Ionicons name={icon} size={big ? 36 : size} color={active ? C.accentText : C.white} style={[styles.glyphShadow, big && icon === 'play' ? { marginLeft: 4 } : null]} />
+    </Pressable>
+  );
+}
+
+/** ±10 s: a circular arrow with the seconds inside (Netflix / Apple TV glyph). */
+function SkipCtl({ dir, label, onPress }: { dir: -1 | 1; label: string; onPress: () => void }) {
+  return (
+    <Pressable onPress={onPress} hitSlop={hitSlop} accessibilityRole="button" accessibilityLabel={label}
+      style={({ pressed }) => [styles.skip, pressed && { opacity: 0.7, transform: [{ scale: 0.9 }] }]}>
+      <Ionicons name="refresh" size={42} color={C.white} style={[styles.glyphShadow, dir < 0 && { transform: [{ scaleX: -1 }] }]} />
+      <Text style={styles.skipText} allowFontScaling={false}>10</Text>
     </Pressable>
   );
 }
@@ -686,15 +699,18 @@ export function Player({
         )
       ) : controls ? (
         <View style={StyleSheet.absoluteFill} pointerEvents="box-none">
-          <View pointerEvents="none" style={[StyleSheet.absoluteFill, { backgroundColor: 'rgba(0,0,0,0.42)' }]} />
+          {/* Scrims instead of a flat dim: the picture stays bright in the middle. */}
+          <View pointerEvents="none" style={[StyleSheet.absoluteFill, { backgroundColor: 'rgba(0,0,0,0.22)' }]} />
+          <LinearGradient pointerEvents="none" colors={['rgba(0,0,0,0.72)', 'rgba(0,0,0,0)']} style={[styles.scrimTop, { height: full ? 150 : 90 }]} />
+          <LinearGradient pointerEvents="none" colors={['rgba(0,0,0,0)', 'rgba(0,0,0,0.78)']} style={[styles.scrimBottom, { height: full ? 170 : 96 }]} />
 
           <View pointerEvents="box-none" style={[styles.topRow, full && { paddingTop: Math.max(insets.top, S.md), paddingHorizontal: sideInset }]}>
             {full ? (
               <>
                 <Ctl icon="chevron-down" label="Quitter le plein écran" onPress={exitFull} />
-                <View style={{ flex: 1, gap: 1 }}>
-                  <Txt v="label" numberOfLines={1}>{title}</Txt>
-                  {!!subtitle && <Txt v="small" numberOfLines={1}>{subtitle}</Txt>}
+                <View style={{ flex: 1, gap: 1, paddingLeft: 4 }}>
+                  <Txt v="headline" numberOfLines={1} style={styles.titleShadow}>{title}</Txt>
+                  {!!subtitle && <Txt v="footnote" color="rgba(255,255,255,0.75)" numberOfLines={1} style={styles.titleShadow}>{subtitle}</Txt>}
                 </View>
                 {onOpenSources && (
                   <Pressable onPress={onOpenSources} style={styles.chipBtn} accessibilityRole="button" accessibilityLabel="Sources">
@@ -726,16 +742,16 @@ export function Player({
 
           <View pointerEvents={barShown && !everReady ? 'none' : 'box-none'}
             style={[styles.middle, full && { gap: 72 }, barShown && !everReady && { opacity: 0 }]}>
-            <Ctl icon="play-back" label="Reculer de 10 secondes" onPress={() => { seekTo(t - 10); wake(); }} size={26} />
+            <SkipCtl dir={-1} label="Reculer de 10 secondes" onPress={() => { seekTo(t - 10); wake(); }} />
             {loading ? (
-              <View style={{ width: 64, height: 64, alignItems: 'center', justifyContent: 'center' }}><ActivityIndicator color={C.white} size="large" /></View>
+              <View style={{ width: 76, height: 76, alignItems: 'center', justifyContent: 'center' }}><ActivityIndicator color={C.white} size="large" /></View>
             ) : ended ? (
               <Ctl big icon="refresh" label="Revoir" onPress={() => { seekTo(0); player.play(); wake(); }} />
             ) : (
               <Ctl big icon={isPlaying ? 'pause' : 'play'} label={isPlaying ? 'Pause' : 'Lecture'}
                 onPress={() => { if (isPlaying) player.pause(); else player.play(); wake(); }} />
             )}
-            <Ctl icon="play-forward" label="Avancer de 10 secondes" onPress={() => { seekTo(t + 10); wake(); }} size={26} />
+            <SkipCtl dir={1} label="Avancer de 10 secondes" onPress={() => { seekTo(t + 10); wake(); }} />
           </View>
 
           <View pointerEvents="box-none" style={[styles.bottomRow, full && { paddingBottom: Math.max(insets.bottom, S.md), paddingHorizontal: sideInset }]}>
@@ -817,17 +833,27 @@ const styles = StyleSheet.create({
   emptyActionText: { color: C.onAccent, fontSize: 14, ...F.heavy },
   topRow: { position: 'absolute', top: 0, left: 0, right: 0, flexDirection: 'row', alignItems: 'center', gap: S.xs, padding: S.xs },
   airplay: { width: 40, height: 40, alignItems: 'center', justifyContent: 'center' },
-  middle: { ...StyleSheet.absoluteFill, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 36 },
+  middle: { ...StyleSheet.absoluteFill, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 40 },
+  bigCtl: {
+    backgroundColor: 'rgba(16,21,34,0.42)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.18)',
+    boxShadow: '0px 8px 24px -8px rgba(0,0,0,0.6)',
+  },
+  glyphShadow: { textShadowColor: 'rgba(0,0,0,0.45)', textShadowRadius: 6, textShadowOffset: { width: 0, height: 1 } },
+  skip: { width: 56, height: 56, alignItems: 'center', justifyContent: 'center' },
+  skipText: { position: 'absolute', color: C.white, fontSize: 11, ...F.heavy, marginTop: 5, fontVariant: ['tabular-nums'] },
+  scrimTop: { position: 'absolute', left: 0, right: 0, top: 0 },
+  scrimBottom: { position: 'absolute', left: 0, right: 0, bottom: 0 },
+  titleShadow: { textShadowColor: 'rgba(0,0,0,0.5)', textShadowRadius: 6 },
   bottomRow: {
     position: 'absolute', left: 0, right: 0, bottom: 0, flexDirection: 'row', alignItems: 'center', gap: 10,
     paddingLeft: S.md, paddingRight: S.xs, paddingBottom: 2,
   },
-  time: { color: C.white, fontSize: 12, fontVariant: ['tabular-nums'], ...F.semibold, ...shadow },
+  time: { color: C.white, fontSize: 13, fontVariant: ['tabular-nums'], ...F.semibold, minWidth: 38, textAlign: 'center', ...shadow },
   chipBtn: {
-    flexDirection: 'row', alignItems: 'center', gap: 6, height: 34, maxWidth: 180, paddingHorizontal: 12,
-    borderRadius: R.pill, backgroundColor: 'rgba(255,255,255,0.12)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.16)',
+    flexDirection: 'row', alignItems: 'center', gap: 6, height: 36, maxWidth: 200, paddingHorizontal: 13,
+    borderRadius: R.pill, backgroundColor: 'rgba(16,21,34,0.55)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.18)',
   },
-  chipText: { color: C.white, fontSize: 12, ...F.semibold },
+  chipText: { color: C.white, fontSize: 13, ...F.semibold },
   pillWrap: { position: 'absolute', flexDirection: 'row', gap: S.sm },
   pillText: { color: C.bg, fontSize: 13, ...F.bold },
   unlock: {
@@ -841,12 +867,16 @@ const styles = StyleSheet.create({
   flashText: { color: C.white, fontSize: 13, ...F.bold, ...shadow },
   hud: {
     position: 'absolute', top: S.xl, alignSelf: 'center', flexDirection: 'row', alignItems: 'center', gap: 10,
-    paddingVertical: 8, paddingHorizontal: 14, borderRadius: R.pill, backgroundColor: 'rgba(5,7,13,0.75)',
+    paddingVertical: 9, paddingHorizontal: 16, borderRadius: R.pill, backgroundColor: 'rgba(12,17,28,0.82)',
+    borderWidth: 1, borderColor: 'rgba(255,255,255,0.12)',
   },
   hudTrack: { width: 120, height: 4, borderRadius: 2, backgroundColor: 'rgba(255,255,255,0.25)', overflow: 'hidden' },
   hudFill: { height: 4, backgroundColor: C.white },
   hudText: { color: C.white, fontSize: 12, width: 26, textAlign: 'right', fontVariant: ['tabular-nums'], ...F.semibold },
-  notice: { position: 'absolute', alignSelf: 'center', paddingHorizontal: S.md, paddingVertical: 6, borderRadius: R.pill, backgroundColor: 'rgba(0,0,0,0.7)' },
+  notice: {
+    position: 'absolute', alignSelf: 'center', paddingHorizontal: 14, paddingVertical: 7, borderRadius: R.pill,
+    backgroundColor: 'rgba(12,17,28,0.82)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.12)',
+  },
   live: { position: 'absolute', maxWidth: 360, gap: 6 },
   liveRow: { paddingVertical: 6, paddingHorizontal: 10, borderRadius: 12, backgroundColor: 'rgba(5,7,13,0.62)', gap: 1 },
   liveAuthor: { color: C.accentText, fontSize: 11, ...F.bold },

@@ -1,7 +1,7 @@
 import { useRef, useState } from 'react';
-import { View, type GestureResponderEvent } from 'react-native';
+import { Text, View, type GestureResponderEvent } from 'react-native';
 
-import { C } from '@/theme/tokens';
+import { C, F, R, TABULAR } from '@/theme/tokens';
 
 /** Scrubbable progress bar: drag to preview, release to seek. */
 export function SeekBar({
@@ -57,10 +57,10 @@ export function SeekBar({
       accessibilityActions={[{ name: 'increment' }, { name: 'decrement' }]}
       onAccessibilityAction={(e) => onSeek(position + (e.nativeEvent.actionName === 'increment' ? 10 : -10))}
       hitSlop={{ top: 14, bottom: 14 }}
-      style={{ flex: 1, height: 24, justifyContent: 'center' }}>
+      style={{ flex: 1, height: 28, justifyContent: 'center' }}>
       <View style={{ height: scrub !== null ? 6 : 4, borderRadius: 3, backgroundColor: 'rgba(255,255,255,0.22)', overflow: 'hidden' }}>
-        <View style={{ position: 'absolute', left: 0, top: 0, bottom: 0, width: `${buf * 100}%`, backgroundColor: 'rgba(255,255,255,0.35)' }} />
-        <View style={{ position: 'absolute', left: 0, top: 0, bottom: 0, width: `${shown * 100}%`, backgroundColor: C.accent }} />
+        <View style={{ position: 'absolute', left: 0, top: 0, bottom: 0, width: `${buf * 100}%`, backgroundColor: 'rgba(255,255,255,0.32)' }} />
+        <View style={{ position: 'absolute', left: 0, top: 0, bottom: 0, width: `${shown * 100}%`, backgroundColor: C.accentText }} />
         {ok && markers.map((m) => (
           <View
             key={`${m.start}-${m.end}`}
@@ -75,10 +75,18 @@ export function SeekBar({
       <View
         pointerEvents="none"
         style={{
-          position: 'absolute', left: `${shown * 100}%`, marginLeft: -7, width: 14, height: 14, borderRadius: 7,
-          backgroundColor: C.white, transform: [{ scale: scrub !== null ? 1.25 : 1 }],
+          position: 'absolute', left: `${shown * 100}%`, marginLeft: -8, width: 16, height: 16, borderRadius: 8,
+          backgroundColor: C.white, boxShadow: '0px 1px 4px rgba(0,0,0,0.5)', transform: [{ scale: scrub !== null ? 1.3 : 1 }],
         }}
       />
+      {/* Scrub preview: the target time floats above the thumb. */}
+      {scrub !== null && ok && (
+        <View pointerEvents="none" style={{ position: 'absolute', bottom: 30, left: `${shown * 100}%`, width: 80, marginLeft: -40, alignItems: 'center' }}>
+          <View style={{ paddingHorizontal: 10, paddingVertical: 5, borderRadius: R.chip, borderCurve: 'continuous', backgroundColor: 'rgba(12,17,28,0.92)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.14)' }}>
+            <Text style={{ color: C.white, fontSize: 14, ...F.bold, ...TABULAR }}>{formatTime(scrub * duration)}</Text>
+          </View>
+        </View>
+      )}
     </View>
   );
 }
