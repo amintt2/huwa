@@ -200,13 +200,17 @@ export function unlink(seriesId: string) {
   AsyncStorage.removeItem(chaptersKey(seriesId)).catch(() => {});
 }
 
+/** What a Huwa chapter id currently points to: source, manga, source chapter and its language. */
+const provenanceOf = (link: SourceLink, chapter: StoredChapter) => JSON.stringify([link.key, link.mangaId, chapter.chapterId, chapter.lang]);
+
 /** Pages of a chapter coming from a source ([] when the chapter isn't from a source). */
 async function fetchPages(chapterId: string): Promise<{ pages: string[]; headers?: Record<string, string> }> {
   const ref = chapterIndex.get(chapterId);
   const link = ref && links[ref.seriesId];
   if (!ref || !link) return { pages: [] };
-  // Keyed by the source chapter too: switching language maps the same Huwa id to another chapter.
-  const cacheKey = `${link.key}|${ref.chapter.chapterId}`;
+  // Keyed by manga and source chapter: chapter ids are only unique within a manga for many
+  // sources, and switching language maps the same Huwa id to another chapter.
+  const cacheKey = provenanceOf(link, ref.chapter);
   const hit = pageCache.get(cacheKey);
   if (hit && Date.now() - hit.at < PAGE_TTL) return hit.value;
   const value = chapterPages(link.key, { mangaId: link.mangaId, sourceManga: link.sourceManga }, ref.chapter);
