@@ -3,7 +3,7 @@
 // expo-video (AVPlayer / ExoPlayer) or libmpv (modules/huwa-mpv). The engine is chosen per source
 // (policy.ts) and switches to mpv when the native engine fails on a source.
 import type { EventEmitter } from 'expo-modules-core/types';
-import type { AudioTrack, SubtitleTrack, VideoPlayer, VideoPlayerEvents, VideoPlayerStatus, VideoSource, VideoTrack } from 'expo-video';
+import { createVideoPlayer, type AudioTrack, type SubtitleTrack, type VideoPlayer, type VideoPlayerEvents, type VideoPlayerStatus, type VideoSource, type VideoTrack } from 'expo-video';
 import { Platform } from 'react-native';
 
 import { getSettings } from '@/settings/settings';
@@ -61,6 +61,18 @@ function parseTracks(json: string): MpvTrack[] {
 const mpvId = (t: { id?: string } | null | undefined) => (t?.id?.startsWith('mpv:') ? Number(t.id.slice(4)) : -1);
 
 const NATIVE_LOAD_TIMEOUT = 15_000;
+/** A player is released only after its VideoView had time to unmount. */
+const RELEASE_DELAY_MS = 1500;
+
+function releaseLater(p: VideoPlayer) {
+  setTimeout(() => {
+    try {
+      p.release();
+    } catch {
+      // already released
+    }
+  }, RELEASE_DELAY_MS);
+}
 
 const FORWARDED = [
   'statusChange', 'playingChange', 'playbackRateChange', 'volumeChange', 'mutedChange', 'playToEnd', 'timeUpdate',
@@ -89,7 +101,8 @@ const freshMpv = (): MpvState => ({
 export class HybridPlayer implements EventEmitter<VideoPlayerEvents> {
   /** Type-only marker read by `useEvent` / `useEventListener` to infer the events map. */
   _TEventsMap_DONT_USE_IT?: VideoPlayerEvents;
-  readonly native: VideoPlayer;
+  /** Native player on screen. Replaced by `commitStage` (seamless source upgrade). */
+  native: VideoPlayer;
   engine: Engine = 'native';
   /** Why mpv is used ("conteneur MKV", "échec du lecteur natif"…), empty for the default engine. */
   reason = '';
@@ -107,14 +120,24 @@ export class HybridPlayer implements EventEmitter<VideoPlayerEvents> {
   private rate = 1;
   private vol = 1;
   private detail = '';
+  /** The first native player belongs to `useVideoPlayer` (released by the hook); later ones to us. */
+  private ownsNative = false;
+  /** Hidden native player warming a better source (seamless upgrade). */
+  private staged: { player: VideoPlayer; src: Src } | null = null;
+  /** Native players to render, bottom to top (the staged one sits under the visible one). */
+  private views: VideoPlayer[];
 
   constructor(native: VideoPlayer) {
     this.native = native;
-    for (const name of FORWARDED) {
-      this.nativeSubs.push(
-        native.addListener(name, ((...args: unknown[]) => this.onNativeEvent(name, args)) as never),
-      );
-    }
+    this.views = [native];
+    this.forward(native);
+  }
+
+  private forward(native: VideoPlayer) {
+    this.nativeSubs.forEach((s) => s.remove());
+    this.nativeSubs = FORWARDED.map((name) =>
+      native.addListener(name, ((...args: unknown[]) => this.onNativeEvent(name, args)) as never),
+    );
   }
 
   // ---------- EventEmitter ----------
@@ -145,6 +168,12 @@ export class HybridPlayer implements EventEmitter<VideoPlayerEvents> {
     };
   };
   getEngine = () => this.engine;
+  /** Native players to render (EngineView), stable between changes. */
+  getViews = () => this.views;
+
+  private notifyViews() {
+    this.engineListeners.forEach((l) => l());
+  }
 
   private setEngine(engine: Engine, reason: string) {
     const changed = engine !== this.engine;
@@ -276,6 +305,7 @@ export class HybridPlayer implements EventEmitter<VideoPlayerEvents> {
 
   async replaceAsync(source: VideoSource): Promise<void> {
     const token = ++this.token;
+    this.abortStage();
     this.settlePending();
     const src = typeof source === 'string' ? { uri: source } : source && typeof source === 'object' && source.uri ? (source as Src) : null;
     this.src = src;
@@ -309,10 +339,118 @@ export class HybridPlayer implements EventEmitter<VideoPlayerEvents> {
     this.token++;
     this.clearWatchdog();
     this.settlePending();
+    this.abortStage();
     this.nativeSubs.forEach((s) => s.remove());
     this.nativeSubs = [];
+    if (this.ownsNative) releaseLater(this.native);
     this.view?.stop().catch(() => {});
     setActiveEngine(this, null);
+  }
+
+  // ---------- seamless source upgrade (native engine only) ----------
+
+  /**
+   * Opens `src` in a hidden, muted native player rendered under the visible one, or returns null
+   * when the current engine is not the native one. The caller parks it at the right position and
+   * calls `commitStage` once it is ready (see seamless-upgrade.ts).
+   */
+  stage(src: Src): VideoPlayer | null {
+    if (this.engine !== 'native') return null;
+    this.abortStage();
+    const p = createVideoPlayer({ uri: src.uri, headers: src.headers, metadata: src.metadata as never });
+    p.muted = true;
+    p.showNowPlayingNotification = false;
+    p.allowsExternalPlayback = false;
+    p.bufferOptions = { preferredForwardBufferDuration: 20 };
+    this.staged = { player: p, src };
+    this.views = [p, this.native];
+    this.notifyViews();
+    return p;
+  }
+
+  get stagedPlayer(): VideoPlayer | null {
+    return this.staged?.player ?? null;
+  }
+
+  abortStage() {
+    const st = this.staged;
+    if (!st) return;
+    this.staged = null;
+    this.views = [this.native];
+    this.notifyViews();
+    try {
+      st.player.pause();
+    } catch {
+      // already released
+    }
+    releaseLater(st.player);
+  }
+
+  /**
+   * The staged player becomes the visible one: same rate, volume and audio language, playing if
+   * the old one was; the old one is paused under it and released. Player.tsx gets the events of
+   * a source load (tracks, duration) without any reload.
+   */
+  commitStage(): boolean {
+    const st = this.staged;
+    if (!st || this.engine !== 'native') return false;
+    const next = st.player;
+    const old = this.native;
+    const oldOwned = this.ownsNative;
+    const wasPlaying = old.playing;
+    const oldStatus = old.status;
+    const audioLang = old.audioTrack?.language;
+    this.staged = null;
+    this.clearWatchdog();
+
+    try {
+      next.playbackRate = this.rate;
+      next.volume = old.volume;
+      next.timeUpdateEventInterval = old.timeUpdateEventInterval;
+      if (audioLang) {
+        const t = next.availableAudioTracks.find((a) => a.language === audioLang);
+        if (t && t.id !== next.audioTrack?.id) next.audioTrack = t;
+      }
+      next.muted = old.muted;
+      next.allowsExternalPlayback = true;
+      next.showNowPlayingNotification = true;
+      if (wasPlaying) next.play();
+    } catch {
+      // keep going: the swap itself matters more than a property
+    }
+    this.nativeSubs.forEach((s) => s.remove());
+    this.nativeSubs = [];
+    try {
+      old.pause();
+      old.muted = true;
+      old.showNowPlayingNotification = false;
+    } catch {
+      // released
+    }
+    this.native = next;
+    this.ownsNative = true;
+    this.src = st.src;
+    this.fallbackTried = null;
+    this.forward(next);
+    this.views = [next];
+    this.notifyViews();
+
+    this.emit('sourceLoad', {
+      videoSource: st.src as VideoSource,
+      duration: next.duration,
+      availableVideoTracks: next.availableVideoTracks,
+      availableSubtitleTracks: next.availableSubtitleTracks,
+      availableAudioTracks: next.availableAudioTracks,
+    });
+    this.emit('statusChange', { status: next.status, oldStatus });
+    this.emit('playingChange', { isPlaying: wasPlaying, oldIsPlaying: wasPlaying });
+    this.emit('audioTrackChange', { audioTrack: next.audioTrack, oldAudioTrack: old.audioTrack } as never);
+    if (next.videoTrack) this.emit('videoTrackChange', { videoTrack: next.videoTrack, oldVideoTrack: old.videoTrack });
+
+    // The old view unmounts on the next render: free the old player after that.
+    if (oldOwned) releaseLater(old);
+    else setTimeout(() => old.replaceAsync(null).catch(() => {}), RELEASE_DELAY_MS);
+    return true;
   }
 
   // ---------- native engine ----------

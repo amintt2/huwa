@@ -87,7 +87,19 @@ export function SourcesMenu({ src, visible, onClose }: { src: Source; visible: b
             <Ionicons name="sparkles-outline" size={20} color={C.accentText} />
             <View style={{ flex: 1, gap: 2 }}>
               <Txt v="label">Automatique</Txt>
-              <Txt v="small">Lance la première source qui marche, puis passe à une meilleure qualité dès qu’elle est trouvée. Les lecteurs web ne servent que s’il n’y a pas de lien direct.</Txt>
+              <Txt v="small">
+                Teste la vitesse des meilleurs liens, écarte ceux qui sont hors ligne et lance le plus rapide dans ta langue. Si une meilleure qualité s’avère assez rapide, elle prend le relais sans couper la lecture (sinon, elle sert pour l’épisode suivant). Les lecteurs web ne servent que s’il n’y a pas de lien direct.
+              </Txt>
+              {src.raceStats.enabled ? (
+                src.raceStats.measured > 0 && (
+                  <Txt v="small" color={C.text2}>
+                    {src.raceStats.measured} lien{src.raceStats.measured > 1 ? 's' : ''} testé{src.raceStats.measured > 1 ? 's' : ''}
+                    {src.raceStats.dead > 0 ? ` · ${src.raceStats.dead} hors ligne écarté${src.raceStats.dead > 1 ? 's' : ''}` : ''}
+                  </Txt>
+                )
+              ) : (
+                <Txt v="small" color={C.text2}>Test de vitesse désactivé sur ce réseau (données mobiles limitées ou hors ligne).</Txt>
+              )}
             </View>
             {auto && <Ionicons name="checkmark" size={20} color={C.accentText} />}
           </Press>
@@ -139,7 +151,8 @@ function SourceRow({ s, src, active, onPress }: { s: AddonStream; src: Source; a
     st === 'external' && 'ouvre le navigateur',
     st === 'failed' && `échec${src.errorOf(s) ? ` : ${src.errorOf(s)}` : ''}`,
   ].filter(Boolean).join(' · ');
-  const dim = st === 'failed' || st === 'unusable' || (st === 'needs-debrid' && !torrentEngineAvailable());
+  const speed = src.speedInfo(s);
+  const dim = st === 'failed' || st === 'unusable' || speed?.speed === 'dead' || (st === 'needs-debrid' && !torrentEngineAvailable());
   const langLabel = detectLangs(s).label;
   return (
     <Press onPress={onPress} disabled={st === 'unusable'} style={[styles.row, active && styles.active, dim && { opacity: 0.5 }]}>
@@ -149,6 +162,15 @@ function SourceRow({ s, src, active, onPress }: { s: AddonStream; src: Source; a
           {!!web && <InfoPill icon="globe-outline" label="Lecteur web" />}
           <Txt v="small" numberOfLines={2} style={{ flexShrink: 1 }}>{detail}</Txt>
         </View>
+        {speed && (
+          <View style={{ flexDirection: 'row' }}>
+            <InfoPill
+              icon={speed.speed === 'fast' ? 'flash' : speed.speed === 'dead' ? 'cloud-offline-outline' : speed.speed === 'slow' ? 'hourglass-outline' : speed.speed ? 'speedometer-outline' : 'pulse-outline'}
+              label={speed.label}
+              tone={speed.speed === 'fast' ? 'accent' : 'neutral'}
+            />
+          </View>
+        )}
       </View>
       {!!langLabel && <Chip kind="neutral" label={langLabel} />}
       {active && <Chip kind="accent" label={st === 'playing' ? 'EN COURS' : '…'} />}

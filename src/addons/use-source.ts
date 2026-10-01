@@ -1,17 +1,24 @@
 // Source selection for the player.
-// Auto mode: play the first source that works as soon as one addon answers, then move to a
-// better quality whenever one shows up (safe sources only: direct links or debrid-cached
-// torrents). A source that fails is skipped; the last good one is the fallback.
+// Auto mode runs a "course des sources" (./race.ts, ./race-runner.ts): the best candidates (direct
+// links, debrid-cached torrents once resolved) are measured with one small ranged GET each; dead
+// links are dropped before the player sees them, and playback starts with the best quality that
+// is fast enough, language fit first. Once a source plays it stays put ("locked"); a strictly
+// better quality that proved fast is offered as `upgrade`, which the player swaps in without
+// stopping (components/player/seamless-upgrade.ts) or keeps for the next episode.
+// A source that fails is skipped; the last good one is the fallback.
 // Manual mode: the user picked a source in the menu; a failure drops back to auto.
 // Hosted player pages ("lecteurs web", see web-player.ts) are used by auto mode only when no
 // native source exists; the page is then shown in the web player instead of the native one.
 import { useEffect, useMemo, useState } from 'react';
 
 import { useSettings } from '@/settings/settings';
-import { resolveTorrent, useCachedHashes, useTorrentResolver } from '@/debrid/resolve';
+import { useRaceBudget } from '@/settings/network';
+import { resolveTorrent, resolveTorrentViaDebrid, useCachedHashes, useTorrentResolver } from '@/debrid/resolve';
 
 import { langScore } from './audio';
 import { isExternal, isPlayable, isTorrent, isYouTube, type AddonStream } from './protocol';
+import { decideStart, estimateBitrateMbps, pickUpgrade, speedLabel, speedVerdict, type RaceCandidate, type Speed, type UpgradeSide } from './race';
+import { raceClock, useRace, type RaceEntry } from './race-runner';
 import { detectQuality, rankStreams, streamKey, type Quality } from './quality';
 import { useAddonPrefs, useAddons, useStreams } from './registry';
 import { autoWebPlayerUrl, hostOf, needsProbe, useProbedUrls, webPlayerUrl } from './web-player';
@@ -20,10 +27,17 @@ type Resolution = { url?: string; via?: string; error?: string };
 
 export type SourceState = 'playing' | 'resolving' | 'failed' | 'ready' | 'needs-debrid' | 'youtube' | 'external' | 'web' | 'unusable';
 
+/** Better source the player may swap to without stopping (see `useSource().upgrade`). */
+export type SourceUpgrade = { key: string; uri: string; headers?: Record<string, string>; quality: Quality | null };
+
 // Stremio `bingeGroup`: the release last played for a series, preferred for its next episode
 // (same group, same quality/subs/audio), as Stremio's binge-watching does.
 const lastBinge = new Map<string, string>();
 const NO_SUBS: NonNullable<AddonStream['subtitles']> = [];
+/** Cached torrents resolved ahead to join the race (debrid only). */
+const RACE_TORRENTS = 2;
+
+const isLoopback = (u: string) => /^https?:\/\/(127\.|localhost[:/]|\[::1\])/i.test(u);
 
 /** `enabled: false` = idle (used to prefetch the next episode only once armed). */
 export function useSource(seriesId: string, episode: number, { enabled = true }: { enabled?: boolean } = {}) {
@@ -35,6 +49,7 @@ export function useSource(seriesId: string, episode: number, { enabled = true }:
   const resolverLabel = useTorrentResolver();
   const cached = useCachedHashes(streams.filter(isTorrent).map((s) => s.infoHash!));
   const probed = useProbedUrls(streams, enabled);
+  const budget = useRaceBudget();
 
   const ranked = useMemo(
     () => rankStreams(streams, {
@@ -51,6 +66,10 @@ export function useSource(seriesId: string, episode: number, { enabled = true }:
   const [manual, setManual] = useState<string | undefined>();
   const [bad, setBad] = useState<string[]>([]);
   const [resolved, setResolved] = useState<Record<string, Resolution>>({});
+  /** Auto source handed to the player: kept until it fails or is upgraded. */
+  const [locked, setLocked] = useState<string | undefined>();
+  /** Upgrades tried and abandoned (stalled, other engine…): not offered again. */
+  const [skipUpgrade, setSkipUpgrade] = useState<string[]>([]);
 
   /** Hosted player page of this stream, or null. */
   const webOf = (s: AddonStream) => webPlayerUrl(s, probed);
@@ -61,48 +80,141 @@ export function useSource(seriesId: string, episode: number, { enabled = true }:
   const cachedOf = (s: AddonStream) => (isTorrent(s) ? cached[s.infoHash!.toLowerCase()] : undefined);
   /** Safe = expected to start quickly: direct link, or torrent already cached by the debrid service. */
   const safe = (s: AddonStream) => direct(s) || cachedOf(s) === true;
+  /** URL the native player would open for this stream (direct link or resolved torrent). */
+  const playUrlOf = (s: AddonStream): string | undefined => (direct(s) ? s.url : isTorrent(s) ? resolved[streamKey(s)]?.url : undefined);
+  /** URL the race may measure: never a page, never the on-device torrent engine (loopback). */
+  const raceUrlOf = (s: AddonStream) => {
+    const u = playUrlOf(s);
+    return u && !isLoopback(u) ? u : undefined;
+  };
+  const headersOf = (s: AddonStream) => s.behaviorHints?.proxyHeaders?.request;
 
-  // Auto choice, recomputed as answers arrive: best quality among safe sources, falling back
-  // to unconfirmed torrents only when nothing safe exists. Ties keep the ranking order.
-  const auto = useMemo(() => {
+  // Language fit (VF / VOSTFR… per the user's preferences), lower is better.
+  const langOf = (s: AddonStream) => langScore(s, langPrefs);
+  // Quality score, higher is better.
+  const qualityOf = (s: AddonStream) => {
     const pref = prefs.preferredQuality;
-    // Language fit first (VF / VOSTFR… per the user's preferences), then quality.
-    const score = (s: AddonStream) => {
-      let q = detectQuality(s) ?? 0;
-      // Uncached torrent played by the on-device engine: speed depends on peers, not resolution.
-      // 1080p is enough on a phone; the seeder count (Torrentio "👤 N") breaks ties.
-      if (isTorrent(s) && cachedOf(s) !== true) {
-        const seeds = Number(/👤\s*(\d+)/.exec(`${s.title ?? ''} ${s.description ?? ''}`)?.[1] ?? 0);
-        q = Math.min(q, 1080) + Math.min(seeds, 500) / 1000;
-        if (seeds && seeds < 3) q -= 400;
-      }
-      return -langScore(s, langPrefs) * 10_000 + (pref !== 'auto' && q > pref ? pref - (q - pref) / 10 : q);
-    };
-    const ok = (s: AddonStream) => !bad.includes(streamKey(s)) && !probing(s);
-    const candidates = ranked.filter((s) => usable(s) && ok(s));
-    // Only hosted players: the best of them (quality, then addon priority).
-    const web = candidates.length ? [] : ranked.filter((s) => !!autoWebPlayerUrl(s, probed) && ok(s));
-    const pool = candidates.some(safe) ? candidates.filter(safe) : candidates.length ? candidates : web;
-    const binge = lastBinge.get(seriesId);
-    const same = binge ? pool.find((s) => s.behaviorHints?.bingeGroup === binge) : undefined;
-    if (same) return same;
-    return pool.reduce<AddonStream | undefined>((best, s) => (!best || score(s) > score(best) ? s : best), undefined);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [ranked, bad, resolverLabel, cached, probed, prefs.preferredQuality, seriesId, langPrefs]);
+    let q = detectQuality(s) ?? 0;
+    // Uncached torrent played by the on-device engine: speed depends on peers, not resolution.
+    // 1080p is enough on a phone; the seeder count (Torrentio "👤 N") breaks ties.
+    if (isTorrent(s) && cachedOf(s) !== true) {
+      const seeds = Number(/👤\s*(\d+)/.exec(`${s.title ?? ''} ${s.description ?? ''}`)?.[1] ?? 0);
+      q = Math.min(q, 1080) + Math.min(seeds, 500) / 1000;
+      if (seeds && seeds < 3) q -= 400;
+    }
+    return pref !== 'auto' && q > pref ? pref - (q - pref) / 10 : q;
+  };
 
-  const current = (manual ? ranked.find((s) => streamKey(s) === manual) : undefined) ?? auto;
+  // ---- candidates: usable, not failed, not still being classified (preference order) ----
+  const candidates = useMemo(() => {
+    const list = ranked.filter((s) => usable(s) && !bad.includes(streamKey(s)) && !probing(s));
+    // Language, then quality, then the ranking (stable sort).
+    return list.sort((a, b) => langOf(a) - langOf(b) || qualityOf(b) - qualityOf(a));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ranked, bad, resolverLabel, cached, probed, prefs.preferredQuality, langPrefs]);
+
+  // ---- cached torrents at the top: resolved ahead (debrid only) to be measured too ----
+  const torrentKeys = enabled
+    ? candidates.filter((s) => isTorrent(s) && cachedOf(s) === true).slice(0, RACE_TORRENTS).map(streamKey).join('\n')
+    : '';
+  useEffect(() => {
+    if (!torrentKeys || budget.max === 0) return;
+    const ctrl = new AbortController();
+    for (const k of torrentKeys.split('\n')) {
+      const s = candidates.find((x) => streamKey(x) === k);
+      if (!s || resolved[k]) continue;
+      resolveTorrentViaDebrid(
+        { infoHash: s.infoHash!, fileIdx: s.fileIdx, filename: s.behaviorHints?.filename, sources: s.sources, episode },
+        ctrl.signal,
+      )
+        .then((r) => r && !ctrl.signal.aborted && setResolved((m) => (m[k] ? m : { ...m, [k]: { url: r.url, via: r.via } })))
+        .catch(() => {});
+    }
+    return () => ctrl.abort();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [torrentKeys, budget.max]);
+
+  // ---- the race ----
+  const entries: RaceEntry[] = candidates.flatMap((s) => {
+    const u = raceUrlOf(s);
+    return u ? [{ url: u, headers: headersOf(s) }] : [];
+  });
+  const race = useRace(entries, budget, enabled);
+  const resultOf = (s: AddonStream) => {
+    const u = raceUrlOf(s);
+    return u ? race.results[u] : undefined;
+  };
+  const bitrateOf = (s: AddonStream) => estimateBitrateMbps(s, detectQuality(s));
+  const speedOf = (s: AddonStream): Speed | undefined => {
+    const r = resultOf(s);
+    return r ? speedVerdict(r, bitrateOf(s)) : undefined;
+  };
+  const deadKeys = useMemo(
+    () => new Set(candidates.filter((s) => resultOf(s)?.alive === false).map(streamKey)),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [candidates, race.results, resolved],
+  );
+
+  // ---- pool: safe sources first (direct link, cached torrent), dead links out ----
+  const pool = useMemo(() => {
+    const alive = candidates.filter((s) => !deadKeys.has(streamKey(s)));
+    // Only hosted players: the best of them (quality, then addon priority).
+    const web = alive.length ? [] : ranked.filter((s) => !!autoWebPlayerUrl(s, probed) && !bad.includes(streamKey(s)) && !probing(s));
+    return alive.some(safe) ? alive.filter(safe) : alive.length ? alive : web;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [candidates, deadKeys, ranked, probed, bad]);
+
+  const binge = lastBinge.get(seriesId);
+  const [tick, setTick] = useState(0);
+  const decision = useMemo(() => {
+    const cands: RaceCandidate[] = pool.map((s) => {
+      const u = raceUrlOf(s);
+      return {
+        key: streamKey(s),
+        lang: langOf(s),
+        quality: qualityOf(s),
+        bitrateMbps: bitrateOf(s),
+        result: u ? race.results[u] : undefined,
+        probing: !!u && race.probing.has(u),
+        binge: !!binge && s.behaviorHints?.bingeGroup === binge,
+        doneAtMs: u ? race.doneAt(u) ?? 0 : undefined,
+      };
+    });
+    if (!cands.length) return null;
+    return decideStart(cands, race.startedAt != null ? raceClock() - race.startedAt : 0);
+    // `tick` re-evaluates when a grace window / deadline expires.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pool, race.results, race.probing, binge, resolved, tick]);
+
+  // Waiting for the grace window / a deadline: re-evaluate when it ends.
+  const waitMs = decision && decision.key === null && 'waitMs' in decision ? decision.waitMs : 0;
+  useEffect(() => {
+    if (!waitMs) return;
+    const t = setTimeout(() => setTick((n) => n + 1), waitMs + 10);
+    return () => clearTimeout(t);
+  }, [waitMs, decision]);
+
+  const lockedStream = locked && !bad.includes(locked) ? ranked.find((s) => streamKey(s) === locked) : undefined;
+  const auto = decision?.key ? pool.find((s) => streamKey(s) === decision.key) : undefined;
+
+  const current = (manual ? ranked.find((s) => streamKey(s) === manual) : undefined) ?? lockedStream ?? auto;
   const currentKey = current ? streamKey(current) : undefined;
   const webUrl = current ? webOf(current) : null;
-  const url = current && !webUrl ? (isPlayable(current) ? current.url : resolved[currentKey!]?.url) : undefined;
+  const url = current && !webUrl ? playUrlOf(current) : undefined;
   useEffect(() => {
     const group = current?.behaviorHints?.bingeGroup;
     if (enabled && (url || webUrl) && group) lastBinge.set(seriesId, group);
   }, [enabled, url, webUrl, current, seriesId]);
+  // The auto source reached the native player: keep it (no reload when better answers arrive
+  // later; upgrades go through `upgrade`). Hosted pages are not kept: a direct link showing up
+  // later still replaces them. Adjusted during render ("state from previous render" pattern).
+  if (enabled && !manual && !lockedStream && currentKey && url && locked !== currentKey) setLocked(currentKey);
 
   const markBad = (k: string, error?: string) => {
     setBad((b) => (b.includes(k) ? b : [...b, k]));
     if (error) setResolved((r) => ({ ...r, [k]: { ...r[k], error } }));
     setManual((m) => (m === k ? undefined : m));
+    setLocked((l) => (l === k ? undefined : l));
   };
 
   // Torrent → HTTPS through the debrid service (or the native engine once registered).
@@ -121,8 +233,49 @@ export function useSource(seriesId: string, episode: number, { enabled = true }:
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentKey, resolverLabel, enabled]);
 
+  // ---- upgrade: strictly better quality, same language fit, proved fast ----
+  const sideOf = (s: AddonStream): UpgradeSide => ({
+    key: streamKey(s),
+    lang: langOf(s),
+    resolution: detectQuality(s) ?? 0,
+    quality: qualityOf(s),
+    bingeGroup: s.behaviorHints?.bingeGroup,
+    web: !!webOf(s),
+  });
+  const upgradeStream = (() => {
+    if (!enabled || manual || !current || !url || webUrl || currentKey !== locked) return undefined;
+    const cands = pool
+      .filter((s) => !skipUpgrade.includes(streamKey(s)) && !!raceUrlOf(s))
+      .map((s) => ({ ...sideOf(s), speed: speedOf(s), mbps: resultOf(s)?.mbps }));
+    const best = pickUpgrade(sideOf(current), cands, !!manual);
+    return best ? pool.find((s) => streamKey(s) === best.key) : undefined;
+  })();
+  const upgradeUri = upgradeStream ? raceUrlOf(upgradeStream) : undefined;
+  const upgrade = useMemo<SourceUpgrade | null>(
+    () => (upgradeStream && upgradeUri
+      ? { key: streamKey(upgradeStream), uri: upgradeUri, headers: headersOf(upgradeStream), quality: detectQuality(upgradeStream) }
+      : null),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [upgradeUri],
+  );
+
+  /** The player now plays `key` (seamless swap done). */
+  const adoptUpgrade = (key: string) => setLocked(key);
+  /**
+   * The swap could not happen without interrupting (other engine, stalled…): keep playing, and
+   * prefer that release for the next episode.
+   */
+  const deferUpgrade = (key: string) => {
+    setSkipUpgrade((l) => (l.includes(key) ? l : [...l, key]));
+    const group = ranked.find((s) => streamKey(s) === key)?.behaviorHints?.bingeGroup;
+    if (group) lastBinge.set(seriesId, group);
+  };
+
   const pick = (s: AddonStream | 'auto') => {
-    if (s === 'auto') return setManual(undefined);
+    if (s === 'auto') {
+      setLocked(undefined);
+      return setManual(undefined);
+    }
     const k = streamKey(s);
     setBad((b) => b.filter((x) => x !== k));
     setResolved((m) => (m[k]?.error ? { ...m, [k]: {} } : m));
@@ -141,6 +294,15 @@ export function useSource(seriesId: string, episode: number, { enabled = true }:
     return 'unusable';
   };
 
+  /** Speed label for the sources menu ("⚡ 1,2 s · 38 Mb/s", "lent", "hors ligne (404)", "test…"). */
+  const speedInfo = (s: AddonStream): { label: string; speed?: Speed } | null => {
+    const u = raceUrlOf(s);
+    if (!u) return null;
+    const speed = speedOf(s);
+    const label = speedLabel(race.results[u], speed, race.probing.has(u));
+    return label ? { label, speed } : null;
+  };
+
   return {
     ranked,
     current,
@@ -157,12 +319,20 @@ export function useSource(seriesId: string, episode: number, { enabled = true }:
     auto: !manual,
     pending,
     failed,
+    /** Links are being measured before the first one starts. */
+    racing: !current && race.probing.size > 0,
+    /** Links measured / dead so far (sources menu summary). */
+    raceStats: { measured: Object.keys(race.results).length, dead: deadKeys.size, enabled: budget.max > 0 },
     /** Addon status rows (not videos), see `infoKind`. */
     infos,
     resolverLabel,
     cachedOf,
     errorOf: (s: AddonStream) => resolved[streamKey(s)]?.error,
     stateOf,
+    speedInfo,
+    upgrade,
+    adoptUpgrade,
+    deferUpgrade,
     pick,
     markBad,
   };

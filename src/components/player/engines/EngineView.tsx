@@ -18,10 +18,33 @@ export function useEnginePlayer(source: null, setup?: (player: VideoPlayer) => v
 
 type Props = Omit<VideoViewProps, 'player'> & { player: HybridPlayer; ref?: Ref<VideoView> };
 
+// Stable React key per native player: on a seamless upgrade the warm view (rendered under the
+// visible one) keeps its key, so it is not remounted when it becomes the visible one.
+const ids = new WeakMap<VideoPlayer, number>();
+let nextId = 0;
+const idOf = (p: VideoPlayer) => {
+  let id = ids.get(p);
+  if (id == null) ids.set(p, (id = ++nextId));
+  return id;
+};
+
 export function EngineView({ player, ref, style, ...rest }: Props) {
   const engine = useSyncExternalStore(player.subscribeEngine, player.getEngine, player.getEngine);
+  const views = useSyncExternalStore(player.subscribeEngine, player.getViews, player.getViews);
   if (engine === 'mpv') return <MpvSurface player={player} style={style} />;
-  return <VideoView ref={ref} player={player.native} style={style} {...rest} />;
+  const main = views[views.length - 1];
+  return (
+    <View style={style} pointerEvents="box-none">
+      {views.map((p) =>
+        p === main ? (
+          // Opaque, so the warm player under it never shows through the letterbox.
+          <VideoView key={idOf(p)} ref={ref} player={p} style={[StyleSheet.absoluteFill, styles.black]} {...rest} />
+        ) : (
+          <VideoView key={idOf(p)} player={p} style={StyleSheet.absoluteFill} nativeControls={false} contentFit={rest.contentFit} />
+        ),
+      )}
+    </View>
+  );
 }
 
 const MpvNative = getMpvNativeView();
