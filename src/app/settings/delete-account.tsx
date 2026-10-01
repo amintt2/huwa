@@ -108,7 +108,11 @@ export default function DeleteAccount() {
             text="Tes commentaires, ton profil public et les messages envoyés ont été copiés chez les personnes et pairs qui les ont reçus. Huwa ne peut pas les rappeler. Pour retirer un commentaire, supprime-le avant : les pairs qui se reconnectent appliquent la suppression, mais ce qui a déjà été lu ou copié reste." />
           {others > 0 && (
             <Point icon="phone-portrait-outline" title={`${others} autre${others > 1 ? 's' : ''} appareil${others > 1 ? 's' : ''} lié${others > 1 ? 's' : ''}`}
-              text="Ils gardent le compte. Révoque-les dans Sécurité → Appareils liés ou supprime aussi le compte sur chacun." />
+              text={
+                others > 1
+                  ? 'Ils gardent le compte. Révoque-les dans Sécurité → Appareils liés ou supprime aussi le compte sur chacun.'
+                  : 'Il garde le compte. Révoque-le dans Sécurité → Appareils liés ou supprime aussi le compte dessus.'
+              } />
           )}
         </View>
 
