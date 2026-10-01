@@ -31,6 +31,9 @@ import { C } from '@/theme/tokens';
 
 SplashScreen.preventAutoHideAsync();
 
+// Any crash below the root shows a friendly screen with « Réessayer » (see error-screen.tsx).
+export { ErrorScreen as ErrorBoundary } from '@/components/error-screen';
+
 const theme = {
   ...DarkTheme,
   colors: { ...DarkTheme.colors, background: C.bg, card: C.surface, primary: C.accent, text: C.text, border: C.border },

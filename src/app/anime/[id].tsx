@@ -1,5 +1,6 @@
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { router, useLocalSearchParams } from 'expo-router';
+import { useState } from 'react';
 import { ScrollView, StyleSheet, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -37,6 +38,12 @@ export default function AnimeDetail() {
     PRIORITY.detail,
     { dwellMs: 300 },
   );
+  // Long series (1000+ episodes): rows are rendered in pages instead of all at once; the first
+  // page reaches past the episode to resume.
+  const [limit, setLimit] = useState(() => {
+    const i = target && series?.anime ? series.anime.episodes.indexOf(target) : 0;
+    return Math.max(EPISODE_PAGE, i + 20);
+  });
   if (!series?.anime) return <Txt style={{ padding: S.xl }}>Anime introuvable.</Txt>;
 
   const eps = series.anime.episodes;
@@ -89,7 +96,7 @@ export default function AnimeDetail() {
           </Press>
         </View>
 
-        {eps.map((e) => {
+        {eps.slice(0, limit).map((e) => {
           const p = progress[e.id];
           const ratio = p ? p.position / p.duration : 0;
           return (
@@ -113,6 +120,14 @@ export default function AnimeDetail() {
             </Press>
           );
         })}
+        {eps.length > limit && (
+          <Button
+            variant="soft"
+            icon="chevron-down"
+            label={`Afficher ${Math.min(EPISODE_PAGE, eps.length - limit)} épisodes de plus (${eps.length - limit} restants)`}
+            onPress={() => setLimit((n) => n + EPISODE_PAGE)}
+          />
+        )}
       </View>
     </ScrollView>
   );
@@ -124,6 +139,8 @@ function SeasonChip({ series }: { series: Series }) {
   if (series.status === 'completed' && (season ?? 1) === 1) return <Chip kind="neutral" label="TERMINÉ" />;
   return <Chip kind="neutral" label={`SAISON ${season ?? 1}`} />;
 }
+
+const EPISODE_PAGE = 60;
 
 const styles = StyleSheet.create({
   nav: { position: 'absolute', left: S.lg },

@@ -66,8 +66,21 @@ async function cancelOurs() {
   );
 }
 
+// Resyncs run one at a time: two overlapping runs (list + setting + catalog changing together)
+// used to interleave cancel / schedule and leave duplicates or nothing. A run superseded by a
+// newer request while it waited is skipped: only the latest list matters.
+let syncChain: Promise<unknown> = Promise.resolve();
+let syncGeneration = 0;
+
 /** Replace every episode notification with the current schedule. Returns how many were scheduled. */
-export async function syncEpisodeNotifications(seriesIds: string[]): Promise<number> {
+export function syncEpisodeNotifications(seriesIds: string[]): Promise<number> {
+  const mine = ++syncGeneration;
+  const run = syncChain.then(() => (mine === syncGeneration ? doSync(seriesIds) : 0));
+  syncChain = run.catch(() => {});
+  return run;
+}
+
+async function doSync(seriesIds: string[]): Promise<number> {
   if (!notificationsSupported) return 0;
   configureNotifications();
   await cancelOurs();

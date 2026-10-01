@@ -30,6 +30,9 @@ import { getState, markEpisodeDone, saveEpisodeProgress, toggleMyList, useStore 
 import { enableTorrentEngine, isAvailable as torrentEngineLinked, useTorrentSettings } from '@/torrent';
 import { C, S } from '@/theme/tokens';
 
+// A player crash stays on this route (retry / back) instead of taking the whole app down.
+export { ErrorScreen as ErrorBoundary } from '@/components/error-screen';
+
 export default function Watch() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const found = getEpisode(id);
