@@ -8,6 +8,7 @@
 //!   stream-server's `priorities.rs` (MIT).
 //! - `range`: HTTP Range header parsing.
 //! - `engine`: session, torrent registry, cache quota, persistence of our own metadata.
+//! - `probe`: parallel swarm probes (metadata + answering peers, no piece downloaded).
 //! - `server`: axum router bound to 127.0.0.1:<random port>.
 //! - `api`: JSON dispatch used by both FFI flavours.
 //! - `ffi`: C ABI (iOS / static library). `jni_android`: JNI exports (Android).
@@ -20,6 +21,7 @@ pub mod cache;
 pub mod engine;
 pub mod ffi;
 pub mod priorities;
+pub mod probe;
 pub mod range;
 pub mod server;
 
