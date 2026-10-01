@@ -317,7 +317,7 @@ test('language codes from addons are normalised', () => {
   assert.ok(!langMatches('pt', 'pt-br'));
 });
 
-test('auto choice: preferred language, then source, then non-forced', () => {
+test('auto choice: full tracks first, preferred language, then source', () => {
   const tracks = buildTracks(
     [{ language: 'en', label: 'English' }, { language: 'fr', label: 'Forced', name: 'Forced' }],
     [
@@ -326,8 +326,16 @@ test('auto choice: preferred language, then source, then non-forced', () => {
       { url: 'https://c/3.ass', lang: 'fre', source: 'Kitsunekko' },
     ],
   );
-  // fr: embedded forced track has the best source, but a full track is preferred… only after source.
-  assert.equal(chooseTrack(tracks, { enabled: true, languages: ['fr', 'en'] }), 'emb:1');
+  // fr: the embedded track is only "forced" (signs): the full French file wins over the better source.
+  assert.equal(chooseTrack(tracks, { enabled: true, languages: ['fr', 'en'] }), 'ext:https://b/2.srt');
+  // Signs-only in the preferred language vs full dialogue in the second one: dialogue first.
+  const signsOnly = buildTracks([{ language: 'fr', name: 'Signs & Songs' }, { language: 'en', label: 'English' }], []);
+  assert.equal(chooseTrack(signsOnly, { enabled: true, languages: ['fr', 'en'] }), 'emb:1');
+  // …and the signs track when nothing else matches.
+  assert.equal(chooseTrack(signsOnly, { enabled: true, languages: ['fr'] }), 'emb:0');
+  // mpv's Matroska "forced" flag counts too; an embedded full track beats external files.
+  const flagged = buildTracks([{ language: 'fr', label: 'Français', forced: true }, { language: 'fr', label: 'Français complet' }], [{ url: 'https://x/fr.srt', lang: 'fr' }]);
+  assert.equal(chooseTrack(flagged, { enabled: true, languages: ['fr'] }), 'emb:1');
   const noEmb = tracks.filter((t) => t.kind !== 'embedded');
   assert.equal(chooseTrack(noEmb, { enabled: true, languages: ['fr', 'en'] }), 'ext:https://b/2.srt');
   assert.equal(chooseTrack(noEmb, { enabled: true, languages: ['de', 'en'] }), 'ext:https://a/1.srt');

@@ -1,12 +1,13 @@
 // Subtitle track list (embedded + external + local files) and automatic choice.
-// Auto choice: first preferred language that has a track; within it the best source
-// (embedded in the video, then the stream's own subtitles, then subtitle addons in their order),
-// and full subtitles before "forced" (signs-only) tracks.
-import { langMatches, langName, normLang } from './lang';
+// Auto choice: full dialogue tracks first — first preferred language that has one; within it the
+// best source (embedded in the video, then the stream's own subtitles, then subtitle addons in
+// their order, an on-device translation last). "Forced" / "Signs & Songs" tracks only when no
+// preferred language has a full track.
+import { fromLangPhrase, langMatches, langName, normLang } from './lang';
 import { formatFromName } from './parse';
 import type { SubtitleFormat } from './types';
 
-export type TrackKind = 'embedded' | 'external' | 'local';
+export type TrackKind = 'embedded' | 'external' | 'local' | 'translated';
 
 export type Track = {
   key: string;
@@ -23,12 +24,14 @@ export type Track = {
   sourceRank: number;
   url?: string;
   embeddedIndex?: number;
+  /** Translated track: language of the file it is translated from. */
+  fromLang?: string;
 };
 
 const FORCED = /\b(forced|forcés?|signs?(?:\s*&\s*songs?)?|panneaux)\b/i;
 
 export type ExternalInput = { url: string; lang: string; label?: string; source?: string; format?: SubtitleFormat; forced?: boolean };
-export type EmbeddedInput = { language?: string; label?: string; name?: string; isDefault?: boolean };
+export type EmbeddedInput = { language?: string; label?: string; name?: string; isDefault?: boolean; forced?: boolean };
 
 export function buildTracks(embedded: EmbeddedInput[], external: ExternalInput[], local: Track[] = []): Track[] {
   const out: Track[] = [];
@@ -39,7 +42,7 @@ export function buildTracks(embedded: EmbeddedInput[], external: ExternalInput[]
       kind: 'embedded',
       lang: normLang(e.language),
       source: 'Vidéo',
-      forced: FORCED.test(`${e.name ?? ''} ${e.label ?? ''}`),
+      forced: !!e.forced || FORCED.test(`${e.name ?? ''} ${e.label ?? ''}`),
       name: name && name.toLowerCase() !== (e.language ?? '').toLowerCase() ? name : undefined,
       sourceRank: 0,
       embeddedIndex: i,
@@ -74,24 +77,30 @@ export type AutoPrefs = {
 /** Best track key for the preferences, or `off`. */
 export function chooseTrack(tracks: Track[], prefs: AutoPrefs): string {
   if (!prefs.enabled) return 'off';
-  for (const pref of prefs.languages) {
-    const cands = tracks
-      .map((t, i) => ({ t, i }))
-      .filter(({ t }) => t.kind !== 'local' && langMatches(t.lang, pref) && (!prefs.forcedOnly || t.forced));
-    if (!cands.length) continue;
-    // Exact language beats a variant (`pt` pref: `pt` before `pt-br`).
-    const p = normLang(pref);
-    cands.sort(
-      (a, b) =>
-        Number(a.t.lang !== p) - Number(b.t.lang !== p) ||
-        a.t.sourceRank - b.t.sourceRank ||
-        Number(a.t.forced) - Number(b.t.forced) ||
-        a.i - b.i,
-    );
-    return cands[0].t.key;
-  }
-  return 'off';
+  const pick = (ok: (t: Track) => boolean) => {
+    for (const pref of prefs.languages) {
+      const cands = tracks.map((t, i) => ({ t, i })).filter(({ t }) => t.kind !== 'local' && langMatches(t.lang, pref) && ok(t));
+      if (!cands.length) continue;
+      // Exact language beats a variant (`pt` pref: `pt` before `pt-br`).
+      const p = normLang(pref);
+      cands.sort(
+        (a, b) =>
+          Number(a.t.lang !== p) - Number(b.t.lang !== p) ||
+          Number(a.t.forced) - Number(b.t.forced) ||
+          a.t.sourceRank - b.t.sourceRank ||
+          a.i - b.i,
+      );
+      return cands[0].t.key;
+    }
+    return undefined;
+  };
+  // Watching a dub: only "forced" tracks (signs, foreign dialogue).
+  if (prefs.forcedOnly) return pick((t) => t.forced) ?? 'off';
+  return pick((t) => !t.forced) ?? pick(() => true) ?? 'off';
 }
+
+/** Languages with a full (non-forced) track among `tracks`. */
+export const fullTrackLangs = (tracks: Track[]) => [...new Set(tracks.filter((t) => !t.forced && t.kind !== 'local').map((t) => t.lang))];
 
 export type TrackGroup = { lang: string; title: string; tracks: Track[] };
 
@@ -116,5 +125,6 @@ export const FORMAT_LABEL: Record<SubtitleFormat, string> = { ass: 'ASS', ssa: '
 /** "SRT · OpenSubtitles · forcés" */
 export function trackHint(t: Track, loadedFormat?: SubtitleFormat): string {
   const fmt = loadedFormat ?? t.format;
-  return [t.kind === 'embedded' ? 'Intégrés' : fmt ? FORMAT_LABEL[fmt] : null, t.source, t.forced ? 'Forcés' : null].filter(Boolean).join(' · ');
+  if (t.kind === 'translated') return `Traduit sur l’appareil ${fromLangPhrase(t.fromLang ?? 'und')}`;
+  return [t.kind === 'embedded' ? 'Intégré' : fmt ? FORMAT_LABEL[fmt] : null, t.kind === 'embedded' ? null : t.source, t.forced ? 'Forcés' : null].filter(Boolean).join(' · ');
 }

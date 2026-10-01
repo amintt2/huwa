@@ -17,13 +17,15 @@ export function detectLangs(s: StreamItem): StreamLangs {
   const audio = new Set<string>();
   const subs = new Set<string>();
   let label: string | null = null;
-  if (/\bVOST(?:FR)?\b|\bsub(?:bed|s)?[ ._-]?fr(?:ench)?\b|\bfrench[ ._-]?subs?\b/i.test(text)) {
+  if (/\bVOST(?:FR)?\b|\bsub(?:bed|s)?[ ._-]?fr(?:ench)?\b|\b(?:french|fr)[ ._-]?subs?\b|\bST[ ._-]?FR\b/i.test(text)) {
     subs.add('fr');
     audio.add('ja');
     label = '🇯🇵 VOSTFR';
   }
   if (/\bMULTI\b/i.test(text)) {
+    // French scene MULTI = VF + VO, the VO subtitled in French inside the file.
     audio.add('fr').add('ja');
+    subs.add('fr');
     label = '🇫🇷🇯🇵 MULTI';
   }
   if (/\bdual[ ._-]?audio\b/i.test(text)) {
@@ -43,9 +45,23 @@ export function detectLangs(s: StreamItem): StreamLangs {
   return { audio: [...audio], subs: [...subs], label };
 }
 
-/** Lower is better. Unknown language is neutral (most anime releases are Japanese audio). */
+/**
+ * Subtitle languages carried by the stream itself: tags in its name (VOSTFR, MULTI, "subs FR"…)
+ * plus the subtitle files it ships (`stream.subtitles`).
+ */
+export function streamSubLangs(s: StreamItem): string[] {
+  const out = new Set(detectLangs(s).subs);
+  for (const x of s.subtitles ?? []) if (x?.lang) out.add(normLang(x.lang));
+  return [...out];
+}
+
+/**
+ * Lower is better. Unknown language is neutral (most anime releases are Japanese audio).
+ * Sub mode: a stream that carries subtitles in a preferred language (in the file or attached)
+ * ranks before an equal one without, so the race only compares those while any is alive.
+ */
 export function langScore(s: StreamItem, prefs: { watchMode: WatchMode; subLangs: string[]; dubLangs: string[] }): number {
-  const l = detectLangs(s);
+  const l = { ...detectLangs(s), subs: streamSubLangs(s) };
   const rank = (list: string[], have: string[]) => {
     const i = list.findIndex((c) => have.includes(c));
     return i < 0 ? list.length : i;
@@ -86,14 +102,15 @@ const names = (codes: string[]) => codes.map((c) => LANG_NAME[c] ?? c).join(', '
 /**
  * What the chosen source lacks compared with the user's languages, as a short French sentence,
  * or null when it matches (or nothing is known). `subtitleLangs`: languages actually available
- * (subtitles shipped with the stream + subtitles addons).
+ * (subtitles shipped with the stream + subtitles addons + full tracks embedded in the file, once
+ * the player knows them + a translated track the device can produce).
  */
 export function languageMismatch(
   s: StreamItem,
   prefs: { watchMode: WatchMode; subLangs: string[]; dubLangs: string[] },
   subtitleLangs: string[],
 ): string | null {
-  const l = detectLangs(s);
+  const l = { ...detectLangs(s), subs: streamSubLangs(s) };
   if (prefs.watchMode === 'dub') {
     if (!l.audio.length || prefs.dubLangs.some((c) => l.audio.includes(c))) return null;
     return `Pas de version doublée en ${LANG_NAME[prefs.dubLangs[0]] ?? prefs.dubLangs[0]} : audio ${names(l.audio)}`;

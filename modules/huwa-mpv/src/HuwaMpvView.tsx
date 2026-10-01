@@ -10,6 +10,8 @@ export type MpvTrack = {
   lang: string;
   codec: string;
   default: boolean;
+  /** Matroska "forced" flag (signs / foreign dialogue only). Missing on older builds. */
+  forced?: boolean;
   selected: boolean;
   external: boolean;
 };

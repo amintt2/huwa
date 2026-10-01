@@ -61,6 +61,11 @@ export type PlayerProps = {
   subtitles?: ExternalSubtitle[];
   /** Stable id of what is playing (episode id): the subtitle sync offset is remembered per id. */
   mediaKey?: string;
+  /**
+   * Languages that have a full subtitle track for what plays: external files, tracks embedded in
+   * the video (known once it is loaded) and an on-device translation. Changes only.
+   */
+  onSubtitleLangs?: (langs: string[]) => void;
   /** Resume position in seconds, read when the first source finishes loading. */
   startAt?: () => number | undefined;
   /** Throttled (5 s) and on leave. */
@@ -147,6 +152,7 @@ export function Player({
   artwork,
   subtitles = [],
   mediaKey,
+  onSubtitleLangs,
   startAt,
   onProgress,
   onEnd,
@@ -397,7 +403,16 @@ export function Player({
   }, [player, prefs.rate]);
 
   // ---------- subtitles ----------
-  const subs = useSubtitleController({ external: subtitles, embedded, mediaKey });
+  const subs = useSubtitleController({ external: subtitles, embedded, mediaKey, time: time.t });
+  const subLangsKey = subs.fullLangs.join(',');
+  const onSubLangsRef = useRef(onSubtitleLangs);
+  useEffect(() => {
+    onSubLangsRef.current = onSubtitleLangs;
+  });
+  useEffect(() => {
+    onSubLangsRef.current?.(subLangsKey ? subLangsKey.split(',') : []);
+  }, [subLangsKey, source?.uri]);
+  const shownNotice = notice || subs.badge || undefined;
   const embIndex = subs.embeddedIndex;
   useEffect(() => {
     try {
@@ -629,9 +644,9 @@ export function Player({
           <Txt v="small" color={C.white}>{zoomNote}</Txt>
         </View>
       )}
-      {!!notice && !zoomNote && (
-        <View pointerEvents="none" style={[styles.notice, { top: full ? S.lg : S.sm }]}>
-          <Txt v="small" color={C.white}>{notice}</Txt>
+      {!!shownNotice && !zoomNote && (
+        <View pointerEvents="none" style={[styles.notice, { top: full ? S.lg : S.sm }]} accessibilityLiveRegion="polite">
+          <Txt v="small" color={C.white}>{shownNotice}</Txt>
         </View>
       )}
 

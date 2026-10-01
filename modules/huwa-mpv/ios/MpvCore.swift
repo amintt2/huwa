@@ -341,6 +341,7 @@ final class MpvCore {
         "lang": t["lang"] as? String ?? "",
         "codec": t["codec"] as? String ?? "",
         "default": t["default"] as? Bool ?? false,
+        "forced": t["forced"] as? Bool ?? false,
         "selected": t["selected"] as? Bool ?? false,
         "external": t["external"] as? Bool ?? false,
       ]
