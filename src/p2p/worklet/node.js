@@ -25,6 +25,11 @@ const ROOM_IDLE_MS = 60_000
 const LOOKUP_MS = 6_000
 const PAIRING_TTL_MS = 10 * 60_000
 const MAX_COMMENTS = 1000
+// A hello hinting a DM opens the conversation base on probation only: it becomes a conversation
+// (persisted, reopened at every start) once a message from that peer actually decrypts.
+const DM_PROBE_MS = 90_000
+const MAX_DM_PROBES = 8
+const DM_PROBE_BACKOFF_MS = 10 * 60_000
 /** Comments dated further in the future are not listed (yet): they would pin to the end. */
 const FUTURE_SKEW_MS = 10 * 60_000
 // Restore: how long the devices of the account get to answer (pointer core or hello).
@@ -282,8 +287,37 @@ class HuwaNode {
       await this.local.put('peer/' + m.id, next)
     }
     if (this.secret && m.dm.includes(this.secret.identity)) {
-      await this._ensureConversation(m.id, { incoming: true })
+      await this._probeDm(m.id)
     }
+  }
+
+  /** Looks for a message from `peer` without committing to a conversation (see DM_PROBE_MS). */
+  async _probeDm(peer) {
+    if (await valueOf(this.local, 'conv/' + peer)) {
+      if (!this.dms.has(peer)) await this._openDm(peer)
+      return
+    }
+    this._probes = this._probes || new Map()
+    if (this.dms.has(peer) || this._probes.has(peer)) return
+    const now = Date.now()
+    for (const [k, at] of this._probes) if (at.done && now - at.done > DM_PROBE_BACKOFF_MS) this._probes.delete(k)
+    if ([...this._probes.values()].filter((p) => !p.done).length >= MAX_DM_PROBES) return
+    if (this.home && (await valueOf(this.home.view, 'blk/' + peer))) return
+    const probe = { done: 0 }
+    this._probes.set(peer, probe)
+    later(() => this._endProbe(peer, probe).catch(noop), DM_PROBE_MS)
+    await this._openDm(peer)
+    await this._onDmUpdate(peer)
+  }
+
+  async _endProbe(peer, probe) {
+    probe.done = Date.now()
+    if (this.closed || (await valueOf(this.local, 'conv/' + peer))) return
+    const entry = this.dms.get(peer)
+    if (!entry) return
+    this.dms.delete(peer)
+    if (entry.discovery) entry.discovery.destroy().catch(noop)
+    await entry.base.close().catch(noop)
   }
 
   async _lookup(identity) {
@@ -1006,13 +1040,26 @@ class HuwaNode {
     this.dms.set(peer, entry)
     await entry.ready
     entry.discovery = this._join(base.discoveryKey)
-    base.on('update', () => {
-      this._ensureConversation(peer, { incoming: true }).catch(noop)
-      this._notify('messages:' + peer)
-      this._notify('conversations')
-    })
+    base.on('update', () => this._onDmUpdate(peer).catch(noop))
     this._propagateRevocations(base, 'dm').catch(noop)
     return base
+  }
+
+  async _onDmUpdate(peer) {
+    if (!(await valueOf(this.local, 'conv/' + peer))) {
+      // No conversation yet: only a message from the peer that decrypts for me creates one.
+      const entry = this.dms.get(peer)
+      if (!entry || !(await this._hasMessageFrom(entry.base, peer))) return
+      await this._ensureConversation(peer, { incoming: true })
+    }
+    this._notify('messages:' + peer)
+    this._notify('conversations')
+  }
+
+  async _hasMessageFrom(base, peer) {
+    if (!this.secret) return false
+    for (const e of await rangeValues(base.view, 'm/')) if (e.value.from === peer && this._decrypt(e.value)) return true
+    return false
   }
 
   async _ensureConversation(peer, { incoming }) {
