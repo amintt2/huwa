@@ -57,9 +57,9 @@ export function ScreenHeader({ title, right, close }: { title: string; right?: R
     <View style={[styles.header, { paddingTop: close ? S.lg : insets.top + S.sm }]}>
       <IconButton icon={close ? 'close' : 'chevron-back'} label={close ? 'Fermer' : 'Retour'} tone={close ? 'solid' : 'glass'} onPress={() => router.back()} />
       {close ? (
-        <Txt v="title" numberOfLines={1} style={{ flex: 1, fontSize: 20 }}>{title}</Txt>
+        <Txt v="title" numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.7} style={{ flex: 1, fontSize: 20 }}>{title}</Txt>
       ) : (
-        <Txt v="display" numberOfLines={1} style={{ flex: 1, fontSize: 26 }}>{title}</Txt>
+        <Txt v="display" numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.6} style={{ flex: 1, fontSize: 26 }}>{title}</Txt>
       )}
       {right}
     </View>

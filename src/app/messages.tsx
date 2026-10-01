@@ -100,8 +100,9 @@ export default function Messages() {
         )}
 
         <View style={styles.lock}>
-          <Ionicons name="lock-closed" size={12} color={C.text2} />
-          <Txt v="small" style={{ fontSize: 12 }}>
+          <Ionicons name="lock-closed" size={12} color={C.text2} style={{ marginTop: 2 }} />
+          {/* Wraps instead of running off the screen (the long "mode local" sentence). */}
+          <Txt v="small" style={{ fontSize: 12, flexShrink: 1, textAlign: 'center', lineHeight: 17 }}>
             {local ? 'Mode local : aucun pair connecté, les envois partiront avec le réseau P2P' : 'Chiffrement de bout en bout · aucun serveur'}
           </Txt>
         </View>
@@ -115,5 +116,5 @@ const styles = StyleSheet.create({
   segment: { flexDirection: 'row', marginHorizontal: S.lg, padding: 3, borderRadius: R.control, backgroundColor: C.surface, borderWidth: 1, borderColor: C.border },
   segItem: { flex: 1, minHeight: 36, alignItems: 'center', justifyContent: 'center', borderRadius: 8 },
   segOn: { backgroundColor: C.elevated },
-  lock: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, paddingTop: S.md },
+  lock: { flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'center', gap: 6, paddingTop: S.md, paddingHorizontal: S.lg },
 });

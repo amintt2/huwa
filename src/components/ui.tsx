@@ -36,13 +36,19 @@ const variants = {
   caption: { ...F.bold, fontSize: 11, letterSpacing: 0.6, textTransform: 'uppercase', color: C.text2 },
 } as const;
 
+/**
+ * Heavy uppercase titles grow with Dynamic Type only so far: at the largest sizes a single word
+ * ("BIBLIOTHÈQUE") no longer fit the width and iOS broke it mid-word. Body text is not capped.
+ */
+const MAX_SCALE: Partial<Record<keyof typeof variants, number>> = { display: 1.3, section: 1.5, title: 1.6 };
+
 export function Txt({
   v = 'body',
   color,
   style,
   ...rest
 }: TextProps & { v?: keyof typeof variants; color?: string }) {
-  return <Text {...rest} style={[variants[v], color ? { color } : null, style]} />;
+  return <Text maxFontSizeMultiplier={MAX_SCALE[v]} {...rest} style={[variants[v], color ? { color } : null, style]} />;
 }
 
 // ---------- Press feedback: scale 0.97 on press-in (120 ms), back in 160 ms ----------

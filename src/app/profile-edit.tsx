@@ -1,7 +1,7 @@
 import * as Haptics from 'expo-haptics';
 import { router } from 'expo-router';
 import { useState } from 'react';
-import { KeyboardAvoidingView, Platform, ScrollView, View } from 'react-native';
+import { ScrollView, View } from 'react-native';
 
 import { Avatar, Field, ScreenHeader } from '@/components/social';
 import { Button, Txt } from '@/components/ui';
@@ -33,9 +33,15 @@ export default function ProfileEdit() {
   const dirty = name.trim() !== me.name || bio.trim() !== (me.bio ?? '');
 
   return (
-    <KeyboardAvoidingView style={{ flex: 1, backgroundColor: C.surface }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+    // A form sheet pins its ScrollView to the sheet's edges: the header lives inside it (a sibling
+    // above was drawn under the avatar, and RNScreens expects at most 2 subviews).
+    <ScrollView
+      style={{ flex: 1, backgroundColor: C.surface }}
+      keyboardShouldPersistTaps="handled"
+      automaticallyAdjustKeyboardInsets
+      contentContainerStyle={{ paddingBottom: S.xxl, gap: S.xl }}>
       <ScreenHeader title="Modifier le profil" close />
-      <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={{ paddingHorizontal: S.lg, paddingBottom: S.xxl, gap: S.xl }}>
+      <View style={{ paddingHorizontal: S.lg, gap: S.xl }}>
         <View style={{ alignItems: 'center', gap: S.sm }}>
           <Avatar seed={me.key} name={name || me.name} size={72} />
           <Txt v="small">{`Empreinte ${me.fingerprint} · ne change jamais`}</Txt>
@@ -66,7 +72,7 @@ export default function ProfileEdit() {
         <View style={{ opacity: dirty ? 1 : 0.45 }}>
           <Button label={busy ? 'Enregistrement…' : 'Enregistrer'} icon="checkmark" onPress={dirty ? save : undefined} />
         </View>
-      </ScrollView>
-    </KeyboardAvoidingView>
+      </View>
+    </ScrollView>
   );
 }

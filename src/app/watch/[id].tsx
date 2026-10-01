@@ -180,8 +180,10 @@ function WatchScreen({ id }: { id: string }) {
     />
   );
 
+  // Tighter rhythm than other screens: on a standard iPhone the bridge card stays above the
+  // comment composer instead of being cut by it.
   const header = (
-    <View style={{ padding: S.lg, gap: S.lg }}>
+    <View style={{ paddingHorizontal: S.lg, paddingTop: S.md, paddingBottom: S.lg, gap: S.md }}>
       <View style={{ gap: 6 }}>
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: S.sm }}>
           <Chip kind="anime" />
@@ -328,7 +330,7 @@ function WatchScreen({ id }: { id: string }) {
 
 const styles = StyleSheet.create({
   langWarn: {
-    flexDirection: 'row', alignItems: 'flex-start', gap: S.md, marginHorizontal: S.lg, padding: S.md, borderRadius: 14,
+    flexDirection: 'row', alignItems: 'flex-start', gap: S.md, padding: S.md, borderRadius: 14,
     backgroundColor: 'rgba(245,181,68,0.12)', borderWidth: 1, borderColor: 'rgba(245,181,68,0.35)',
   },
   topBar: { flexDirection: 'row', alignItems: 'center', gap: S.md, paddingHorizontal: S.md, paddingBottom: S.sm },

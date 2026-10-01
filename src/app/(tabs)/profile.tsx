@@ -33,7 +33,7 @@ export default function Profile() {
       contentInsetAdjustmentBehavior="automatic"
       contentContainerStyle={{ paddingTop: S.sm, paddingHorizontal: S.lg, gap: S.xl, paddingBottom: S.xxl }}>
       <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
-        <Txt v="display" style={{ fontSize: 28 }}>Profil</Txt>
+        <Txt v="display" numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.6} style={{ fontSize: 28 }}>Profil</Txt>
         <IconButton icon="settings-outline" label="Réglages" tone="solid" onPress={() => router.push('/settings')} />
       </View>
 
