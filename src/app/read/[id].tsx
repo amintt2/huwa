@@ -15,7 +15,7 @@ import {
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { cancelDownload, downloadChapter, downloadsSupported, useDownload } from '@/components/reader/downloads';
+import { autoDownloadAfter, downloadChapter, downloadsSupported, pauseDownload, resumeDownload, useDownload } from '@/components/reader/downloads';
 import { prefetchChapterStart, prefetchPages, usePages } from '@/components/reader/pages';
 import { getPosition, readerReady, savePosition, setReaderMode, useReaderMode } from '@/components/reader/position';
 import { ZoomLayer } from '@/components/reader/ZoomLayer';
@@ -212,18 +212,34 @@ function Reader({ id }: { id: string }) {
     </View>
   );
 
-  const dlIcon = !download ? 'arrow-down-circle-outline' : download.status === 'done' ? 'checkmark-circle' : download.status === 'error' ? 'alert-circle-outline' : null;
+  // Opt-in: fetch the next chapters in the background (Wi-Fi only).
+  useEffect(() => {
+    autoDownloadAfter(id);
+  }, [id]);
+
+  const dlIcon = !download
+    ? 'arrow-down-circle-outline'
+    : download.status === 'done'
+      ? 'checkmark-circle'
+      : download.status === 'error'
+        ? 'alert-circle-outline'
+        : download.status === 'paused'
+          ? 'pause-circle-outline'
+          : null;
   const dlLabel = !download
     ? 'Télécharger le chapitre'
     : download.status === 'done'
       ? 'Chapitre téléchargé, gérer les téléchargements'
       : download.status === 'error'
         ? 'Échec du téléchargement, réessayer'
-        : `Téléchargement ${download.saved}/${download.total}, annuler`;
+        : download.status === 'paused'
+          ? 'Téléchargement en pause, reprendre'
+          : `Téléchargement ${download.saved}/${download.total}, mettre en pause`;
   const onDownload = () => {
-    if (!download || download.status === 'error') downloadChapter(id, series.id);
+    if (!download) downloadChapter(id, series.id);
+    else if (download.status === 'error' || download.status === 'paused') resumeDownload(id);
     else if (download.status === 'done') router.push('/offline');
-    else cancelDownload(id);
+    else pauseDownload(id);
   };
 
   const shownProgress = pages.length ? (page + 1) / pages.length : 0;

@@ -4,8 +4,12 @@
 
 export type PaperbackFormat = '0.8' | '0.9';
 
-/** Operations the app can ask a loaded source for. */
-export type SourceOp = 'details' | 'chapters' | 'pages' | 'search' | 'imageHeaders' | 'info';
+/**
+ * Operations the app can ask a loaded source for. `discover` lists the source's home sections
+ * (0.9 `getDiscoverSections`, 0.8 `getHomePageSections` with its first items); `discoverItems`
+ * pages one section (0.9 `getDiscoverSectionItems(section, metadata)`, 0.8 `getViewMoreItems(id, metadata)`).
+ */
+export type SourceOp = 'details' | 'chapters' | 'pages' | 'search' | 'imageHeaders' | 'info' | 'discover' | 'discoverItems';
 
 export type HostToSandbox =
   | {
