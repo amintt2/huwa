@@ -43,3 +43,19 @@ test('languageMismatch tells what the chosen source lacks', async () => {
   assert.equal(normLang('fre'), 'fr');
   assert.equal(normLang('French'), 'fr');
 });
+
+test('MULTI-Subs / Multi-Audio are not a French track', async () => {
+  const { detectLangs } = await import('../audio');
+  assert.equal(detectLangs({ name: 'x', title: 'Show S01E01 1080p Multi-Subs' }).audio.includes('fr'), false);
+  assert.equal(detectLangs({ name: 'x', title: 'Show S01E01 MULTi-Audio' }).audio.includes('fr'), false);
+  assert.equal(detectLangs({ name: 'x', title: 'Show S01E01 MULTI 1080p' }).audio.includes('fr'), true);
+});
+
+test('quality: only "1080p" forms, not bare numbers', async () => {
+  const { detectQuality } = await import('../quality');
+  const q = (x: { name: string; title?: string }) => detectQuality({ ...x, addonId: 't', addonName: 't' });
+  assert.equal(q({ name: 'One Piece - 1080 [720p]' }), 720);
+  assert.equal(q({ name: 'Show S01E360', title: '👤 480' }), null);
+  assert.equal(q({ name: 'Show 1920x1080 HEVC' }), 1080);
+  assert.equal(q({ name: 'Show 2160p' }), 2160);
+});

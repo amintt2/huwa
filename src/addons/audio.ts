@@ -22,7 +22,8 @@ export function detectLangs(s: StreamItem): StreamLangs {
     audio.add('ja');
     label = '🇯🇵 VOSTFR';
   }
-  if (/\bMULTI\b/i.test(text)) {
+  // Not "Multi-Subs" / "Multi-Audio" / "Multi Dub": those say nothing about a French track.
+  if (/\bMULTI\b(?![ ._-]?(?:subs?|audio|dub))/i.test(text)) {
     // French scene MULTI = VF + VO, the VO subtitled in French inside the file.
     audio.add('fr').add('ja');
     subs.add('fr');

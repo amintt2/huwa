@@ -34,6 +34,13 @@ function countdown(ms: number, t: ReturnType<typeof useT>) {
   return t('calendar.in', { time: h ? `${h} h ${String(m % 60).padStart(2, '0')}` : `${m} min` });
 }
 
+/** Calendar days between local midnight `today` and the local day of `at` (DST-safe). */
+function dayIndex(today: number, at: number) {
+  const a = new Date(today);
+  const b = new Date(at);
+  return Math.round((Date.UTC(b.getFullYear(), b.getMonth(), b.getDate()) - Date.UTC(a.getFullYear(), a.getMonth(), a.getDate())) / 86_400_000);
+}
+
 export default function Calendar() {
   const insets = useSafeAreaInsets();
   const { width } = useWindowDimensions();
@@ -92,7 +99,9 @@ export default function Calendar() {
 
   const days = useMemo(() => {
     const list = Array.from({ length: 7 }, (_, i) => {
-      const date = new Date(today + i * DAY);
+      // Calendar days, not 24 h steps: DST weeks have a 23 h / 25 h day.
+      const base = new Date(today);
+      const date = new Date(base.getFullYear(), base.getMonth(), base.getDate() + i);
       return {
         label: i === 0 ? t('calendar.today') : i === 1 ? t('calendar.tomorrow') : date.toLocaleDateString(locale, { weekday: 'long' }),
         date: date.toLocaleDateString(locale, { day: 'numeric', month: 'short' }),
@@ -101,7 +110,7 @@ export default function Calendar() {
     });
     for (const a of items ?? []) {
       if (onlyMine && !followed.has(a.seriesId ?? `al${a.anilistId}`)) continue;
-      const i = Math.floor((new Date(a.airingAt * 1000).setHours(0, 0, 0, 0) - today) / DAY);
+      const i = dayIndex(today, a.airingAt * 1000);
       if (i >= 0 && i < 7) list[i].data.push(a);
     }
     for (const d of list) d.data.sort((a, b) => a.airingAt - b.airingAt || (b.popularity ?? 0) - (a.popularity ?? 0));
@@ -179,7 +188,7 @@ export default function Calendar() {
         {days.map((d, i) => {
           const on = i === day;
           return (
-            <Press key={d.label} onPress={() => selectDay(i)} accessibilityRole="tab" accessibilityState={{ selected: on }}
+            <Press key={`${i}-${d.date}`} onPress={() => selectDay(i)} accessibilityRole="tab" accessibilityState={{ selected: on }}
               accessibilityLabel={`${d.label}, ${d.date}${items ? `, ${t('calendar.count', { n: d.data.length })}` : ''}`}
               onLayout={(e) => {
                 tabFrames.current[i] = e.nativeEvent.layout;
