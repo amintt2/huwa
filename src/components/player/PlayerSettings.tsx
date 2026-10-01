@@ -1,8 +1,8 @@
 import Ionicons from '@expo/vector-icons/Ionicons';
-import { Modal, Pressable, ScrollView, StyleSheet, Switch, View } from 'react-native';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { Pressable, ScrollView, StyleSheet, Switch, View } from 'react-native';
 
-import { Txt } from '@/components/ui';
+import { Sheet, SheetLabel } from '@/components/sheet';
+import { haptic, Txt } from '@/components/ui';
 import { C, R, S } from '@/theme/tokens';
 
 import { SPEEDS, SUBTITLE_SIZES, type SubtitleSize } from './prefs';
@@ -14,19 +14,22 @@ export type Option = { key: string; label: string; hint?: string };
 function Row({ title, options, value, onPick }: { title: string; options: Option[]; value: string; onPick: (k: string) => void }) {
   return (
     <View style={{ gap: S.sm }}>
-      <Txt v="caption">{title}</Txt>
+      <SheetLabel>{title}</SheetLabel>
       <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: S.sm }}>
         {options.map((o) => {
           const on = o.key === value;
           return (
             <Pressable
               key={o.key}
-              onPress={() => onPick(o.key)}
+              onPress={() => {
+                haptic('select');
+                onPick(o.key);
+              }}
               accessibilityRole="button"
               accessibilityState={{ selected: on }}
               style={[styles.opt, on && { backgroundColor: C.accentSoft, borderColor: C.accentLine }]}>
-              <Txt v="label" style={{ fontSize: 14 }} color={on ? C.accentText : C.text}>{o.label}</Txt>
-              {o.hint ? <Txt v="small" style={{ fontSize: 11 }}>{o.hint}</Txt> : null}
+              <Txt v="label" tabular style={{ fontSize: 14 }} color={on ? C.accentText : C.text}>{o.label}</Txt>
+              {o.hint ? <Txt v="footnote" style={{ fontSize: 11 }}>{o.hint}</Txt> : null}
             </Pressable>
           );
         })}
@@ -80,79 +83,55 @@ export function PlayerSettings({
   liveComments: boolean;
   onLiveComments: (v: boolean) => void;
 }) {
-  const insets = useSafeAreaInsets();
   return (
-    <Modal
-      visible={visible}
-      transparent
-      animationType="slide"
-      onRequestClose={onClose}
-      supportedOrientations={['portrait', 'landscape-left', 'landscape-right']}>
-      <Pressable style={styles.backdrop} onPress={onClose} accessibilityLabel="Fermer les réglages" />
-      <View style={[styles.sheet, { paddingBottom: insets.bottom + S.lg, paddingLeft: insets.left + S.lg, paddingRight: insets.right + S.lg }]}>
-        <View style={styles.head}>
-          <Txt v="section" style={{ fontSize: 16 }}>Réglages de lecture</Txt>
-          <Pressable onPress={onClose} hitSlop={12} accessibilityRole="button" accessibilityLabel="Fermer">
-            <Ionicons name="close" size={22} color={C.text} />
-          </Pressable>
+    <Sheet visible={visible} onClose={onClose} title="Réglages de lecture" detents="fit">
+      <Row title="Vitesse" value={String(rate)} onPick={(k) => onRate(Number(k))}
+        options={SPEEDS.map((s) => ({ key: String(s), label: s === 1 ? 'Normale' : `${String(s).replace('.', ',')}×` }))} />
+      {onOpenSubtitles && (
+        <Pressable onPress={onOpenSubtitles} accessibilityRole="button" style={({ pressed }) => [styles.linkRow, pressed && { opacity: 0.6 }]}>
+          <Ionicons name="text" size={18} color={C.accentText} />
+          <View style={{ flex: 1, gap: 2 }}>
+            <Txt v="label" style={{ fontSize: 14 }}>Sous-titres</Txt>
+            <Txt v="small" style={{ fontSize: 12 }}>Piste, synchronisation, police et style</Txt>
+          </View>
+          <Ionicons name="chevron-forward" size={16} color={C.text2} />
+        </Pressable>
+      )}
+      {subtitles && subtitleKey !== undefined && onSubtitle && <Row title="Sous-titres" value={subtitleKey} onPick={onSubtitle} options={subtitles} />}
+      {subtitleNote ? <Txt v="small">{subtitleNote}</Txt> : null}
+      {size && onSize && (
+        <Row title="Taille des sous-titres" value={size} onPick={(k) => onSize(k as SubtitleSize)}
+          options={(Object.keys(SUBTITLE_SIZES) as SubtitleSize[]).map((k) => ({ key: k, label: SIZE_LABELS[k] }))} />
+      )}
+      {audio.length > 1 && <Row title="Audio" value={audioKey} onPick={onAudio} options={audio} />}
+      <View style={styles.switchRow}>
+        <View style={{ flex: 1, gap: 2 }}>
+          <Txt v="label" style={{ fontSize: 14 }}>Épisode suivant automatique</Txt>
+          <Txt v="small" style={{ fontSize: 12 }}>Lance la suite après un compte à rebours.</Txt>
         </View>
-        <ScrollView contentContainerStyle={{ gap: S.lg, paddingBottom: S.sm }}>
-          <Row title="Vitesse" value={String(rate)} onPick={(k) => onRate(Number(k))}
-            options={SPEEDS.map((s) => ({ key: String(s), label: s === 1 ? 'Normale' : `${String(s).replace('.', ',')}×` }))} />
-          {onOpenSubtitles && (
-            <Pressable onPress={onOpenSubtitles} accessibilityRole="button" style={({ pressed }) => [styles.linkRow, pressed && { opacity: 0.6 }]}>
-              <Ionicons name="text" size={18} color={C.accentText} />
-              <View style={{ flex: 1, gap: 2 }}>
-                <Txt v="label" style={{ fontSize: 14 }}>Sous-titres</Txt>
-                <Txt v="small" style={{ fontSize: 12 }}>Piste, synchronisation, police et style</Txt>
-              </View>
-              <Ionicons name="chevron-forward" size={16} color={C.text2} />
-            </Pressable>
-          )}
-          {subtitles && subtitleKey !== undefined && onSubtitle && <Row title="Sous-titres" value={subtitleKey} onPick={onSubtitle} options={subtitles} />}
-          {subtitleNote ? <Txt v="small">{subtitleNote}</Txt> : null}
-          {size && onSize && (
-            <Row title="Taille des sous-titres" value={size} onPick={(k) => onSize(k as SubtitleSize)}
-              options={(Object.keys(SUBTITLE_SIZES) as SubtitleSize[]).map((k) => ({ key: k, label: SIZE_LABELS[k] }))} />
-          )}
-          {audio.length > 1 && <Row title="Audio" value={audioKey} onPick={onAudio} options={audio} />}
-          <View style={styles.switchRow}>
-            <View style={{ flex: 1, gap: 2 }}>
-              <Txt v="label" style={{ fontSize: 14 }}>Épisode suivant automatique</Txt>
-              <Txt v="small" style={{ fontSize: 12 }}>Lance la suite après un compte à rebours.</Txt>
-            </View>
-            <Switch value={autoNext} onValueChange={onAutoNext} trackColor={{ true: C.accent, false: C.elevated }} />
-          </View>
-          <View style={styles.switchRow}>
-            <View style={{ flex: 1, gap: 2 }}>
-              <Txt v="label" style={{ fontSize: 14 }}>Commentaires sur la vidéo</Txt>
-              <Txt v="small" style={{ fontSize: 12 }}>En plein écran, les commentaires horodatés apparaissent au bon moment.</Txt>
-            </View>
-            <Switch value={liveComments} onValueChange={onLiveComments} trackColor={{ true: C.accent, false: C.elevated }} />
-          </View>
-          <Row title="Panneau des commentaires (paysage)" value={commentsSide} onPick={(k) => onCommentsSide(k as 'left' | 'right')}
-            options={[{ key: 'left', label: 'À gauche' }, { key: 'right', label: 'À droite' }]} />
-        </ScrollView>
+        <Switch value={autoNext} onValueChange={onAutoNext} trackColor={{ true: C.accent, false: C.elevated }} />
       </View>
-    </Modal>
+      <View style={styles.switchRow}>
+        <View style={{ flex: 1, gap: 2 }}>
+          <Txt v="label" style={{ fontSize: 14 }}>Commentaires sur la vidéo</Txt>
+          <Txt v="small" style={{ fontSize: 12 }}>En plein écran, les commentaires horodatés apparaissent au bon moment.</Txt>
+        </View>
+        <Switch value={liveComments} onValueChange={onLiveComments} trackColor={{ true: C.accent, false: C.elevated }} />
+      </View>
+      <Row title="Panneau des commentaires (paysage)" value={commentsSide} onPick={(k) => onCommentsSide(k as 'left' | 'right')}
+        options={[{ key: 'left', label: 'À gauche' }, { key: 'right', label: 'À droite' }]} />
+    </Sheet>
   );
 }
 
 const styles = StyleSheet.create({
-  backdrop: { ...StyleSheet.absoluteFill, backgroundColor: 'rgba(0,0,0,0.45)' },
-  sheet: {
-    position: 'absolute', left: 0, right: 0, bottom: 0, maxHeight: '82%', paddingTop: S.lg, gap: S.md,
-    backgroundColor: C.surface, borderTopLeftRadius: R.sheet, borderTopRightRadius: R.sheet, borderCurve: 'continuous',
-    borderWidth: 1, borderColor: C.border,
-  },
-  head: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   opt: {
     minHeight: 40, paddingHorizontal: 14, paddingVertical: 8, justifyContent: 'center', borderRadius: R.control,
-    borderCurve: 'continuous', backgroundColor: C.elevated, borderWidth: 1, borderColor: C.border,
+    borderCurve: 'continuous', backgroundColor: C.elevated, borderWidth: 1, borderColor: 'rgba(255,255,255,0.05)',
   },
   switchRow: { flexDirection: 'row', alignItems: 'center', gap: S.md, paddingTop: S.xs },
   linkRow: {
     flexDirection: 'row', alignItems: 'center', gap: S.md, minHeight: 52, paddingHorizontal: 14, borderRadius: R.control,
-    borderCurve: 'continuous', backgroundColor: C.elevated, borderWidth: 1, borderColor: C.border,
+    borderCurve: 'continuous', backgroundColor: C.elevated, borderWidth: 1, borderColor: 'rgba(255,255,255,0.05)',
   },
 });

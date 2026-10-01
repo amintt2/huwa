@@ -25,7 +25,7 @@ import Animated, {
   withSpring,
   withTiming,
 } from 'react-native-reanimated';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { initialWindowMetrics, SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { scheduleOnRN } from 'react-native-worklets';
 
 import { C, DUR, EASE_OUT, R, S, SHADOW, SPRING } from '@/theme/tokens';
@@ -68,11 +68,19 @@ export function Sheet({
   const [mounted, setMounted] = useState(visible);
   if (visible && !mounted) setMounted(true);
   if (!mounted) return null;
+  // A fresh safe-area provider: insets from the screen underneath would include its tab bar.
   return (
-    <SheetHost visible={visible} onClosed={() => setMounted(false)} onClose={onClose} title={title} subtitle={subtitle}
-      headerLeft={headerLeft} headerRight={headerRight} detents={detents} footer={footer} side={side} contentGap={contentGap} padded={padded}>
-      {children}
-    </SheetHost>
+    <Modal visible transparent animationType="none" statusBarTranslucent navigationBarTranslucent onRequestClose={onClose}
+      supportedOrientations={['portrait', 'landscape-left', 'landscape-right']}>
+      <SafeAreaProvider initialMetrics={initialWindowMetrics}>
+        <GestureHandlerRootView style={{ flex: 1 }}>
+          <SheetHost visible={visible} onClosed={() => setMounted(false)} onClose={onClose} title={title} subtitle={subtitle}
+            headerLeft={headerLeft} headerRight={headerRight} detents={detents} footer={footer} side={side} contentGap={contentGap} padded={padded}>
+            {children}
+          </SheetHost>
+        </GestureHandlerRootView>
+      </SafeAreaProvider>
+    </Modal>
   );
 }
 
@@ -220,7 +228,7 @@ function SheetHost({
     });
 
   const backdrop = useAnimatedStyle(() => {
-    const fromTy = asSide ? 1 : interpolate(ty.get(), [topY, sheetH], [1, 0], Extrapolation.CLAMP);
+    const fromTy = asSide ? 1 : interpolate(ty.get(), [midY, sheetH], [1, 0], Extrapolation.CLAMP);
     return { opacity: Math.min(fade.get(), reduce ? 1 : fromTy) };
   });
   const sheetStyle = useAnimatedStyle(() => ({
@@ -289,32 +297,29 @@ function SheetHost({
   );
 
   return (
-    <Modal visible transparent animationType="none" statusBarTranslucent navigationBarTranslucent onRequestClose={onClose}
-      supportedOrientations={['portrait', 'landscape-left', 'landscape-right']}>
-      <GestureHandlerRootView style={{ flex: 1 }}>
-        <Animated.View style={[StyleSheet.absoluteFill, { backgroundColor: asSide ? 'rgba(0,0,0,0.25)' : 'rgba(0,0,0,0.5)' }, backdrop]}>
-          <Pressable style={StyleSheet.absoluteFill} onPress={onClose} accessibilityRole="button" accessibilityLabel="Fermer" />
+    <>
+      <Animated.View style={[StyleSheet.absoluteFill, { backgroundColor: asSide ? 'rgba(0,0,0,0.25)' : 'rgba(0,0,0,0.5)' }, backdrop]}>
+        <Pressable style={StyleSheet.absoluteFill} onPress={onClose} accessibilityRole="button" accessibilityLabel="Fermer" />
+      </Animated.View>
+      <GestureDetector gesture={pan}>
+        <Animated.View
+          accessibilityViewIsModal
+          style={[
+            styles.sheet,
+            asSide
+              ? { top: 0, bottom: 0, right: 0, width: sideW + insets.right, paddingTop: Math.max(insets.top, S.md), paddingRight: insets.right, borderTopRightRadius: 0, borderBottomLeftRadius: R.sheet }
+              : { bottom: 0, height: fit ? undefined : sheetH, maxHeight: maxH, width: cardW, alignSelf: 'center', left: (win.width - cardW) / 2 },
+            !measured && { opacity: 0 },
+            sheetStyle,
+          ]}>
+          {fit && !asSide ? (
+            <View onLayout={onContent} style={{ flexShrink: 1, maxHeight: maxH }}>{body}</View>
+          ) : (
+            body
+          )}
         </Animated.View>
-        <GestureDetector gesture={pan}>
-          <Animated.View
-            accessibilityViewIsModal
-            style={[
-              styles.sheet,
-              asSide
-                ? { top: 0, bottom: 0, right: 0, width: sideW + insets.right, paddingTop: Math.max(insets.top, S.md), paddingRight: insets.right, borderTopRightRadius: 0, borderBottomLeftRadius: R.sheet }
-                : { bottom: 0, height: fit ? undefined : sheetH, maxHeight: maxH, width: cardW, alignSelf: 'center', left: (win.width - cardW) / 2 },
-              !measured && { opacity: 0 },
-              sheetStyle,
-            ]}>
-            {fit && !asSide ? (
-              <View onLayout={onContent} style={{ flexShrink: 1, maxHeight: maxH }}>{body}</View>
-            ) : (
-              body
-            )}
-          </Animated.View>
-        </GestureDetector>
-      </GestureHandlerRootView>
-    </Modal>
+      </GestureDetector>
+    </>
   );
 }
 
