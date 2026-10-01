@@ -4,7 +4,7 @@ import { build } from 'esbuild';
 import { fileURLToPath } from 'node:url';
 import vm from 'node:vm';
 
-import { CookieJar, createNet, type RawFetch } from '../net';
+import { CookieJar, createNet, readCapped, type RawFetch } from '../net';
 import type { HostToSandbox, HttpRequest, HttpResponse, PaperbackFormat, SandboxToHost, SourceOp } from '../runtime/protocol';
 
 let runtime: Promise<string> | undefined;
@@ -96,11 +96,11 @@ export async function createNodeSandbox(handle: (req: HttpRequest) => Promise<Ht
 
 /** Real network through the app's policy layer (`net.ts`), with Node's fetch as transport. */
 export const nodeFetch: RawFetch = async (url, init) => {
-  const res = await fetch(url, { method: init.method, headers: init.headers, body: init.body as BodyInit | undefined, signal: init.signal, redirect: 'follow' });
+  const res = await fetch(url, { method: init.method, headers: init.headers, body: init.body as BodyInit | undefined, signal: init.signal, redirect: init.redirect });
   const headers: Record<string, string> = {};
   res.headers.forEach((v, k) => (headers[k] = v));
-  const body = new Uint8Array(await res.arrayBuffer());
-  return { url: res.url, status: res.status, headers, setCookies: res.headers.getSetCookie(), body };
+  const body = res.body ? await readCapped(res.body.getReader(), init.maxBytes) : new Uint8Array(0);
+  return { url: res.url || url, status: res.status, headers, setCookies: res.headers.getSetCookie(), body };
 };
 
 export function nodeNet() {
