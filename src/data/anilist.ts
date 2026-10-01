@@ -25,6 +25,7 @@ const QUERY = `query {
 export type Media = {
   id: number;
   type: 'ANIME' | 'MANGA';
+  format?: string | null;
   status: 'FINISHED' | 'RELEASING' | 'NOT_YET_RELEASED' | 'CANCELLED' | 'HIATUS' | null;
   countryOfOrigin: string | null;
   episodes: number | null;
@@ -72,6 +73,15 @@ export const episodeCount = (m: Media) =>
   Math.min(MAX_EPISODES, m.episodes ?? (m.nextAiringEpisode ? m.nextAiringEpisode.episode - 1 : 0));
 export const isManhwa = (m: Media) => m.type === 'MANGA' && m.countryOfOrigin === 'KR';
 
+const TV_FORMATS = ['TV', 'TV_SHORT', 'ONA'];
+export const isTvLike = (m: Pick<Media, 'format'>) => !m.format || TV_FORMATS.includes(m.format);
+
+/** Previous entry of an anime franchise (a TV season over a movie or a special when both exist). */
+export function prequelOf(m: Media): Media | undefined {
+  const edges = (m.relations?.edges ?? []).filter((e) => e.relationType === 'PREQUEL' && e.node.type === 'ANIME');
+  return (edges.find((e) => isTvLike(e.node)) ?? edges[0])?.node;
+}
+
 export function build(anime: Media | null, manhwa: Media | null, trendRank: number): Series | null {
   const lead = anime ?? manhwa!;
   const id = anime ? `al${anime.id}` : `alm${manhwa!.id}`;
@@ -96,6 +106,8 @@ export function build(anime: Media | null, manhwa: Media | null, trendRank: numb
     banner: lead.bannerImage ?? undefined,
     nextAiring: anime?.nextAiringEpisode ?? undefined,
     trendRank,
+    // Earlier season of the same show, when AniList links one (null: this is the first entry).
+    prequel: anime?.relations ? (prequelOf(anime)?.id ?? null) : undefined,
     estimated: !!(anime && manhwa),
     anime: anime && eps > 0 ? { episodes: makeEpisodes(id, eps, covered, false) } : undefined,
     manhwa: manhwa ? { chapters: makeChapters(id, chapterTotal, false) } : undefined,

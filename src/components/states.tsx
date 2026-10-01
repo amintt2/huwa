@@ -19,7 +19,7 @@ export function ScreenHeader({ title, right }: { title: string; right?: ReactNod
   return (
     <View style={styles.header}>
       <IconButton icon="chevron-back" label={t('common.back')} onPress={() => router.back()} />
-      <Txt v="display" style={{ fontSize: 26, flex: 1 }} numberOfLines={1}>{title}</Txt>
+      <Txt v="display" style={{ fontSize: 26, flex: 1 }} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.6}>{title}</Txt>
       {right}
     </View>
   );
@@ -101,7 +101,8 @@ export function FilterChip({ label, selected, onPress, icon }: { label: string; 
       hitSlop={4}
       style={[styles.fchip, selected && { backgroundColor: C.accentSoft, borderColor: C.accentLine }]}>
       {icon && <Ionicons name={icon} size={13} color={selected ? C.accentText : C.text2} />}
-      <Txt v="small" color={selected ? C.accentText : C.body} style={{ fontSize: 13, ...F.semibold }}>{label}</Txt>
+      <Txt v="small" color={selected ? C.accentText : C.body} numberOfLines={1} maxFontSizeMultiplier={1.6}
+        style={{ fontSize: 13, flexShrink: 1, ...F.semibold }}>{label}</Txt>
     </Pressable>
   );
 }

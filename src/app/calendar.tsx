@@ -2,7 +2,7 @@
 // One day at a time, big posters in a two-column grid, like the planning pages fans already use.
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { router } from 'expo-router';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { ActivityIndicator, Alert, FlatList, ScrollView, StyleSheet, View, useWindowDimensions } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -17,6 +17,9 @@ import { C, R, S } from '@/theme/tokens';
 
 const DAY = 86_400_000;
 const GAP = 12;
+/** Pills and badges sit on fixed-size art or in a strip: grow with Dynamic Type, within reason. */
+const PILL_SCALE = 1.35;
+const TAB_SCALE = 1.6;
 
 function startOfToday() {
   const d = new Date();
@@ -46,6 +49,18 @@ export default function Calendar() {
   const [opening, setOpening] = useState<number | null>(null);
   const [today] = useState(startOfToday);
   const [day, setDay] = useState(0);
+  const tabsRef = useRef<ScrollView>(null);
+  const tabFrames = useRef<Record<number, { x: number; width: number }>>({});
+  /** Keep the selected day centered in the strip (also the initial one once laid out). */
+  const reveal = (i: number, animated = true) => {
+    const f = tabFrames.current[i];
+    if (!f) return;
+    tabsRef.current?.scrollTo({ x: Math.max(0, f.x + f.width / 2 - width / 2), animated });
+  };
+  const selectDay = (i: number) => {
+    setDay(i);
+    reveal(i);
+  };
   const [now, setNow] = useState(() => Date.now());
 
   useEffect(() => {
@@ -124,19 +139,31 @@ export default function Calendar() {
         <Press onPress={() => open(next)} style={styles.next} accessibilityRole="button"
           accessibilityLabel={`${t('calendar.next')} : ${next.title}, ${t('calendar.episode', { n: next.episode })}, ${countdown(next.airingAt * 1000 - now, t)}`}>
           <Cover palette={palette(next.color)} image={next.image} width={64} height={92} radius={10} />
-          <View style={{ flex: 1, gap: 4 }}>
-            <Txt v="caption" color={C.accentText}>{t('calendar.next').toUpperCase()}</Txt>
+          {/* The countdown sits in the text column: beside it, it squeezed the title to a few letters. */}
+          <View style={{ flex: 1, minWidth: 0, gap: 4, alignItems: 'flex-start' }}>
+            <Txt v="caption" color={C.accentText} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.7}>
+              {t('calendar.next').toUpperCase()}
+            </Txt>
             <Txt v="label" numberOfLines={2} style={{ fontSize: 16 }}>{next.title}</Txt>
-            <Txt v="small">{t('calendar.episode', { n: next.episode })} · {time(next)}</Txt>
-          </View>
-          <View style={styles.countdown}>
-            <Txt v="label" color={C.white} style={{ fontSize: 13 }}>{countdown(next.airingAt * 1000 - now, t)}</Txt>
+            <Txt v="small" numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.8}>
+              {t('calendar.episode', { n: next.episode })} · {time(next)}
+            </Txt>
+            <View style={styles.countdown}>
+              <Ionicons name="time-outline" size={13} color={C.white} />
+              <Txt v="label" color={C.white} numberOfLines={1} maxFontSizeMultiplier={PILL_SCALE}
+                style={{ fontSize: 13, fontVariant: ['tabular-nums'] }}>
+                {countdown(next.airingAt * 1000 - now, t)}
+              </Txt>
+            </View>
           </View>
         </Press>
       )}
-      <View style={{ flexDirection: 'row', alignItems: 'baseline', justifyContent: 'space-between' }}>
-        <Txt v="section" style={{ fontSize: 20, textTransform: 'capitalize' }}>{selected.label}</Txt>
-        <Txt v="small">{t('calendar.count', { n: selected.data.length })}</Txt>
+      <View style={{ flexDirection: 'row', alignItems: 'baseline', justifyContent: 'space-between', gap: S.md }}>
+        <Txt v="section" numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.7}
+          style={{ fontSize: 20, textTransform: 'capitalize', flexShrink: 1 }}>
+          {selected.label}
+        </Txt>
+        <Txt v="small" numberOfLines={1}>{t('calendar.count', { n: selected.data.length })}</Txt>
       </View>
     </View>
   );
@@ -146,14 +173,25 @@ export default function Calendar() {
       <ScreenHeader title={t('calendar.title')} />
       <Txt v="small" style={{ paddingHorizontal: S.lg, marginTop: -4, marginBottom: S.md }}>{t('calendar.subtitle')}</Txt>
 
-      <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ flexGrow: 0 }} contentContainerStyle={styles.tabs}>
+      {/* flexShrink 0: the list below must not squeeze the strip (it clipped the dates). */}
+      <ScrollView ref={tabsRef} horizontal showsHorizontalScrollIndicator={false} style={{ flexGrow: 0, flexShrink: 0 }}
+        contentContainerStyle={styles.tabs}>
         {days.map((d, i) => {
           const on = i === day;
           return (
-            <Press key={d.label} onPress={() => setDay(i)} accessibilityRole="tab" accessibilityState={{ selected: on }}
+            <Press key={d.label} onPress={() => selectDay(i)} accessibilityRole="tab" accessibilityState={{ selected: on }}
+              accessibilityLabel={`${d.label}, ${d.date}${items ? `, ${t('calendar.count', { n: d.data.length })}` : ''}`}
+              onLayout={(e) => {
+                tabFrames.current[i] = e.nativeEvent.layout;
+                if (i === day) reveal(i, false);
+              }}
               style={[styles.tab, on && styles.tabOn]}>
-              <Txt v="label" color={on ? C.white : C.text} style={{ fontSize: 14, textTransform: 'capitalize' }}>{d.label}</Txt>
-              <Txt v="small" color={on ? 'rgba(255,255,255,0.8)' : C.text2} style={{ fontSize: 12 }}>
+              <Txt v="label" numberOfLines={1} maxFontSizeMultiplier={TAB_SCALE} color={on ? C.white : C.text}
+                style={{ fontSize: 14, textTransform: 'capitalize' }}>
+                {d.label}
+              </Txt>
+              <Txt v="small" numberOfLines={1} maxFontSizeMultiplier={TAB_SCALE} color={on ? 'rgba(255,255,255,0.8)' : C.text2}
+                style={{ fontSize: 12, fontVariant: ['tabular-nums'] }}>
                 {d.date}{items ? ` · ${d.data.length}` : ''}
               </Txt>
             </Press>
@@ -193,7 +231,8 @@ export default function Calendar() {
                   <Cover palette={palette(a.color)} image={a.image} width={cardW} height={Math.round(cardW * 1.45)} radius={R.card} />
                   <View style={[styles.pill, styles.timePill, aired && { backgroundColor: 'rgba(12,17,28,0.85)' }]}>
                     <Ionicons name={aired ? 'checkmark' : 'time-outline'} size={12} color={aired ? C.success : C.white} />
-                    <Txt v="label" color={C.white} style={{ fontSize: 13, fontVariant: ['tabular-nums'] }}>{time(a)}</Txt>
+                    <Txt v="label" color={C.white} numberOfLines={1} maxFontSizeMultiplier={PILL_SCALE}
+                      style={{ fontSize: 13, fontVariant: ['tabular-nums'] }}>{time(a)}</Txt>
                   </View>
                   {mine && (
                     <View style={[styles.pill, styles.mine]}>
@@ -202,11 +241,15 @@ export default function Calendar() {
                   )}
                   <View style={styles.bottomBadges}>
                     <View style={[styles.pill, { backgroundColor: 'rgba(5,7,13,0.82)' }]}>
-                      <Txt v="label" color={C.white} style={{ fontSize: 12 }}>{t('calendar.ep', { n: a.episode })}</Txt>
+                      <Txt v="label" color={C.white} numberOfLines={1} maxFontSizeMultiplier={PILL_SCALE} style={{ fontSize: 12 }}>
+                        {t('calendar.ep', { n: a.episode })}
+                      </Txt>
                     </View>
                     {(first || last) && (
                       <View style={[styles.pill, { backgroundColor: first ? C.accent : '#C2410C' }]}>
-                        <Txt v="caption" color={C.white} style={{ fontSize: 10 }}>{first ? t('calendar.new') : t('calendar.final')}</Txt>
+                        <Txt v="caption" color={C.white} numberOfLines={1} maxFontSizeMultiplier={PILL_SCALE} style={{ fontSize: 10 }}>
+                          {first ? t('calendar.new') : t('calendar.final')}
+                        </Txt>
                       </View>
                     )}
                   </View>
@@ -225,7 +268,7 @@ export default function Calendar() {
 }
 
 const styles = StyleSheet.create({
-  tabs: { paddingHorizontal: S.lg, gap: S.sm, paddingBottom: S.md },
+  tabs: { paddingHorizontal: S.lg, gap: S.sm, paddingBottom: S.md, alignItems: 'stretch' },
   tab: {
     minWidth: 92, paddingVertical: 8, paddingHorizontal: 14, borderRadius: R.card, borderCurve: 'continuous',
     backgroundColor: C.surface, borderWidth: 1, borderColor: C.border, gap: 1,
@@ -236,11 +279,14 @@ const styles = StyleSheet.create({
     flexDirection: 'row', alignItems: 'center', gap: S.md, padding: S.md, borderRadius: R.card, borderCurve: 'continuous',
     backgroundColor: C.surface, borderWidth: 1, borderColor: C.accentLine,
   },
-  countdown: { paddingHorizontal: 10, paddingVertical: 6, borderRadius: R.pill, backgroundColor: C.accent },
+  countdown: {
+    flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 2, maxWidth: '100%',
+    paddingHorizontal: 10, paddingVertical: 5, borderRadius: R.pill, backgroundColor: C.accent,
+  },
   poster: { borderRadius: R.card, borderCurve: 'continuous', overflow: 'hidden' },
   posterMine: { borderWidth: 2, borderColor: C.accentText },
   pill: { flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: 8, paddingVertical: 4, borderRadius: R.pill },
-  timePill: { position: 'absolute', top: 8, left: 8, backgroundColor: 'rgba(47,107,235,0.92)' },
+  timePill: { position: 'absolute', top: 8, left: 8, maxWidth: '70%', backgroundColor: 'rgba(47,107,235,0.92)' },
   mine: { position: 'absolute', top: 8, right: 8, backgroundColor: 'rgba(5,7,13,0.82)', paddingHorizontal: 6 },
   bottomBadges: { position: 'absolute', left: 8, bottom: 8, right: 8, flexDirection: 'row', gap: 6, flexWrap: 'wrap' },
   loading: { ...StyleSheet.absoluteFill, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(0,0,0,0.35)' },
