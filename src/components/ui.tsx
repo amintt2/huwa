@@ -264,7 +264,8 @@ export function Button({
         style,
       ]}>
       {icon && <Ionicons name={icon} size={small ? 14 : 16} color={skin.fg} />}
-      <Txt v="caption" color={skin.fg} style={{ fontSize: small ? 12 : 13, letterSpacing: 0.8, ...F.heavy }}>{label}</Txt>
+      <Txt v="caption" color={skin.fg} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.75}
+        style={{ fontSize: small ? 12 : 13, letterSpacing: 0.8, flexShrink: 1, ...F.heavy }}>{label}</Txt>
     </Press>
   );
 }

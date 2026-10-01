@@ -43,6 +43,11 @@ export type Series = {
   banner?: string;
   /** Next episode on the airing schedule (unix seconds). */
   nextAiring?: { episode: number; airingAt: number };
+  /**
+   * AniList id of the previous season (anime only): null when this is the first entry,
+   * undefined when unknown (older cache, demo series). See `data/franchise.ts`.
+   */
+  prequel?: number | null;
   /** Position in the provider's trending chart. */
   trendRank?: number;
   /** Episode ↔ chapter mapping is an estimate (no public source has exact data). */

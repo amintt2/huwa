@@ -42,7 +42,7 @@ export default function Home() {
         contentContainerStyle={{ paddingBottom: insets.bottom + 110 }}
         showsVerticalScrollIndicator={false}>
         <View>
-          <HeroCarousel items={featured} />
+          <HeroCarousel key={featured.map((s) => s.id).join()} items={featured} />
           {/* Brand + search ride with the hero, so they never cover content further down. */}
           <View style={[styles.topBar, { top: insets.top + 4 }]} pointerEvents="box-none">
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
