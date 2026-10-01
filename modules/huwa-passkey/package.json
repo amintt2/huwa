@@ -1,0 +1,7 @@
+{
+  "name": "huwa-passkey",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Passkeys (largeBlob + PRF) that carry the Huwa recovery phrase, without a server",
+  "main": "index.ts"
+}

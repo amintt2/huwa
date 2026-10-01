@@ -234,7 +234,7 @@ export const social = {
   async createIdentity(name: string) {
     const r = await p2p().createIdentity(name);
     await recoveryPhrase.set(r.phrase).catch(() => {});
-    await cloudBackup.save(r.phrase).catch(() => {});
+    await cloudBackup.save(r.phrase, { name: r.profile.name, fingerprint: r.profile.fingerprint }).catch(() => {});
     applyDefaults();
     identityBus.emit();
     journalBus.emit();
@@ -243,7 +243,9 @@ export const social = {
   async restoreIdentity(words: string[]) {
     const r = await p2p().restoreIdentity(words);
     await recoveryPhrase.set(words).catch(() => {});
-    await cloudBackup.save(words).catch(() => {});
+    // The restored profile may still be on its way from the other devices: the hint is refreshed
+    // by the root layout once the real name arrives.
+    await cloudBackup.save(words, { name: r.name !== 'moi' ? r.name : undefined, fingerprint: r.fingerprint }).catch(() => {});
     applyDefaults();
     identityBus.emit();
     journalBus.emit();

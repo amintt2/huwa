@@ -50,6 +50,12 @@ Modèle : **clé racine** (phrase 24 mots, `keet-identity-key`) → **clés d'ap
 3. Appairage d'un autre appareil par QR (`blind-pairing`) → devient writer du journal personnel.
 4. Récupération sociale (Shamir/SLIP-39, 3–5 amis) : **v2**, l'UX est difficile.
 
+**Indice de compte iCloud :** à côté de la phrase, un item synchronisable `account-hint` (`{ name, fingerprint, savedAt, passkeyAt? }`, aucun secret) permet à l'accueil d'un nouvel iPhone d'afficher « Continuer en tant que <pseudo> ». Écrit avec la phrase, rafraîchi quand le pseudo change.
+
+**Clé d'accès (passkey) qui transporte le compte** (`modules/huwa-passkey`, `src/p2p/passkey-core.ts`) : sans serveur, la passkey ne sert pas à s'authentifier mais protège un *largeBlob* (iOS 17+) contenant la phrase. Avec PRF (iOS 18+, si le gestionnaire le gère) la phrase est chiffrée en AES-256-GCM (clé = HKDF-SHA256 de la sortie PRF, sel PRF = sha256("huwa-passkey-v1"), `enc: "prf-aes256gcm"`) ; sinon elle est stockée telle quelle (`enc: "none"`), le blob étant chiffré de bout en bout par le gestionnaire et libéré seulement après Face ID. Création : 1 enregistrement + 1 assertion d'écriture (+1 assertion si PRF non évalué à la création). Connexion : 1 assertion (lecture + PRF) puis restauration par phrase.
+- Domaine (relying party) `huwa.mciut.fr` : `site/.well-known/apple-app-site-association` (`webcredentials`) servi en `application/json` sans redirection (`site/nginx.conf`, `site/Dockerfile`) ; entitlement `webcredentials:huwa.mciut.fr` ajouté par `plugins/with-passkeys.js` (`HUWA_PASSKEYS=0` pour le retirer). L'App ID doit avoir la capacité Associated Domains.
+- Android : pas encore (module absent → « Bientôt disponible »). `site/.well-known/assetlinks.json` est prêt mais son empreinte `TODO_ANDROID_RELEASE_CERT_SHA256` doit être remplacée par le SHA-256 du certificat de signature release (`keytool -list -v -keystore …` ou Play Console → Intégrité de l'app) avant d'utiliser Credential Manager.
+
 **UX :** « J'ai déjà un compte » → restauration iCloud/Google en un tap → scanner depuis l'autre appareil → phrase → amis. Réglages → Sécurité : état des sauvegardes, appareils liés, « révoquer ».
 **Vol / compromission :** `remove-device` signé dans le journal d'identité ; si la racine est compromise, rotation via journal de succession chaîné, avec **pré-rotation** à la KERI (engagement sur le hash de la prochaine clé).
 **Homonymes :** affichage `pseudo · empreinte courte`, surnoms locaux (petnames) prioritaires, lien `huwa://u/<clé>` et QR.

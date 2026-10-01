@@ -90,7 +90,8 @@
       "expo-sharing",
       "expo-notifications",
       "./plugins/with-huwa-torrent",
-      "./plugins/with-huwa-mpv"
+      "./plugins/with-huwa-mpv",
+      "./plugins/with-passkeys"
     ],
     "experiments": {
       "typedRoutes": true,

@@ -1,5 +1,6 @@
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { router } from 'expo-router';
+import { useEffect, useState } from 'react';
 import { Alert, ScrollView, StyleSheet, Switch, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -7,6 +8,7 @@ import { DANGER, Group, Loading, Row, ScreenHeader, WARN } from '@/components/so
 import { Button, Chip, Txt } from '@/components/ui';
 import { cloudBackup, cloudBackupSupported, useCloudBackup } from '@/p2p/cloud-backup';
 import { social, useMe, useSecurity } from '@/p2p/hooks';
+import { canCarryAccount, passkeySupport, usePasskeyRecord } from '@/p2p/passkey';
 import { C, R, S } from '@/theme/tokens';
 
 const date = (t: number) => new Date(t).toLocaleDateString('fr-FR', { day: 'numeric', month: 'short', year: 'numeric' });
@@ -31,8 +33,32 @@ export default function Security() {
     );
 
   const cloud = useCloudBackup();
+  const passkey = usePasskeyRecord(me?.key);
+  // Passkey made on another device (synced account hint), and whether this device holds the phrase.
+  const [elsewhereAt, setElsewhereAt] = useState<number>();
+  const [canCreate, setCanCreate] = useState<boolean>();
+  useEffect(() => {
+    if (!passkeySupport.available) return;
+    let alive = true;
+    canCarryAccount().then((v) => alive && setCanCreate(v), () => alive && setCanCreate(false));
+    cloudBackup
+      .loadHint()
+      .then((h) => alive && h?.passkeyAt && h.fingerprint === me?.fingerprint && setElsewhereAt(h.passkeyAt))
+      .catch(() => {});
+    return () => {
+      alive = false;
+    };
+  }, [me?.fingerprint, passkey]);
+  const passkeyDetail = passkey
+    ? [`Créée le ${date(passkey.createdAt)}`, passkey.provider, passkey.prf ? 'chiffrée' : undefined].filter(Boolean).join(' · ')
+    : elsewhereAt
+      ? `Créée sur un autre appareil le ${date(elsewhereAt)}`
+      : canCreate === false
+        ? 'Crée-la depuis l’appareil qui a ta phrase'
+        : 'Connexion sur tout appareil, sans mot de passe';
+  const hasPasskey = !!passkey || !!elsewhereAt;
   const cloudOn = cloud.enabled && cloud.saved;
-  const safe = !!state?.phraseVerified || cloudOn;
+  const safe = !!state?.phraseVerified || cloudOn || !!passkey;
   const level = !state ? 0 : (state.phraseVerified ? 1 : 0) + (state.cloud || cloudOn ? 1 : 0) + (state.devices > 1 ? 1 : 0);
 
   const toggleCloud = (on: boolean) => {
@@ -72,7 +98,9 @@ export default function Security() {
               {safe
                 ? cloudOn && !state.phraseVerified
                   ? 'Ta phrase est dans ton Trousseau iCloud : sur un nouvel iPhone connecté au même compte Apple, un tap suffit pour retrouver ton compte.'
-                  : 'Si tu perds ce téléphone, ta phrase de récupération suffit à retrouver ton identité, ton rang et tes abonnements.'
+                  : passkey && !state.phraseVerified
+                    ? 'Ta clé d’accès transporte ton compte : sur un nouvel appareil, connecte-toi avec elle.'
+                    : 'Si tu perds ce téléphone, ta phrase de récupération suffit à retrouver ton identité, ton rang et tes abonnements.'
                 : 'Ta clé n’existe que sur ce téléphone. Si tu le perds sans avoir noté ta phrase, personne ne pourra te rendre ton compte.'}
             </Txt>
             {!safe && <Button label="Sauvegarder ma phrase" icon="key" onPress={() => router.push('/settings/phrase')} />}
@@ -103,6 +131,26 @@ export default function Security() {
             />
           ) : (
             <Row icon="cloud-outline" label="Sauvegarde Google" detail="Bientôt disponible sur Android" disabled last />
+          )}
+        </Group>
+
+        <Group
+          title="Clé d’accès"
+          footer="Ta clé d’accès transporte ton compte dans ton gestionnaire de mots de passe. Pour la supprimer, passe par ce gestionnaire (Réglages → Mots de passe pour iCloud) : iOS ne permet pas à une app de le faire.">
+          {passkeySupport.available ? (
+            <Row
+              icon="finger-print"
+              label={hasPasskey ? 'Clé d’accès' : 'Créer une clé d’accès'}
+              detail={passkeyDetail}
+              right={canCreate === false ? undefined : <Txt v="label" color={C.accentText}>{hasPasskey ? 'Recréer' : 'Créer'}</Txt>}
+              chevron={false}
+              disabled={canCreate === false}
+              onPress={() => router.push(hasPasskey ? '/passkey?mode=recreate' : '/passkey')}
+              accessibilityHint={hasPasskey ? 'Recréer la clé d’accès' : undefined}
+              last
+            />
+          ) : (
+            <Row icon="finger-print" label="Clé d’accès" detail={passkeySupport.reason} disabled last />
           )}
         </Group>
 

@@ -8,6 +8,7 @@ import { DANGER, Field, Group, Row, ScreenHeader } from '@/components/social';
 import { Button, Txt } from '@/components/ui';
 import { cloudBackup, cloudBackupSupported } from '@/p2p/cloud-backup';
 import { social } from '@/p2p/hooks';
+import { PasskeyError, passkeyMessage, passkeySupport, requestPasskeyOffer, restoreWithPasskey } from '@/p2p/passkey';
 import { PHRASE_WORDS, isValidPhrase, normalizePhraseInput, unknownWords } from '@/social/identity';
 import { C, S } from '@/theme/tokens';
 
@@ -27,11 +28,38 @@ export default function Restore() {
     setBusy(true);
     setError(undefined);
     try {
+      requestPasskeyOffer();
       await social.restoreIdentity(words);
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     } catch (e) {
+      requestPasskeyOffer(false);
       setError(e instanceof Error ? e.message : 'Restauration impossible.');
       setBusy(false);
+    }
+  };
+
+  const restoreFromPasskey = async (immediate = true): Promise<void> => {
+    if (busy) return;
+    setBusy(true);
+    setError(undefined);
+    try {
+      await restoreWithPasskey({ immediate });
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    } catch (e) {
+      setBusy(false);
+      if (e instanceof PasskeyError && e.code === 'no-credentials' && immediate) {
+        // Nothing on this iPhone: the system sheet can still use a passkey from a phone nearby (QR).
+        Alert.alert('Aucune clé d’accès sur cet appareil', 'Tu peux utiliser une clé d’accès enregistrée sur un autre appareil à proximité.', [
+          { text: 'Annuler', style: 'cancel' },
+          { text: 'Autre appareil', onPress: () => restoreFromPasskey(false) },
+        ]);
+        return;
+      }
+      const message = passkeyMessage(e);
+      if (message) {
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+        Alert.alert('Clé d’accès', message);
+      }
     }
   };
 
@@ -48,9 +76,11 @@ export default function Restore() {
     }
     setBusy(true);
     try {
+      requestPasskeyOffer();
       await social.restoreIdentity(saved);
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     } catch (e) {
+      requestPasskeyOffer(false);
       setError(e instanceof Error ? e.message : 'Restauration impossible.');
       setBusy(false);
     }
@@ -71,6 +101,14 @@ export default function Restore() {
         <Group
           title="Le plus simple"
           footer="Sur ton autre appareil : Profil → Réglages → Sécurité → Lier un appareil. Un QR code s’affiche.">
+          {passkeySupport.available && (
+            <Row
+              icon="finger-print"
+              label="Se connecter avec une clé d’accès"
+              detail={busy ? 'Connexion…' : 'Face ID ou ton gestionnaire de mots de passe'}
+              onPress={() => restoreFromPasskey()}
+            />
+          )}
           <Row icon="qr-code-outline" label="Scanner depuis mon autre appareil" onPress={() => router.push('/onboarding/scan')} />
           {cloudBackupSupported ? (
             <Row icon="cloud-download-outline" label="Restaurer depuis iCloud" detail="Phrase sauvegardée dans ton Trousseau iCloud" onPress={restoreFromCloud} last />
