@@ -2,16 +2,17 @@ import Ionicons from '@expo/vector-icons/Ionicons';
 import * as Haptics from 'expo-haptics';
 import { router } from 'expo-router';
 import { useMemo, useState } from 'react';
-import { KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, View } from 'react-native';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { Pressable, StyleSheet, View } from 'react-native';
 
-import { Field, Group, Row, ScreenHeader, SwitchRow, shortKey } from '@/components/social';
-import { Button, Txt } from '@/components/ui';
+import { Callout } from '@/components/feedback';
+import { Screen } from '@/components/screen';
+import { Field, Group, PillAction, Row, SwitchRow, shortKey } from '@/components/social';
+import { Button, Press, Txt } from '@/components/ui';
 import { social, useBlocked, useLabels, useMe, useProfile } from '@/p2p/hooks';
 import { setPrefs, usePrefs } from '@/p2p/prefs';
 import { isPublicKey } from '@/social/identity';
 import { activeLabels } from '@/social/moderation';
-import { C, R, S } from '@/theme/tokens';
+import { C, R, S, SHADOW } from '@/theme/tokens';
 
 function LabelerRow({ k, on, count, last }: { k: string; on: boolean; count: number; last?: boolean }) {
   const { profile } = useProfile(k);
@@ -41,16 +42,13 @@ function BlockedRow({ k, last }: { k: string; last?: boolean }) {
       chevron={false}
       last={last}
       right={
-        <Txt v="small" color={C.accentText} onPress={() => social.setBlocked(k, false)} accessibilityRole="button" style={{ padding: S.sm }}>
-          Débloquer
-        </Txt>
+        <PillAction label="Débloquer" accessibilityLabel={`Débloquer ${name}`} onPress={() => social.setBlocked(k, false)} />
       }
     />
   );
 }
 
 export default function Moderation() {
-  const insets = useSafeAreaInsets();
   const me = useMe();
   const labels = useLabels();
   const blocked = useBlocked();
@@ -84,18 +82,13 @@ export default function Moderation() {
   };
 
   return (
-    <KeyboardAvoidingView style={{ flex: 1, backgroundColor: C.bg }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
-      <ScreenHeader title="Modération" />
-      <ScrollView
-        keyboardShouldPersistTaps="handled"
-        contentContainerStyle={{ paddingHorizontal: S.lg, paddingBottom: insets.bottom + S.xxl, gap: S.xl }}>
-        <View style={styles.rule}>
-          <Ionicons name="shield-half-outline" size={20} color={C.accentText} />
-          <Txt v="small" style={{ flex: 1, lineHeight: 18 }}>
+    <Screen title="Modération">
+        <Callout icon="shield-half-outline">
+          <Txt v="small" color={C.body} style={{ lineHeight: 18 }}>
             Rien n’est supprimé du réseau : Huwa masque sur ton appareil. Un compte est masqué si tu le bloques, ou si{' '}
-            <Txt v="small" color={C.text}>au moins 2 de tes listes</Txt> le bloquent.
+            <Txt v="small" color={C.text} style={{ fontWeight: '600' }}>au moins 2 de tes listes</Txt> le bloquent.
           </Txt>
-        </View>
+        </Callout>
 
         <Group title="Listes de blocage" footer="Une liste est publiée par une personne ou un groupe de bénévoles. Tu choisis à qui tu fais confiance.">
           {known.map((k, i) => (
@@ -131,7 +124,7 @@ export default function Moderation() {
         </Group>
 
         <View style={{ gap: S.sm }}>
-          <Txt v="caption" style={{ paddingHorizontal: S.xs }}>Mots masqués</Txt>
+          <Txt v="caption" accessibilityRole="header" style={{ paddingHorizontal: S.md }}>Mots masqués</Txt>
           <View style={styles.words}>
             {words.map((w) => (
               <Pressable
@@ -159,31 +152,26 @@ export default function Moderation() {
                 maxLength={40}
               />
             </View>
-            <Pressable onPress={addWord} accessibilityRole="button" accessibilityLabel="Ajouter" style={styles.add}>
+            <Press onPress={addWord} haptics="light" accessibilityRole="button" accessibilityLabel="Ajouter le mot" style={styles.add}>
               <Ionicons name="add" size={22} color={C.white} />
-            </Pressable>
+            </Press>
           </View>
         </View>
 
         {me && (
-          <Row
-            icon="share-outline"
-            label="Ma liste de blocage"
-            detail="Tes blocages forment une liste à laquelle d’autres peuvent s’abonner depuis ton profil."
-            onPress={() => router.push(`/u/${me.key}`)}
-          />
+          <Group footer="Tes blocages forment une liste à laquelle d’autres peuvent s’abonner depuis ton profil.">
+            <Row icon="share-outline" label="Ma liste de blocage" onPress={() => router.push(`/u/${me.key}`)} last />
+          </Group>
         )}
-      </ScrollView>
-    </KeyboardAvoidingView>
+    </Screen>
   );
 }
 
 const styles = StyleSheet.create({
-  rule: { flexDirection: 'row', gap: S.md, padding: S.md, borderRadius: R.card, backgroundColor: C.accentSoft, borderWidth: 1, borderColor: C.accentLine },
   words: { flexDirection: 'row', flexWrap: 'wrap', gap: S.sm, paddingHorizontal: S.xs },
   word: {
     flexDirection: 'row', alignItems: 'center', gap: 6, minHeight: 34, paddingHorizontal: S.md,
     borderRadius: R.pill, backgroundColor: C.elevated, borderWidth: 1, borderColor: C.border,
   },
-  add: { width: 50, height: 50, borderRadius: R.card, backgroundColor: C.accent, alignItems: 'center', justifyContent: 'center' },
+  add: { width: 50, height: 50, borderRadius: R.control, borderCurve: 'continuous', backgroundColor: C.accent, alignItems: 'center', justifyContent: 'center', boxShadow: `${SHADOW.primary}, ${SHADOW.insetStrong}` },
 });

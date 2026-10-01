@@ -2,15 +2,14 @@
 // the open-source components the app ships (including mpv / FFmpeg under the LGPL).
 import * as Application from 'expo-application';
 import * as WebBrowser from 'expo-web-browser';
-import { Alert, ScrollView, View } from 'react-native';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { Alert } from 'react-native';
 
 import { deviceCaps } from '@/components/player/engines/hybrid-player';
-import { Group, Row, ScreenHeader } from '@/components/social';
+import { Group, Row } from '@/components/social';
+import { Screen } from '@/components/screen';
 import { Txt } from '@/components/ui';
 import { channel } from '@/config/channel';
 import { mailSupport, PRIVACY_URL, SOURCE_URL, SUPPORT_EMAIL, TERMS_URL } from '@/config/legal';
-import { C, S } from '@/theme/tokens';
 
 const MPV_SOURCES = 'https://github.com/mpvkit/MPVKit';
 
@@ -28,7 +27,6 @@ const LICENCES: { name: string; licence: string; url: string }[] = [
 const open = (url: string) => WebBrowser.openBrowserAsync(url).catch(() => {});
 
 export default function About() {
-  const insets = useSafeAreaInsets();
   const version = Application.nativeApplicationVersion ?? '—';
   const build = Application.nativeBuildVersion ?? '—';
   const { mpvAvailable } = deviceCaps();
@@ -38,9 +36,7 @@ export default function About() {
     });
 
   return (
-    <View style={{ flex: 1, backgroundColor: C.bg }}>
-      <ScreenHeader title="À propos" />
-      <ScrollView contentContainerStyle={{ paddingHorizontal: S.lg, paddingBottom: insets.bottom + S.xxl, gap: S.xl }}>
+    <Screen title="À propos">
         <Group>
           <Row icon="information-circle-outline" label="Version" detail={`${version} (build ${build}) · ${channel === 'store' ? 'App Store' : 'version complète'}`} last />
         </Group>
@@ -75,7 +71,6 @@ export default function About() {
         <Txt v="small" style={{ textAlign: 'center', lineHeight: 18 }}>
           Huwa ne fournit aucun contenu : catalogue AniList, vidéos et chapitres viennent des services et extensions que tu choisis.
         </Txt>
-      </ScrollView>
-    </View>
+      </Screen>
   );
 }

@@ -1,8 +1,8 @@
 import { router } from 'expo-router';
-import { Alert, ScrollView, View } from 'react-native';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { Alert } from 'react-native';
 
-import { Group, Row, ScreenHeader, WARN } from '@/components/social';
+import { Screen } from '@/components/screen';
+import { Group, Row, WARN } from '@/components/social';
 import { Txt } from '@/components/ui';
 import { useAddons } from '@/addons/registry';
 import { useMangaExt } from '@/manga-ext/registry';
@@ -13,10 +13,9 @@ import { langName } from '@/subtitles/lang';
 import { useSubtitlePrefs } from '@/subtitles/prefs';
 import { useSettings } from '@/settings/settings';
 import { isStoreBuild } from '@/config/channel';
-import { C, S } from '@/theme/tokens';
+import { C } from '@/theme/tokens';
 
 export default function Settings() {
-  const insets = useSafeAreaInsets();
   const status = useP2PStatus();
   const { state } = useSecurity();
   const dmNotif = usePrefs((p) => p.dmNotif);
@@ -42,9 +41,7 @@ export default function Settings() {
             : ['Démarrage…', 'Connexion au réseau P2P.'];
 
   return (
-    <View style={{ flex: 1, backgroundColor: C.bg }}>
-      <ScreenHeader title="Réglages" />
-      <ScrollView contentContainerStyle={{ paddingHorizontal: S.lg, paddingBottom: insets.bottom + S.xxl, gap: S.xl }}>
+    <Screen title="Réglages">
         <Group title="Application">
           <Row icon="options-outline" label="Général" detail="Langue, lecture, notifications, données" onPress={() => router.push('/settings/general')} last />
         </Group>
@@ -71,7 +68,7 @@ export default function Settings() {
           <Row
             icon="notifications-outline"
             label="Notifications des messages"
-            detail={dmNotif === 'discreet' ? 'Discret' : 'Instantané'}
+            value={dmNotif === 'discreet' ? 'Discret' : 'Instantané'}
             onPress={() => router.push('/settings/notifications')}
             last
           />
@@ -110,8 +107,7 @@ export default function Settings() {
           <Row icon="information-circle-outline" label="À propos" detail="Version, conditions, confidentialité, licences, contact" onPress={() => router.push('/about')} last />
         </Group>
 
-        <Txt v="small" style={{ textAlign: 'center' }}>Huwa · données locales, sans télémétrie</Txt>
-      </ScrollView>
-    </View>
+        <Txt v="footnote" color={C.text3} style={{ textAlign: 'center' }}>Huwa · données locales, sans télémétrie</Txt>
+    </Screen>
   );
 }

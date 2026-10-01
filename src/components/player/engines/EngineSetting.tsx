@@ -1,7 +1,7 @@
 // Settings → Lecture → "Moteur de lecture": Automatique / Natif / mpv, with the LGPL notice.
 import { Linking, StyleSheet, Text, View } from 'react-native';
 
-import { FilterChip } from '@/components/states';
+import { Segmented } from '@/components/states';
 import { Txt } from '@/components/ui';
 import { C, S } from '@/theme/tokens';
 
@@ -29,11 +29,12 @@ export function EngineSetting() {
   return (
     <View style={styles.block}>
       <Txt v="label">Moteur de lecture</Txt>
-      <View style={styles.inline}>
-        {OPTIONS.map((o) => (
-          <FilterChip key={o.key} label={o.label} selected={pref === o.key} onPress={() => setEnginePref(o.key)} />
-        ))}
-      </View>
+      <Segmented
+        accessibilityLabel="Moteur de lecture"
+        value={pref}
+        onChange={setEnginePref}
+        options={OPTIONS.map((o) => ({ value: o.key, label: o.label }))}
+      />
       <Txt v="small" style={{ lineHeight: 19 }}>
         {mpvAvailable ? HINT[pref] : 'mpv n’est pas inclus dans cette version : le lecteur du système est toujours utilisé.'}
       </Txt>
@@ -50,6 +51,5 @@ export function EngineSetting() {
 }
 
 const styles = StyleSheet.create({
-  inline: { flexDirection: 'row', flexWrap: 'wrap', gap: S.sm },
-  block: { gap: S.md, padding: S.lg, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: C.border },
+  block: { gap: S.md, padding: S.md, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: C.hairline },
 });

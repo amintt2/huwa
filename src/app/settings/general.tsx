@@ -1,24 +1,24 @@
 import Constants from 'expo-constants';
 import { router, type Href } from 'expo-router';
 import { useState } from 'react';
-import { ActivityIndicator, Alert, ScrollView, StyleSheet, Switch, TextInput, View } from 'react-native';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { ActivityIndicator, Alert, StyleSheet, Switch, View } from 'react-native';
 
 import { LanguagePrefs } from '@/components/language-prefs';
 import { EngineSetting } from '@/components/player/engines/EngineSetting';
-import { FilterChip, Group, Row, ScreenHeader } from '@/components/states';
+import { Screen } from '@/components/screen';
+import { Field } from '@/components/social';
+import { Group, Row, Segmented } from '@/components/states';
 import { Button, Txt } from '@/components/ui';
 import { useT } from '@/i18n';
 import { enableNotifications, notificationsSupported } from '@/notifications/episodes';
 import { importAniList, loginWithAniList, oauthAvailable } from '@/settings/anilist-sync';
 import { clearCache, exportData, personalAddonsInExport, pickBackup, restoreBackup } from '@/settings/backup';
 import { setSetting, useSettings, type Quality } from '@/settings/settings';
-import { C, F, R, S } from '@/theme/tokens';
+import { C, S } from '@/theme/tokens';
 
 const QUALITIES: Quality[] = ['auto', '1080p', '720p', '480p'];
 
 export default function Settings() {
-  const insets = useSafeAreaInsets();
   const t = useT();
   const s = useSettings();
   const [busy, setBusy] = useState<string | null>(null);
@@ -120,28 +120,25 @@ export default function Settings() {
   const switchProps = { trackColor: { true: C.accent, false: C.elevated }, thumbColor: C.white } as const;
 
   return (
-    <ScrollView
-      style={{ flex: 1, backgroundColor: C.bg }}
-      keyboardShouldPersistTaps="handled"
-      contentContainerStyle={{ paddingTop: insets.top + S.sm, paddingBottom: insets.bottom + S.xxl }}>
-      <ScreenHeader title={t('settings.general')} />
-
-      <View style={{ paddingHorizontal: S.lg, gap: S.xl }}>
-        <Group title={t('settings.general')}>
+    <Screen title={t('settings.general')}>
+        <Group title="Interface">
           <Row
             icon="language-outline"
             label={t('settings.language')}
             last
             right={
-              <View style={styles.inline}>
-                <FilterChip label="FR" selected={s.lang === 'fr'} onPress={() => setSetting('lang', 'fr')} />
-                <FilterChip label="EN" selected={s.lang === 'en'} onPress={() => setSetting('lang', 'en')} />
-              </View>
+              <Segmented
+                accessibilityLabel={t('settings.language')}
+                style={{ width: 112 }}
+                value={s.lang}
+                onChange={(v) => setSetting('lang', v)}
+                options={[{ value: 'fr', label: 'FR' }, { value: 'en', label: 'EN' }]}
+              />
             }
           />
         </Group>
 
-        <Group title="LANGUES">
+        <Group title="Langues">
           <View style={{ padding: S.md }}>
             <LanguagePrefs />
           </View>
@@ -157,11 +154,12 @@ export default function Settings() {
           <EngineSetting />
           <View style={styles.block}>
             <Txt v="label">{t('settings.quality')}</Txt>
-            <View style={styles.inline}>
-              {QUALITIES.map((q) => (
-                <FilterChip key={q} label={q === 'auto' ? t('settings.quality.auto') : q} selected={s.quality === q} onPress={() => setSetting('quality', q)} />
-              ))}
-            </View>
+            <Segmented
+              accessibilityLabel={t('settings.quality')}
+              value={s.quality}
+              onChange={(q) => setSetting('quality', q)}
+              options={QUALITIES.map((q) => ({ value: q, label: q === 'auto' ? t('settings.quality.auto') : q }))}
+            />
           </View>
           <Row icon="speedometer-outline" label="Statistiques de lecture" hint="Temps de démarrage, coupures, sources — reste sur l’appareil" onPress={() => router.push('/settings/stats')} />
           <Row icon="text" label="Sous-titres" hint="Langues, police, taille, contour, style ASS" onPress={() => router.push('/settings/subtitles')} last />
@@ -187,18 +185,17 @@ export default function Settings() {
 
         <Group title={t('settings.anilist')}>
           <View style={[styles.block, { borderBottomWidth: 0 }]}>
-            <Txt v="small">{t('anilist.body')}</Txt>
-            <TextInput
+            <Txt v="small" style={{ lineHeight: 18 }}>{t('anilist.body')}</Txt>
+            <Field
               value={userName}
               onChangeText={setUserName}
               placeholder={t('anilist.username')}
-              placeholderTextColor={C.text2}
               autoCapitalize="none"
               autoCorrect={false}
               returnKeyType="go"
               onSubmitEditing={() => userName.trim() && onImportAniList()}
               accessibilityLabel={t('anilist.username')}
-              style={styles.input}
+              style={{ backgroundColor: C.elevated }}
             />
             <Button
               small
@@ -233,16 +230,11 @@ export default function Settings() {
           </View>
           <Row icon="sparkles-outline" label={t('settings.onboardingAgain')} onPress={() => setSetting('onboarded', false)} last />
         </Group>
-      </View>
-    </ScrollView>
+    </Screen>
   );
 }
 
 const styles = StyleSheet.create({
   inline: { flexDirection: 'row', flexWrap: 'wrap', gap: S.sm },
-  block: { gap: S.md, padding: S.lg, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: C.border },
-  input: {
-    minHeight: 44, paddingHorizontal: S.md, borderRadius: R.control, borderCurve: 'continuous',
-    backgroundColor: C.elevated, borderWidth: 1, borderColor: C.border, color: C.text, ...F.medium, fontSize: 15,
-  },
+  block: { gap: S.md, padding: S.md, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: C.hairline },
 });
