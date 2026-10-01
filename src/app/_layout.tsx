@@ -5,6 +5,7 @@ import { DarkTheme, Stack, ThemeProvider, router } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
 import { StatusBar } from 'expo-status-bar';
 import { useEffect, useState } from 'react';
+import { AppState } from 'react-native';
 
 import { hydrateAddons } from '@/addons/registry';
 import { cloudBackup } from '@/p2p/cloud-backup';
@@ -24,6 +25,7 @@ import { useJournalSync } from '@/p2p/sync';
 import { setPendingLink, usePendingLink } from '@/packs/routes';
 import { useSettings, useSettingsHydrated } from '@/settings/settings';
 import { useListsHydrated } from '@/store/lists';
+import { flushPendingWrites, leavesForeground } from '@/store/persist';
 import { useHydrated } from '@/store/store';
 import { C } from '@/theme/tokens';
 
@@ -49,6 +51,13 @@ export default function RootLayout() {
   const { onboarded } = useSettings();
   // Hold the splash until the catalog is on screen (cache or network), 6 s max.
   const [catalogReady, setCatalogReady] = useState(false);
+  // iOS may kill a suspended app without warning: write pending progress / lists before that.
+  useEffect(() => {
+    const sub = AppState.addEventListener('change', (s) => {
+      if (leavesForeground(s)) flushPendingWrites().catch(() => {});
+    });
+    return () => sub.remove();
+  }, []);
   useEffect(() => {
     hydrateAddons();
     registerNativeTorrentEngine();

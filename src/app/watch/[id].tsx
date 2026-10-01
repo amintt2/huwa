@@ -25,6 +25,7 @@ import { chapterAfterEpisode } from '@/data/bridge';
 import { episodeLabel, getEpisode, useCatalog } from '@/data/catalog';
 import { useMappingSync } from '@/data/mapping-sync';
 import { useThread } from '@/store/derived';
+import { flushPendingWrites } from '@/store/persist';
 import { getState, markEpisodeDone, saveEpisodeProgress, toggleMyList, useStore } from '@/store/store';
 import { enableTorrentEngine, isAvailable as torrentEngineLinked, useTorrentSettings } from '@/torrent';
 import { C, S } from '@/theme/tokens';
@@ -132,9 +133,16 @@ function WatchScreen({ id }: { id: string }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [src.url]);
 
+  // Leaving the episode: the player saves its last position in its own cleanup; write it to disk
+  // right after (next tick, once every cleanup ran) instead of waiting for the debounce.
+  useEffect(() => () => void setTimeout(() => flushPendingWrites().catch(() => {}), 0), []);
+
+  // A finished episode starts over; a rewatch in progress (position saved again, not at the end)
+  // resumes. `done` stays true for the "vu" badge, so it can't decide this alone.
   const startAt = () => {
     const saved = getState().episodes[id];
-    return saved && !saved.done ? saved.position : undefined;
+    if (!saved || !saved.duration) return undefined;
+    return saved.position / saved.duration < 0.92 ? saved.position : undefined;
   };
   const onProgress = (position: number, duration: number) => {
     saveEpisodeProgress(id, position, duration);
