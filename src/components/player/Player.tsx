@@ -30,6 +30,7 @@ import { EngineView, useEnginePlayer, type EnginePlayer as VideoPlayer } from '.
 import { GestureLayer, type Hud } from './GestureLayer';
 import { AUTO_NEXT_SECONDS, NextCard, Pill } from './overlays';
 import { PlayerSettings, type Option } from './PlayerSettings';
+import { useSeamlessUpgrade, type UpgradeRequest } from './seamless-upgrade';
 import { getPrefs, setPrefs, usePrefs } from './prefs';
 import { formatTime, SeekBar } from './SeekBar';
 import { SubtitleOverlay, SubtitleSheet, useSubtitleController, type ExternalSubtitle } from './subtitles';
@@ -84,6 +85,14 @@ export type PlayerProps = {
   commentCount?: number;
   /** Time-anchored comments shown over the video when their moment comes. */
   timedComments?: TimedComment[];
+  /**
+   * Better source to switch to without stopping (warmed in a hidden player, swapped when ready).
+   * `onUpgraded` then expects the parent to pass it as `source` (it is not reloaded).
+   */
+  upgrade?: UpgradeRequest | null;
+  onUpgraded?: (key: string) => void;
+  /** The upgrade could not be seamless (other engine, stalled…): playback was not touched. */
+  onUpgradeDeferred?: (key: string, reason: string) => void;
 };
 
 const INTRO_WINDOW = 180;
@@ -141,6 +150,9 @@ export function Player({
   renderComments,
   commentCount,
   timedComments = [],
+  upgrade,
+  onUpgraded,
+  onUpgradeDeferred,
 }: PlayerProps) {
   const insets = useSafeAreaInsets();
   const window = useWindowDimensions();
@@ -177,7 +189,6 @@ export function Player({
   const [skipped, setSkipped] = useState<string[]>([]);
   const [ended, setEnded] = useState(false);
   const [countdown, setCountdown] = useState<number | null>(null);
-  const [pip, setPip] = useState(false);
 
   const { isPlaying } = useEvent(player, 'playingChange', { isPlaying: player.playing });
   const { status, error } = useEvent(player, 'statusChange', { status: player.status, error: undefined });
@@ -211,9 +222,19 @@ export function Player({
   }, [full]);
 
   // ---------- source & resume ----------
+  // When the current source started playing (seamless upgrade: no swap in the first seconds).
+  const [startedAt, setStartedAt] = useState<number | null>(null);
+  // URI already playing after a seamless upgrade: the parent passes it next, nothing to reload.
+  const adopted = useRef<string | null>(null);
   const headersKey = JSON.stringify(source?.headers ?? {});
   useEffect(() => {
     if (!source?.uri) return;
+    if (adopted.current === source.uri) {
+      adopted.current = null;
+      return;
+    }
+    adopted.current = null;
+    setStartedAt(null);
     let alive = true;
     // Switching source mid-episode (quality upgrade, fallback, manual pick) keeps the position.
     const keep = loadedOnce.current ? player.currentTime : undefined;
@@ -226,6 +247,7 @@ export function Player({
         loadedOnce.current = true;
         setEnded(false);
         setCountdown(null);
+        setStartedAt(Date.now());
         player.play();
       })
       .catch((e: unknown) => cb.current.onError?.(e instanceof Error ? e.message : 'Lecture impossible'));
@@ -234,6 +256,19 @@ export function Player({
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [source?.uri, headersKey, player]);
+
+  // ---------- seamless quality upgrade ----------
+  const [pip, setPip] = useState(false);
+  useSeamlessUpgrade(player, source?.uri ? upgrade : null, {
+    external: pip,
+    startedAt,
+    onSwapped: (key, uri) => {
+      adopted.current = uri;
+      setStartedAt(Date.now());
+      onUpgraded?.(key);
+    },
+    onDeferred: (key, reason) => onUpgradeDeferred?.(key, reason),
+  });
 
   useEventListener(player, 'sourceLoad', (e) => {
     setDuration(e.duration);

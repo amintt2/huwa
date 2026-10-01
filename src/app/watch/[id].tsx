@@ -207,7 +207,9 @@ function WatchScreen({ id }: { id: string }) {
             episodeNumber={episode.number}
             notice={notice}
             emptyText={
-              src.pending > 0
+              src.racing
+                ? 'Test de la vitesse des sources…'
+                : src.pending > 0
                 ? 'Recherche de sources…'
                 : !src.resolverLabel && src.ranked.some(isTorrent)
                   ? 'Ces sources sont des torrents. Ouvre le menu des sources pour les lire avec le moteur intégré ou un service débrid.'
@@ -224,6 +226,9 @@ function WatchScreen({ id }: { id: string }) {
             commentCount={count}
             timedComments={timed}
             renderComments={renderComments}
+            upgrade={src.upgrade}
+            onUpgraded={src.adoptUpgrade}
+            onUpgradeDeferred={src.deferUpgrade}
           />
         )}
       </View>

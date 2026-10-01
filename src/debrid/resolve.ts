@@ -65,6 +65,20 @@ export async function resolveTorrent(t: TorrentRef, signal?: AbortSignal): Promi
   throw last instanceof Error ? last : new DebridError('Résolution impossible');
 }
 
+/**
+ * Debrid service only (never the on-device engine, which would start a torrent download): used
+ * to measure cached torrents in the source race. Null when no debrid service is configured.
+ */
+export async function resolveTorrentViaDebrid(t: TorrentRef, signal?: AbortSignal): Promise<{ url: string; via: string } | null> {
+  const d = getDebrid();
+  if (!d) return null;
+  const hit = cache.get(refKey(t));
+  if (hit && Date.now() - hit.at < 3600e3) return { url: hit.url, via: d.provider.name };
+  const url = await d.provider.resolve(d.key, t, signal);
+  cache.set(refKey(t), { url, at: Date.now() });
+  return { url, via: d.provider.name };
+}
+
 /** Label of the first resolver ("TorBox"), or null when torrents cannot be played. */
 export function useTorrentResolver(): string | null {
   const { provider } = useDebrid();
