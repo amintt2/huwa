@@ -109,6 +109,19 @@ test('chapters: language choice, one per number, stable ids', () => {
   assert.equal(buildChapters('px1', all, 'fr')[0].id, 'px1-c1.5');
 });
 
+test('chapters restarting their numbering each volume are all kept', () => {
+  const ch = (chapterId: string, volume: number | undefined, number: number) => ({ chapterId, lang: 'en', number, volume });
+  const all = [ch('v2c1', 2, 1), ch('v1c1', 1, 1), ch('v1c2', 1, 2), ch('v2c2', 2, 2), ch('v1c1-other-group', 1, 1), ch('nov', undefined, 1)];
+  const list = buildChapters('al7', all, 'en');
+  assert.deepEqual(list.map((c) => c.chapterId), ['v1c1', 'v1c2', 'v2c1', 'v2c2']);
+  assert.deepEqual(list.map((c) => c.id), ['al7-c1', 'al7-c2', 'al7-v2-c1', 'al7-v2-c2']);
+  assert.equal(new Set(list.map((c) => c.id)).size, list.length);
+  assert.equal(list[2].title, 'Vol. 2');
+  // Continuous numbering across volumes: unchanged ids, no volume in the title.
+  const flat = buildChapters('al8', [ch('a', 1, 1), ch('b', 1, 2), ch('c', 2, 3)], 'en');
+  assert.deepEqual(flat.map((c) => [c.id, c.title]), [['al8-c1', undefined], ['al8-c2', undefined], ['al8-c3', undefined]]);
+});
+
 test('AniList title matching', () => {
   const media = { title: { english: 'Kaguya-sama: Love Is War', romaji: 'Kaguya-sama wa Kokurasetai', userPreferred: 'Kaguya-sama wa Kokurasetai', native: null }, synonyms: ['Kaguya Wants to be Confessed To'] };
   assert.ok(titlesMatch(['Kaguya-sama: Love is War  '], media));

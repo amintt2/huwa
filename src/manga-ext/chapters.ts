@@ -21,20 +21,48 @@ const numKey = (n: number) => String(Math.round(n * 1000) / 1000);
  * One entry per chapter number in the chosen language (first one wins when several groups
  * translated it), ascending. Ids are `<seriesId>-c<number>` so progress on an AniList page
  * survives; chapters without a number go last with a hashed id.
+ *
+ * Sources whose numbering restarts each volume (vol. 1 ch. 1, vol. 2 ch. 1…) are detected (one
+ * number seen in two different volumes): their chapters are then told apart by volume too, sorted
+ * by volume, and the repeats get `<seriesId>-v<volume>-c<number>` (the first occurrence keeps the
+ * plain id, so existing progress stays).
  */
 export function buildChapters(seriesId: string, all: ExtChapter[], lang: string): StoredChapter[] {
-  const byNumber = new Map<string, ExtChapter>();
-  const unnumbered: ExtChapter[] = [];
-  for (const c of all) {
-    if (c.lang !== lang) continue;
-    if (!Number.isFinite(c.number) || c.number < 0) unnumbered.push(c);
-    else if (!byNumber.has(numKey(c.number))) byNumber.set(numKey(c.number), c);
+  const inLang = all.filter((c) => c.lang === lang);
+  const volumesOf = new Map<string, Set<number>>();
+  for (const c of inLang) {
+    if (!Number.isFinite(c.number) || c.number < 0 || c.volume == null) continue;
+    const k = numKey(c.number);
+    if (!volumesOf.has(k)) volumesOf.set(k, new Set());
+    volumesOf.get(k)!.add(c.volume);
   }
-  const numbered = [...byNumber.values()].sort((a, b) => a.number - b.number || (a.volume ?? 0) - (b.volume ?? 0));
-  const last = numbered.length ? numbered[numbered.length - 1].number : 0;
+  const restarts = [...volumesOf.values()].some((v) => v.size > 1);
+
+  const byKey = new Map<string, ExtChapter>();
+  const unnumbered: ExtChapter[] = [];
+  for (const c of inLang) {
+    if (!Number.isFinite(c.number) || c.number < 0) unnumbered.push(c);
+    else {
+      // Without a volume, a group's copy merges with the volume-tagged one of the same number.
+      const vol = restarts && c.volume != null ? c.volume : restarts ? ([...(volumesOf.get(numKey(c.number)) ?? [])].sort((a, b) => a - b)[0] ?? '') : '';
+      const k = `${vol}|${numKey(c.number)}`;
+      if (!byKey.has(k)) byKey.set(k, c);
+    }
+  }
+  const numbered = [...byKey.values()].sort((a, b) =>
+    restarts ? (a.volume ?? 0) - (b.volume ?? 0) || a.number - b.number : a.number - b.number || (a.volume ?? 0) - (b.volume ?? 0),
+  );
+  const last = numbered.reduce((m, c) => Math.max(m, c.number), 0);
   const extra = unnumbered.sort((a, b) => (a.sortingIndex ?? 0) - (b.sortingIndex ?? 0));
+  const taken = new Set<string>();
   return [
-    ...numbered.map((c) => ({ ...c, id: `${seriesId}-c${numKey(c.number)}` })),
+    ...numbered.map((c) => {
+      const plain = `${seriesId}-c${numKey(c.number)}`;
+      const id = taken.has(plain) ? `${seriesId}-v${c.volume ?? 0}-c${numKey(c.number)}` : plain;
+      taken.add(plain);
+      if (!restarts || c.volume == null) return { ...c, id };
+      return { ...c, id, title: `Vol. ${c.volume}${c.title ? ` — ${c.title}` : ''}` };
+    }),
     ...extra.map((c, i) => ({ ...c, number: Math.floor(last) + i + 1, id: `${seriesId}-cx${shortHash(c.chapterId)}` })),
   ];
 }

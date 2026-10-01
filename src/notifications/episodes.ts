@@ -75,12 +75,12 @@ let syncGeneration = 0;
 /** Replace every episode notification with the current schedule. Returns how many were scheduled. */
 export function syncEpisodeNotifications(seriesIds: string[]): Promise<number> {
   const mine = ++syncGeneration;
-  const run = syncChain.then(() => (mine === syncGeneration ? doSync(seriesIds) : 0));
+  const run = syncChain.then(() => (mine === syncGeneration ? doSync(seriesIds, mine) : 0));
   syncChain = run.catch(() => {});
   return run;
 }
 
-async function doSync(seriesIds: string[]): Promise<number> {
+async function doSync(seriesIds: string[], mine: number): Promise<number> {
   if (!notificationsSupported) return 0;
   configureNotifications();
   await cancelOurs();
@@ -98,6 +98,10 @@ async function doSync(seriesIds: string[]): Promise<number> {
     });
   }
 
+  // Superseded while AniList answered (list changed, notifications turned off): the newer run
+  // owns the schedule, this one must not put anything back.
+  if (mine !== syncGeneration || !getSettings().notifications) return 0;
+
   const now = Date.now() + 60_000;
   const next = upcoming
     .filter((u) => u.airingAt * 1000 > now)
@@ -105,6 +109,7 @@ async function doSync(seriesIds: string[]): Promise<number> {
     .slice(0, MAX_SCHEDULED);
 
   for (const u of next) {
+    if (mine !== syncGeneration) break;
     const title = getSeries(`al${u.anilistId}`)?.title ?? u.title;
     await Notifications.scheduleNotificationAsync({
       identifier: `${PREFIX}${u.anilistId}-${u.episode}`,
