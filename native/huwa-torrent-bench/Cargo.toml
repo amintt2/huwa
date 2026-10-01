@@ -1,0 +1,42 @@
+[package]
+name = "huwa-torrent-bench"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.89"
+license = "MIT"
+description = "Swarm simulator + streaming benchmark for huwa-torrent-core (seeders, shaping proxies, tracker, player)."
+publish = false
+
+# The engine under test is NOT a dependency of this crate: it runs in its own process
+# (`engine-host/`, generated per engine path by scripts/torrent-bench.sh) so that
+# - any engine version can be benchmarked with the very same harness binary,
+# - CPU time / peak RSS are measured for the engine alone (wait4/getrusage),
+# - the seeders here keep upload enabled (no `disable-upload` feature unification).
+
+[[bin]]
+name = "tbench"
+path = "src/main.rs"
+
+[dependencies]
+librqbit = { version = "=9.0.1", default-features = false, features = ["rust-tls"] }
+tokio = { version = "1", features = ["full"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+anyhow = "1"
+rand = "0.9"
+libc = "0.2"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+url = "2"
+hex = "0.4"
+tokio-util = "0.7"
+
+[profile.release]
+opt-level = 3
+debug = false
+strip = "none"
+
+[patch.crates-io]
+librqbit-dualstack-sockets = { path = "../vendor/librqbit-dualstack-sockets" }
+
+[workspace]
