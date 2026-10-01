@@ -184,6 +184,7 @@ export function Player({
   const lastSave = useRef(0);
   const loadedOnce = useRef(false);
   const cb = useRef({ startAt, onProgress, onEnd, onError, next, onFullscreenChange });
+  const lastPos = useRef({ t: 0, d: 0 });
   useEffect(() => {
     cb.current = { startAt, onProgress, onEnd, onError, next, onFullscreenChange };
   });
@@ -304,7 +305,10 @@ export function Player({
         setStartedAt(Date.now());
         player.play();
       })
-      .catch((e: unknown) => cb.current.onError?.(e instanceof Error ? e.message : 'Lecture impossible'));
+      .catch((e: unknown) => {
+        // A failure of the previous source must not mark the new one bad.
+        if (alive) cb.current.onError?.(e instanceof Error ? e.message : 'Lecture impossible');
+      });
     return () => {
       alive = false;
     };
@@ -355,6 +359,7 @@ export function Player({
 
   useEventListener(player, 'timeUpdate', ({ currentTime, bufferedPosition }) => {
     setTime({ t: currentTime, buffered: bufferedPosition });
+    lastPos.current = { t: currentTime, d: player.duration || lastPos.current.d };
     // The ending started: offer the next episode with a cancellable countdown (once).
     const o = segRef.current.outro;
     if (o && !segRef.current.countdownFired && currentTime >= o.start && currentTime < o.end && cb.current.next && getPrefs().autoNext) {
@@ -377,14 +382,12 @@ export function Player({
     }
   });
 
-  // Save on leave.
+  // Save on leave. The native player is released by its own hook cleanup before this one runs,
+  // so the position comes from the last time update, not from the (already gone) player.
   useEffect(
     () => () => {
-      try {
-        cb.current.onProgress?.(player.currentTime, player.duration);
-      } catch {
-        // player already released
-      }
+      const { t: at, d } = lastPos.current;
+      if (at > 0 && d > 0) cb.current.onProgress?.(at, d);
     },
     [player],
   );

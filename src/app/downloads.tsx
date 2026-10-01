@@ -40,6 +40,15 @@ export default function Downloads() {
         <Txt v="display" style={{ fontSize: 28 }}>Téléchargements</Txt>
       </View>
       <EpisodeDownloads />
+      <Press onPress={() => router.push('/offline')} style={styles.card} accessibilityRole="button">
+        <View style={styles.rowBetween}>
+          <View style={{ flex: 1, gap: 2 }}>
+            <Txt v="label">Chapitres manhwa hors ligne</Txt>
+            <Txt v="small">Les chapitres téléchargés depuis le lecteur.</Txt>
+          </View>
+          <Txt v="label" color={C.text2}>›</Txt>
+        </View>
+      </Press>
       <TorrentCacheSection />
     </ScrollView>
   );

@@ -61,6 +61,25 @@ export type JournalEntry =
 export type StatsContribution = { id: string; v: number; h: Partial<Record<string, number[]>>; s: [number, number, number] };
 export type CommunityStatsSums = { contributions: number; h: Partial<Record<string, number[]>>; s: [number, number, number] };
 
+/**
+ * Community correction of the episode ↔ chapter mapping (src/data/mapping.ts), published in the
+ * room of the manhwa (`room`: `m<AniList id>` or a series id) for one season (`season`: series id).
+ * `end`: the season ends at chapter `to`; `ep`: episode `ep` adapts chapters `from`–`to`.
+ * One active proposal per author and field: the newest replaces the older ones.
+ */
+export type MappingProposalInput =
+  | { room: string; season: string; field: 'end'; to: number }
+  | { room: string; season: string; field: 'ep'; ep: number; from: number; to: number };
+export type MappingProposal = {
+  season: string;
+  field: 'end' | 'ep';
+  ep?: number;
+  from?: number;
+  to: number;
+  author: PublicKey;
+  ts: number;
+};
+
 export type Unsubscribe = () => void;
 
 export interface P2P {
@@ -107,6 +126,10 @@ export interface P2P {
   // Journal → rank / history (phase 6)
   appendJournal(e: JournalEntry): Promise<void>;
   journal(key?: PublicKey): Promise<JournalEntry[]>;
+
+  // Episode ↔ chapter corrections (one room per manhwa, signed by the identity, PoW, rate limited).
+  watchMapping(room: string, cb: (all: MappingProposal[]) => void): Unsubscribe;
+  proposeMapping(p: MappingProposalInput): Promise<void>;
 
   // Community playback stats (opt-in). Published in a public room by a throwaway writer on a
   // separate swarm: never signed with, nor sent alongside, the identity or device keys.

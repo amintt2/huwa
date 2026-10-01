@@ -8,10 +8,12 @@ export const QUALITIES: Quality[] = [2160, 1080, 720, 480];
 /** Resolution detected in the stream's name/title/filename, or null. */
 export function detectQuality(s: AddonStream): Quality | null {
   const text = `${s.name ?? ''} ${s.title ?? ''} ${s.description ?? ''} ${s.behaviorHints?.filename ?? ''}`;
-  if (/2160p?|\b4k\b|\buhd\b/i.test(text)) return 2160;
-  if (/1080p?|\bfhd\b/i.test(text)) return 1080;
-  if (/720p?|\bhd\b/i.test(text)) return 720;
-  if (/480p?|576p?|360p?|\bsd\b/i.test(text)) return 480;
+  // "1080p" forms only: a bare number is too often something else ("One Piece - 1080", "👤 480"
+  // seeders, "S01E360"). "1920x1080"-style sizes count too.
+  if (/\b2160p\b|\b3840x2160\b|\b4k\b|\buhd\b/i.test(text)) return 2160;
+  if (/\b1080[pi]\b|\b1920x1080\b|\bfhd\b/i.test(text)) return 1080;
+  if (/\b720p\b|\b1280x720\b|\bhd\b/i.test(text)) return 720;
+  if (/\b(?:576|480|360)p\b|\b(?:854|720|640)x(?:480|576|360)\b|\bsd\b/i.test(text)) return 480;
   return null;
 }
 

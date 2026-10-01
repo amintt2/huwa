@@ -421,6 +421,37 @@ export function start(transport: Transport, cheerio: unknown) {
       }
       case 'info':
         return { format, discover: discover.map((d) => d.section) };
+      case 'discover': {
+        if (format === '0.9') {
+          let sections: Any = typeof ext.getDiscoverSections === 'function' ? await ext.getDiscoverSections() : undefined;
+          if (!Array.isArray(sections) || !sections.length) sections = discover.map((d) => d.section);
+          return { sections };
+        }
+        if (typeof ext.getHomePageSections !== 'function') return { sections: [] };
+        // 0.8 sources call back once per section (often twice: empty, then filled): keep the last.
+        const byId = new Map<string, Any>();
+        const order: string[] = [];
+        await ext.getHomePageSections((s: Any) => {
+          if (!s || s.id == null) return;
+          const id = String(s.id);
+          if (!byId.has(id)) order.push(id);
+          byId.set(id, { ...s, items: Array.isArray(s.items) ? [...s.items] : s.items });
+        });
+        return { sections: order.map((id) => byId.get(id)) };
+      }
+      case 'discoverItems': {
+        const metadata = args[1] ?? undefined;
+        if (format === '0.9') {
+          const section = args[0] as Any;
+          const registered = discover.find((d) => (d.section as Any)?.id === section?.id);
+          const fn = registered?.selector ? SelectorRegistry.selector(registered.selector) : undefined;
+          if (typeof fn === 'function') return fn(section, metadata);
+          if (typeof ext.getDiscoverSectionItems !== 'function') return { items: [] };
+          return ext.getDiscoverSectionItems(section, metadata);
+        }
+        if (typeof ext.getViewMoreItems !== 'function') return { results: [] };
+        return ext.getViewMoreItems(String(args[0]), metadata ?? {});
+      }
     }
   }
 

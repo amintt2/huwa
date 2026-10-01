@@ -13,6 +13,8 @@ import type {
   DirectMessage,
   JournalEntry,
   Label,
+  MappingProposal,
+  MappingProposalInput,
   P2P,
   P2PComment,
   P2PStatus,
@@ -32,6 +34,7 @@ const TIMEOUTS: Record<string, number> = {
   restoreIdentity: 60_000,
   acceptPairing: 130_000,
   postComment: 60_000,
+  proposeMapping: 60_000,
   sendMessage: 60_000,
   getProfile: 20_000,
   contributeStats: 90_000,
@@ -363,6 +366,13 @@ export class BareP2P implements P2P {
   }
   journal(key?: PublicKey) {
     return this.call<JournalEntry[]>('journal', [key ?? null]);
+  }
+
+  watchMapping(room: string, cb: (all: MappingProposal[]) => void) {
+    return this.watch('mapping', room, cb);
+  }
+  async proposeMapping(p: MappingProposalInput) {
+    await this.call<void>('proposeMapping', [p]);
   }
 
   async contributeStats(c: StatsContribution) {

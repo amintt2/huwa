@@ -27,6 +27,9 @@ import type { PlayerHandle } from './Player';
 import { getPrefs, setPrefs, usePrefs } from './prefs';
 import { BRIDGE_SCRIPT, commandScript, parseBridgeMessage } from './web-bridge';
 
+/** Below this duration a video in the page is treated as an ad / clip, not the episode. */
+const EPISODE_MIN_S = 180;
+
 export type WebPlayerProps = {
   ref?: Ref<PlayerHandle>;
   url: string;
@@ -208,8 +211,13 @@ export function WebPlayer({
     // Several videos (e.g. an ad before the episode): follow the longest one.
     if (m.f !== l.frame) {
       if (l.frame && m.d < l.frameDur) return;
+      // A longer video took over (the ad ended, the episode starts): resume on this one.
+      if (l.frame) l.resumed = false;
       l.frame = m.f;
     }
+    // Short clips (ads, intros of the host) are not the episode: never resume on them nor save
+    // their position, which could mark the episode as watched.
+    const episodeLike = m.d >= EPISODE_MIN_S;
     l.frameDur = Math.max(l.frameDur, m.d);
     l.t = m.c;
     l.d = m.d;
@@ -218,12 +226,12 @@ export function WebPlayer({
     setTime(m.c);
     if (m.d > 0) setDuration(m.d);
     // Resume where the episode was left, once the page knows the duration.
-    if (!l.resumed && m.d > 0) {
+    if (!l.resumed && episodeLike) {
       l.resumed = true;
       const at = cb.current.startAt?.();
       if (at && at > 1 && at < m.d - 5) seek(at);
     }
-    if (m.t === 'ended') {
+    if (m.t === 'ended' && episodeLike) {
       setEnded(true);
       setWatched(true);
       cb.current.onProgress?.(m.d, m.d);
@@ -233,7 +241,7 @@ export function WebPlayer({
     }
     const o = outroRef.current;
     if (o && m.c >= o.start && m.c < o.end && !m.p) startNextCountdown();
-    if (m.d > 0 && Date.now() - l.lastSave >= 5000) {
+    if (episodeLike && Date.now() - l.lastSave >= 5000) {
       l.lastSave = Date.now();
       cb.current.onProgress?.(m.c, m.d);
     }

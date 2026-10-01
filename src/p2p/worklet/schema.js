@@ -96,6 +96,35 @@ function roomNode(value, work) {
   return false
 }
 
+// ---- mapping rooms: episode ↔ chapter corrections, one Autobase per manhwa ---
+
+/** Mirrors of src/data/mapping.ts (MAX_CHAPTER, MAX_CHAPTERS_PER_EPISODE). */
+const MAP_LIMITS = { chapter: 20000, episode: 2000, perEpisode: 12 }
+const MAX_MAP_NODE_BYTES = 4096
+const isCount = (v, max) => Number.isInteger(v) && v >= 1 && v <= max
+
+/** `{ s: season, f: 'end', b: last chapter }` or `{ s, f: 'ep', n: episode, a: first, b: last }`. */
+function mapBody(b) {
+  if (!isObj(b) || typeof b.s !== 'string' || !WORK.test(b.s) || !isCount(b.b, MAP_LIMITS.chapter)) return false
+  if (b.f === 'end') return onlyKeys(b, ['s', 'f', 'b'])
+  if (b.f === 'ep') {
+    return (
+      onlyKeys(b, ['s', 'f', 'n', 'a', 'b']) &&
+      isCount(b.n, MAP_LIMITS.episode) &&
+      isCount(b.a, MAP_LIMITS.chapter) &&
+      b.a <= b.b &&
+      b.b - b.a < MAP_LIMITS.perEpisode
+    )
+  }
+  return false
+}
+
+function mapNode(value, room) {
+  if (!envelope(value, ['map'], MAX_MAP_NODE_BYTES)) return false
+  if (!WORK.test(room) || value.room !== 'map:' + room) return false
+  return isNonce(value.nonce) && mapBody(value.body)
+}
+
 // ---- personal (home) base -------------------------------------------------
 
 const JOURNAL_TYPES = ['ep', 'ch', 'comment']
@@ -204,6 +233,9 @@ module.exports = {
   WORK,
   TARGET,
   roomNode,
+  mapNode,
+  mapBody,
+  MAP_LIMITS,
   homeNode,
   dmNode,
   dmPlain,

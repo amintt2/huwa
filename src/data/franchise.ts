@@ -5,11 +5,12 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useEffect, useState } from 'react';
 
 import { isDemo } from '@/demo/flags';
+import { DEMO_CHAINS } from '@/demo/seasons';
 import { getState, useStore } from '@/store/store';
 
 import { isTvLike, NODE, prequelOf, type Media } from './anilist';
 import { gql, seriesFromMedia } from './anilist-api';
-import { getSeries, registerSeries, useCatalog, type Series } from './catalog';
+import { getSeries, refreshCatalog, registerSeries, useCatalog, type Series } from './catalog';
 import { playTarget, type PlayTarget } from './play-target';
 
 const KEY = 'huwa/franchise/v1';
@@ -27,15 +28,28 @@ const anilistId = (s: Series) => (/^al\d+$/.test(s.id) ? Number(s.id.slice(2)) :
 function load() {
   loaded ??= AsyncStorage.getItem(KEY)
     .then((raw) => {
-      if (raw) chains = { ...JSON.parse(raw), ...chains };
+      if (!raw) return;
+      chains = { ...JSON.parse(raw), ...chains };
+      // Chapter ranges of later seasons start after their prequels (data/mapping-overlay.ts).
+      refreshCatalog();
     })
     .catch(() => {});
   return loaded;
 }
 
+/** Restore the persisted chains at launch, so later seasons show their chapters right away. */
+export const loadFranchise = () => load();
+
+/** Ids of the earlier seasons, first season first (synchronous, undefined while unknown). */
+export function prequelIdsOf(id: string): string[] | undefined {
+  if (isDemo) return DEMO_CHAINS[id] ?? [];
+  return chains[id];
+}
+
 /** Earlier seasons when known (possibly none), undefined while they still have to be fetched. */
 export function knownPrequels(s: Series): Series[] | undefined {
-  if (isDemo || anilistId(s) === null || s.prequel === null || failed.has(s.id)) return [];
+  if (isDemo) return (DEMO_CHAINS[s.id] ?? []).map(getSeries).filter((x): x is Series => !!x);
+  if (anilistId(s) === null || s.prequel === null || failed.has(s.id)) return [];
   const ids = chains[s.id];
   if (!ids) return undefined;
   const list = ids.map(getSeries);
@@ -65,8 +79,14 @@ async function walk(s: Series): Promise<string[]> {
   }
   const fresh = found.filter((x) => !getSeries(x.id));
   if (fresh.length) registerSeries(fresh);
-  chains[s.id] = found.map((x) => x.id);
+  const ids = found.map((x) => x.id);
+  chains[s.id] = ids;
+  // Every season of the chain knows its own prequels too (no extra request for them).
+  ids.forEach((id, i) => {
+    chains[id] ??= ids.slice(0, i);
+  });
   AsyncStorage.setItem(KEY, JSON.stringify(chains)).catch(() => {});
+  refreshCatalog();
   return chains[s.id];
 }
 

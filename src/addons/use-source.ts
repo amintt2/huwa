@@ -53,6 +53,14 @@ export type SourceOptions = {
   engineAvailable?: boolean;
 };
 
+/** Copy of `rec` without `k` (a cleared resolution must re-trigger resolving, not block it). */
+function dropKey<T>(rec: Record<string, T>, k: string): Record<string, T> {
+  if (!(k in rec)) return rec;
+  const next = { ...rec };
+  delete next[k];
+  return next;
+}
+
 export function useSource(seriesId: string, episode: number, { enabled = true, preview = false, engineAvailable = false }: SourceOptions = {}) {
   const { streams, infos, pending, failed, asked, refreshed, refresh } = useStreams(seriesId, episode, enabled);
   const prefs = useAddonPrefs();
@@ -250,7 +258,7 @@ export function useSource(seriesId: string, episode: number, { enabled = true, p
     if (s?.cachedAt != null && !retried.current.has(k)) {
       retried.current.add(k);
       setSuspended((p) => ({ keys: p.keys.includes(k) ? p.keys : [...(p.gen >= 0 && refreshed > p.gen ? [] : p.keys), k], gen: refreshed }));
-      setResolved((r) => (r[k] ? { ...r, [k]: {} } : r));
+      setResolved((r) => dropKey(r, k));
       setManual((m) => (m === k ? undefined : m));
       setLocked((l) => (l === k ? undefined : l));
       void refresh();
@@ -262,9 +270,12 @@ export function useSource(seriesId: string, episode: number, { enabled = true, p
     setLocked((l) => (l === k ? undefined : l));
   };
 
+  // Re-run when this source's resolution is cleared (retry / re-pick), not on every resolved change.
+  const resolvedState = currentKey ? (resolved[currentKey]?.url ? 'url' : resolved[currentKey]?.error ? 'error' : 'none') : 'none';
   // Torrent → HTTPS through the debrid service (or the native engine once registered).
   useEffect(() => {
-    if (!enabled || !current || !currentKey || !isTorrent(current) || !resolverLabel || resolved[currentKey]) return;
+    const done = resolved[currentKey ?? ''];
+    if (!enabled || !current || !currentKey || !isTorrent(current) || !resolverLabel || done?.url || done?.error) return;
     const ctrl = new AbortController();
     const ref = { infoHash: current.infoHash!, fileIdx: current.fileIdx, filename: current.behaviorHints?.filename, sources: current.sources, episode };
     // Pre-search: debrid only (an on-device torrent would start downloading).
@@ -276,7 +287,7 @@ export function useSource(seriesId: string, episode: number, { enabled = true, p
       });
     return () => ctrl.abort();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [currentKey, resolverLabel, enabled, preview]);
+  }, [currentKey, resolverLabel, enabled, preview, resolvedState]);
 
   // ---- upgrade: strictly better quality, same language fit, proved fast ----
   const sideOf = (s: AddonStream): UpgradeSide => ({
@@ -323,7 +334,7 @@ export function useSource(seriesId: string, episode: number, { enabled = true, p
     }
     const k = streamKey(s);
     setBad((b) => b.filter((x) => x !== k));
-    setResolved((m) => (m[k]?.error ? { ...m, [k]: {} } : m));
+    setResolved((m) => (m[k]?.error ? dropKey(m, k) : m));
     setManual(k);
   };
 

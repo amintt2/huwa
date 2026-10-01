@@ -16,6 +16,9 @@ const anilistOf = (seriesId: string) => {
 export function imdbIds(ids: AnimeIds | null | undefined, episode: number): string[] {
   if (!ids?.imdb) return [];
   if (ids.media === 'MOVIE') return [ids.imdb];
+  // No season known (long-running shows such as One Piece): "S1 E1075" never matches an IMDb
+  // listing; only keep the guess for short shows, where season 1 is the likely answer.
+  if (ids.season == null && ids.epOffset == null && !ids.alt && episode > 26) return [];
   const main = `${ids.imdb}:${ids.season ?? 1}:${episode + (ids.epOffset ?? 0)}`;
   const out = [main];
   if (ids.alt) {

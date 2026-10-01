@@ -15,6 +15,13 @@ const RATE = {
   hourMs: 3_600_000
 }
 
+/** Corrections are cheap to read and rarely sent: a looser pace than comments. */
+const MAP_RATE = {
+  minIntervalMs: 3_000,
+  perHour: 60,
+  hourMs: 3_600_000
+}
+
 const XP_RULES = {
   minEpisodeGapMs: 20 * 60_000,
   maxPerDay: 30,
@@ -52,12 +59,12 @@ async function accept(view, host, node, writer, { indexer = false } = {}) {
 
 // ---- comment room: one Autobase per work -----------------------------------
 
-function rateOk(stats, ts) {
+function rateOk(stats, ts, rules = RATE) {
   if (!stats) return { ok: true, recent: [] }
   if (ts <= stats.last) return { ok: false }
-  if (stats.last && ts - stats.last < RATE.minIntervalMs) return { ok: false }
-  const recent = stats.recent.filter((r) => ts - r < RATE.hourMs)
-  if (recent.length >= RATE.perHour) return { ok: false }
+  if (stats.last && ts - stats.last < rules.minIntervalMs) return { ok: false }
+  const recent = stats.recent.filter((r) => ts - r < rules.hourMs)
+  if (recent.length >= rules.perHour) return { ok: false }
   return { ok: true, recent }
 }
 
@@ -143,6 +150,41 @@ function createRoomApply(work) {
       const writer = await resolveWriter(view, node)
       if (!writer) continue
       if (await roomStep(view, node, writer, work)) await accept(view, host, node, writer)
+    }
+  }
+}
+
+// ---- mapping room: episode ↔ chapter corrections, one Autobase per manhwa ---
+// Each identity has one active value per (season, field): `p/<season>/<field>/<author>`, the newest
+// replaces the older one. The consensus itself is computed by every reader (src/social/consensus.ts),
+// weighted by the author's rank: the room only keeps signed, paced, well-formed proposals.
+
+const mapField = (b) => (b.f === 'end' ? 'end' : 'ep' + pad(b.n, 4))
+const mapKey = (b, author) => 'p/' + b.s + '/' + mapField(b) + '/' + author
+
+async function mapStep(view, node, writer) {
+  const v = node.value
+  const b = v.body
+  const author = writer.who.id
+  const stats = await get(view, 'a/' + author)
+  if (!pow.check(pow.powPayload(v, writer.w), v.nonce, pow.difficultyFor(stats))) return false
+  const rate = rateOk(stats, v.ts, MAP_RATE)
+  if (!rate.ok) return false
+  const key = mapKey(b, author)
+  const prev = await get(view, key)
+  if (prev && prev.ts >= v.ts) return false
+  await view.put(key, b.f === 'end' ? { to: b.b, ts: v.ts } : { from: b.a, to: b.b, ts: v.ts })
+  await view.put('a/' + author, { n: (stats ? stats.n : 0) + 1, last: v.ts, recent: rate.recent.concat(v.ts), vouched: false })
+  return true
+}
+
+function createMapApply(room) {
+  return async function apply(nodes, view, host) {
+    for (const node of nodes) {
+      if (node.value === null || !schema.mapNode(node.value, room)) continue
+      const writer = await resolveWriter(view, node)
+      if (!writer) continue
+      if (await mapStep(view, node, writer)) await accept(view, host, node, writer)
     }
   }
 }
@@ -298,6 +340,9 @@ function createDmApply(pair) {
 
 module.exports = {
   RATE,
+  MAP_RATE,
+  mapKey,
+  createMapApply,
   XP_RULES,
   commentId,
   rateOk,

@@ -26,7 +26,8 @@ import { useWatchTrace } from '@/stats/use-watch-trace';
 import { useSettings } from '@/settings/settings';
 import { Button, Chip, Cover, IconButton, Press, Txt } from '@/components/ui';
 import { chapterAfterEpisode } from '@/data/bridge';
-import { episodeLabel, getEpisode } from '@/data/catalog';
+import { episodeLabel, getEpisode, useCatalog } from '@/data/catalog';
+import { useMappingSync } from '@/data/mapping-sync';
 import { useThread } from '@/store/derived';
 import { getState, markEpisodeDone, saveEpisodeProgress, toggleMyList, useStore } from '@/store/store';
 import { enableTorrentEngine, getTorrentSettings, isAvailable as torrentEngineLinked, useTorrentSettings } from '@/torrent';
@@ -41,7 +42,10 @@ export default function Watch() {
 
 function WatchScreen({ id }: { id: string }) {
   const insets = useSafeAreaInsets();
+  // Chapter ranges change when earlier seasons or community corrections arrive.
+  useCatalog();
   const { series, episode } = getEpisode(id)!;
+  useMappingSync(series);
   const eps = series.anime!.episodes;
   const next = eps.find((e) => e.number === episode.number + 1);
   const nextChapter = chapterAfterEpisode(series, episode);
@@ -249,7 +253,7 @@ function WatchScreen({ id }: { id: string }) {
       )}
 
       {series.manhwa && (
-        <EpisodeBridgeStrip from={episode.chapters[0]} to={episode.chapters[1]} nextChapterId={nextChapter?.id} estimated={series.estimated} />
+        <EpisodeBridgeStrip series={series} episode={episode} nextChapterId={nextChapter?.id} />
       )}
 
       <View style={{ flexDirection: 'row', alignItems: 'baseline', gap: S.sm }}>

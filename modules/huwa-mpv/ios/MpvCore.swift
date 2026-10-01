@@ -153,6 +153,8 @@ final class MpvCore {
       mpv_set_property_string(ctx, "start", start > 1 ? String(format: "%.3f", start) : "none")
       mpv_set_property_string(ctx, "pause", autoplay ? "no" : "yes")
       mpv_set_property_string(ctx, "sid", "no")
+      // The rotation nudge (refreshOutputSize) leaves an aspect override: never carry it to the next file.
+      mpv_set_property_string(ctx, "video-aspect-override", "no")
       runCommand(ctx, ["loadfile", url, "replace"])
     }
   }
