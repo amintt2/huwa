@@ -13,6 +13,10 @@ import { isTorrent } from '@/addons/protocol';
 import { qualityLabel, useSource } from '@/addons/use-source';
 import { EpisodeBridgeStrip } from '@/components/bridge';
 import { CommentsPanel } from '@/components/comments';
+import { DownloadSheet, statusLine, type PlayingSource } from '@/components/downloads/episode-download';
+import { useOfflineEpisode, useDownloadItem } from '@/downloads';
+import { downloadability, pickForDownload, pickSubtitles } from '@/downloads/pick';
+import { getDebrid } from '@/debrid/store';
 import { Player, type ExternalSubtitle, type PlayerHandle } from '@/components/player/Player';
 import { PrefetchNext } from '@/components/player/prefetch-next';
 import { WebPlayer } from '@/components/player/WebPlayer';
@@ -25,7 +29,7 @@ import { chapterAfterEpisode } from '@/data/bridge';
 import { episodeLabel, getEpisode } from '@/data/catalog';
 import { useThread } from '@/store/derived';
 import { getState, markEpisodeDone, saveEpisodeProgress, toggleMyList, useStore } from '@/store/store';
-import { enableTorrentEngine, isAvailable as torrentEngineLinked, useTorrentSettings } from '@/torrent';
+import { enableTorrentEngine, getTorrentSettings, isAvailable as torrentEngineLinked, useTorrentSettings } from '@/torrent';
 import { C, S } from '@/theme/tokens';
 
 export default function Watch() {
@@ -55,20 +59,26 @@ function WatchScreen({ id }: { id: string }) {
   );
   const ids = useAnimeIds(series.id);
   const langPrefs = useSettings();
+  // Downloaded episode: played from the local file, no addon is asked (works offline).
+  const offline = useOfflineEpisode(id);
+  const dlItem = useDownloadItem(id);
+  const [dlOpen, setDlOpen] = useState(false);
 
   // ---- Source: auto (first that works, then better quality) or manual via the menu ----
   const torrentSettings = useTorrentSettings();
-  const src = useSource(series.id, episode.number, { engineAvailable: torrentEngineLinked() && !torrentSettings.enabled });
+  const src = useSource(series.id, episode.number, { enabled: !offline, engineAvailable: torrentEngineLinked() && !torrentSettings.enabled });
   // Subtitle addons, asked again with the playing file (hash / size / name) for exact matches.
   const playing = src.current;
   const video = useMemo(() => subtitleExtraOf(playing), [playing]);
-  const addonSubs = useSubtitles(series.id, episode.number, true, video, langPrefs.subLangs);
+  const addonSubs = useSubtitles(series.id, episode.number, !offline, video, langPrefs.subLangs);
   // Start timings (tap → sources → choice → first frame) → on-device stats, see addons/timing.ts.
   useWatchTrace(id, src);
   // Subtitles attached to the playing stream first, then the subtitles addons (e.g. OpenSubtitles).
   const { streamSubtitles } = src;
   const streamAddon = src.current?.addonName ?? 'Flux';
+  const offlineSubs = offline?.subtitles;
   const subtitles = useMemo<ExternalSubtitle[]>(() => {
+    if (offlineSubs) return offlineSubs.map((x) => ({ url: x.url, lang: x.lang, source: 'Téléchargé', label: x.label ?? '' }));
     const all = [
       ...streamSubtitles.map((x) => ({ url: x.url, lang: x.lang, addonName: streamAddon, match: undefined })),
       ...addonSubs,
@@ -82,7 +92,7 @@ function WatchScreen({ id }: { id: string }) {
       const label = match ? [num, match === 'hash' ? 'synchro exacte' : 'même release'].filter(Boolean).join(' · ') : num;
       return { url: x.url, lang: x.lang, source: x.addonName, label, match };
     });
-  }, [addonSubs, streamSubtitles, streamAddon]);
+  }, [addonSubs, streamSubtitles, streamAddon, offlineSubs]);
   // Loading bar before playback: share of addons that answered, then the race / torrent step.
   const [maxPending, setMaxPending] = useState(0);
   if (src.pending > maxPending) setMaxPending(src.pending);
@@ -156,6 +166,20 @@ function WatchScreen({ id }: { id: string }) {
     const q = qualityLabel(src.quality);
     return name.toLowerCase().includes(q.toLowerCase()) ? name : `${name} · ${q}`;
   })();
+  // What "Télécharger" would take from this screen: the source playing now.
+  const playingForDownload: PlayingSource | null = (() => {
+    if (!src.current) return null;
+    const ctx = { debrid: !!getDebrid(), engine: torrentEngineLinked() && getTorrentSettings().enabled };
+    const d = downloadability(src.current, ctx);
+    return {
+      stream: src.current,
+      url: src.url,
+      via: isTorrent(src.current) ? src.resolverLabel ?? undefined : undefined,
+      pick: d.ok ? pickForDownload([src.current], 'auto', ctx) : null,
+      reason: d.ok ? undefined : d.reason,
+    };
+  })();
+  const subtitlesForDownload = pickSubtitles(subtitles, langPrefs.subLangs).map((x) => ({ url: x.url, lang: x.lang, label: x.source }));
   const renderComments = () => (
     <CommentsPanel
       target={target}
@@ -181,9 +205,26 @@ function WatchScreen({ id }: { id: string }) {
         <Button small variant="soft" icon={inList ? 'checkmark' : 'add'} label="Ma liste" onPress={() => toggleMyList(series.id)} />
         <Button small variant="soft" icon="chatbubble-outline" label={`${count}`}
           onPress={() => router.push({ pathname: '/comments', params: { target, kind: 'anime' } })} />
+        <Button
+          small
+          variant="soft"
+          icon={dlItem?.status === 'done' ? 'checkmark-circle' : 'arrow-down-circle-outline'}
+          label={!dlItem ? 'Télécharger' : dlItem.status === 'done' ? 'Téléchargé' : dlItem.status === 'failed' ? 'Échec' : 'En cours'}
+          onPress={() => setDlOpen(true)}
+        />
       </View>
 
-      <SourceButton src={src} onOpen={() => setMenuOpen(true)} />
+      {offline ? (
+        <View style={styles.offline} accessibilityRole="text">
+          <Ionicons name="phone-portrait-outline" size={18} color={C.accentText} />
+          <View style={{ flex: 1, gap: 2 }}>
+            <Txt v="label" style={{ fontSize: 14 }}>Lecture du fichier téléchargé</Txt>
+            <Txt v="small">{dlItem ? statusLine(dlItem) : ''} · fonctionne sans connexion</Txt>
+          </View>
+        </View>
+      ) : (
+        <SourceButton src={src} onOpen={() => setMenuOpen(true)} />
+      )}
       {mismatch && (
         <Press onPress={() => setMenuOpen(true)} style={styles.langWarn} accessibilityRole="button" accessibilityLabel={`${mismatch}. Changer de source`}>
           <Ionicons name="language-outline" size={18} color="#F5B544" />
@@ -229,7 +270,7 @@ function WatchScreen({ id }: { id: string }) {
             <Txt v="small" numberOfLines={1} style={{ flex: 1 }}>{series.title}</Txt>
           </View>
         )}
-        {src.web ? (
+        {src.web && !offline ? (
           // Hosted player page (addon `externalUrl` / HTML `url`): shown in place of the native player.
           <WebPlayer
             key={src.web.url}
@@ -254,7 +295,7 @@ function WatchScreen({ id }: { id: string }) {
         ) : (
           <Player
             ref={playerRef}
-            source={src.url ? { uri: src.url, headers: src.headers } : null}
+            source={offline ? { uri: offline.uri } : src.url ? { uri: src.url, headers: src.headers } : null}
             title={series.title}
             subtitle={episodeLabel(episode)}
             artwork={series.image}
@@ -296,6 +337,16 @@ function WatchScreen({ id }: { id: string }) {
         )}
       </View>
       <SourcesMenu src={src} visible={menuOpen} onClose={() => setMenuOpen(false)} />
+      {dlOpen && (
+        <DownloadSheet
+          series={series}
+          episode={episode}
+          visible
+          onClose={() => setDlOpen(false)}
+          playing={playingForDownload}
+          subtitles={subtitlesForDownload}
+        />
+      )}
       {next && <PrefetchNext seriesId={series.id} episode={next.number} armed={prefetchArmed} buffer={streamPolicy.allowed} />}
       {/* Hidden, not unmounted, in fullscreen: keeps the comment draft and scroll position. */}
       <View style={{ flex: 1, display: full ? 'none' : 'flex' }}>
@@ -312,6 +363,10 @@ function WatchScreen({ id }: { id: string }) {
 }
 
 const styles = StyleSheet.create({
+  offline: {
+    flexDirection: 'row', alignItems: 'center', gap: S.md, padding: S.md, borderRadius: 14,
+    backgroundColor: C.accentSoft, borderWidth: 1, borderColor: C.accentLine,
+  },
   langWarn: {
     flexDirection: 'row', alignItems: 'flex-start', gap: S.md, marginHorizontal: S.lg, padding: S.md, borderRadius: 14,
     backgroundColor: 'rgba(245,181,68,0.12)', borderWidth: 1, borderColor: 'rgba(245,181,68,0.35)',

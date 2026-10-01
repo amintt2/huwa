@@ -1,15 +1,18 @@
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { router, useLocalSearchParams } from 'expo-router';
+import { useState } from 'react';
 import { ScrollView, StyleSheet, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { traceTap } from '@/addons/timing';
 import { BridgeToManhwa } from '@/components/bridge';
+import { DownloadSheet, EpisodeDownloadButton } from '@/components/downloads/episode-download';
 import { ListsButton } from '@/components/lists';
 import { PRIORITY, usePresearch } from '@/components/presearch';
 import { Button, Chip, Cover, IconButton, Press, Progress, Txt } from '@/components/ui';
 import { approx, chapterRangeLabel, resumeEpisode } from '@/data/bridge';
-import { episodeLabel, getSeries } from '@/data/catalog';
+import { episodeLabel, getSeries, type Episode } from '@/data/catalog';
+import { enqueueEpisodes, getItem, useDownloadItems } from '@/downloads';
 import { useThread } from '@/store/derived';
 import { toggleMyList, useStore } from '@/store/store';
 import { C, F, S } from '@/theme/tokens';
@@ -21,6 +24,8 @@ export default function AnimeDetail() {
   const progress = useStore((s) => s.episodes);
   const inList = useStore((s) => s.myList.includes(id));
   const commentCount = useThread(`series:${id}`).length;
+  const downloads = useDownloadItems();
+  const [dlFor, setDlFor] = useState<Episode | null>(null);
   // The episode "Commencer / Reprendre" opens: its sources are searched (and on Wi-Fi buffered)
   // while the page is read.
   const target = series?.anime ? resumeEpisode(series, progress) ?? series.anime.episodes[0] : undefined;
@@ -88,7 +93,14 @@ export default function AnimeDetail() {
           const p = progress[e.id];
           const ratio = p ? p.position / p.duration : 0;
           return (
-            <Press key={e.id} onPress={() => router.push(`/watch/${e.id}`)} style={styles.row} accessibilityLabel={episodeLabel(e)}>
+            <Press
+              key={e.id}
+              onPress={() => router.push(`/watch/${e.id}`)}
+              onLongPress={() => setDlFor(e)}
+              delayLongPress={350}
+              style={styles.row}
+              accessibilityLabel={episodeLabel(e)}
+              accessibilityHint="Appui long : options de téléchargement">
               <Cover palette={series.palette} image={series.image} width={124} height={70} radius={10} dim={p?.done}>
                 <View style={styles.thumbPlay}>
                   <Ionicons name={p?.done ? 'checkmark' : 'play'} size={12} color={C.white} />
@@ -102,13 +114,20 @@ export default function AnimeDetail() {
               <View style={{ flex: 1, gap: 4 }}>
                 <Txt v="label" numberOfLines={1} color={p?.done ? C.text2 : C.text}>{episodeLabel(e)}</Txt>
                 <Txt v="small">
+                  {downloads[e.id]?.status === 'done' ? 'Téléchargé · ' : ''}
                   {e.durationMin} min{series.manhwa ? ` · adapte les ${approx(series)}${chapterRangeLabel(e)}` : ''}
                 </Txt>
               </View>
+              <EpisodeDownloadButton
+                episodeId={e.id}
+                onPress={() => (getItem(e.id) ? setDlFor(e) : enqueueEpisodes(series, e, 'one'))}
+                onLongPress={() => setDlFor(e)}
+              />
             </Press>
           );
         })}
       </View>
+      {dlFor && <DownloadSheet series={series} episode={dlFor} visible onClose={() => setDlFor(null)} />}
     </ScrollView>
   );
 }

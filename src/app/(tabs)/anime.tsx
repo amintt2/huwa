@@ -1,5 +1,5 @@
-import { Catalog } from '@/components/catalog';
+import { AnimeHome } from '@/components/anime-browse';
 
 export default function AnimeTab() {
-  return <Catalog kind="anime" />;
+  return <AnimeHome />;
 }
