@@ -13,6 +13,7 @@ import { Onboarding } from '@/components/onboarding';
 import { PresearchHost } from '@/components/presearch';
 import { OfflineBanner } from '@/components/states';
 import { loadCatalog } from '@/data/anilist';
+import { installMappingOverlay } from '@/data/mapping-overlay';
 import { hydrateLinks } from '@/manga-ext/link';
 import { PaperbackHost } from '@/manga-ext/PaperbackHost';
 import { hydrateMangaExt } from '@/manga-ext/registry';
@@ -56,7 +57,8 @@ export default function RootLayout() {
   useEffect(() => {
     const timeout = setTimeout(() => setCatalogReady(true), 6000);
     // Source links overlay real chapters on catalog series: restore them with the catalog.
-    Promise.all([loadCatalog(), hydrateMangaExt().then(hydrateLinks)]).finally(() => {
+    // Franchise-wide chapter ranges and community corrections apply to every series it loads.
+    Promise.all([installMappingOverlay(), loadCatalog(), hydrateMangaExt().then(hydrateLinks)]).finally(() => {
       clearTimeout(timeout);
       setCatalogReady(true);
     });
@@ -140,6 +142,7 @@ export default function RootLayout() {
           <Stack.Screen name="lists" />
           <Stack.Screen name="list/[id]" />
           <Stack.Screen name="list-picker" options={{ ...SHEET, sheetAllowedDetents: [0.7, 1] }} />
+          <Stack.Screen name="mapping" options={{ ...SHEET, sheetAllowedDetents: [0.62, 1] }} />
           <Stack.Screen name="anilist-auth" options={{ animation: 'none' }} />
         </Stack.Protected>
         <Stack.Protected guard={!me}>

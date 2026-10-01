@@ -5,7 +5,7 @@ import { getSeries } from '@/data/catalog';
 import { demoKey, fingerprint } from '@/social/identity';
 import { seedComments } from '@/store/seed-comments';
 
-import type { JournalEntry, Label, P2PComment, Profile } from './contract';
+import type { JournalEntry, Label, MappingProposal, P2PComment, Profile } from './contract';
 
 const BIOS: Record<string, string> = {
   'mira.reads': 'Je lis tout en webtoon, je regarde tout en VOSTFR.',
@@ -126,3 +126,15 @@ export const demoReply = (peer: string, n: number) => (byKey.has(peer) ? REPLIES
 export const DEMO_WELCOME = { name: 'mira.reads', text: 'Salut ! J’ai vu ton commentaire sur le dernier chapitre, tu lis aussi le manhwa ?' };
 
 export const demoKeyOf = (name: string) => demoKey(name);
+
+/**
+ * Corrections from demo peers: two of them agree that season 2 of "Echo of the Void"
+ * (src/demo/seasons.ts) ends at chapter 88, so one more confirmation can verify it.
+ */
+export function demoMapping(room: string): MappingProposal[] {
+  if (room !== 'void') return [];
+  return [
+    { season: 'void2', field: 'end', to: 88, author: demoKey('mira.reads'), ts: BASE + 3_600_000 },
+    { season: 'void2', field: 'end', to: 88, author: demoKey('kaito_92'), ts: BASE + 7_200_000 },
+  ];
+}

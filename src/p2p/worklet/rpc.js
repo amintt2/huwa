@@ -25,6 +25,8 @@ const METHODS = new Set([
   'deleteComment',
   'vouch',
   'listComments',
+  'listMapping',
+  'proposeMapping',
   'follow',
   'unfollow',
   'block',

@@ -8,8 +8,10 @@ import { BridgeToManhwa } from '@/components/bridge';
 import { ListsButton } from '@/components/lists';
 import { PRIORITY, usePresearch } from '@/components/presearch';
 import { Button, Chip, Cover, IconButton, Press, Progress, Txt } from '@/components/ui';
-import { approx, chapterRangeLabel, resumeEpisode } from '@/data/bridge';
-import { episodeLabel, getSeries } from '@/data/catalog';
+import { approxEp, chapterRangeLabel, resumeEpisode } from '@/data/bridge';
+import { episodeLabel, getSeries, useCatalog, type Series } from '@/data/catalog';
+import { useSeasonNumber } from '@/data/franchise';
+import { useMappingSync } from '@/data/mapping-sync';
 import { useThread } from '@/store/derived';
 import { toggleMyList, useStore } from '@/store/store';
 import { C, F, S } from '@/theme/tokens';
@@ -17,7 +19,10 @@ import { C, F, S } from '@/theme/tokens';
 export default function AnimeDetail() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const insets = useSafeAreaInsets();
+  // Chapter ranges change when earlier seasons or community corrections arrive.
+  useCatalog();
   const series = getSeries(id);
+  useMappingSync(series);
   const progress = useStore((s) => s.episodes);
   const inList = useStore((s) => s.myList.includes(id));
   const commentCount = useThread(`series:${id}`).length;
@@ -47,7 +52,7 @@ export default function AnimeDetail() {
         <View style={styles.heroText}>
           <View style={{ flexDirection: 'row', gap: 6 }}>
             <Chip kind="anime" />
-            <Chip kind="neutral" label={series.status === 'completed' ? 'TERMINÉ' : 'SAISON 1'} />
+            <SeasonChip series={series} />
           </View>
           <Txt v="display" style={{ fontSize: 32 }}>{series.title}</Txt>
           <Txt v="small" style={{ fontSize: 13, ...F.medium }}>
@@ -102,7 +107,7 @@ export default function AnimeDetail() {
               <View style={{ flex: 1, gap: 4 }}>
                 <Txt v="label" numberOfLines={1} color={p?.done ? C.text2 : C.text}>{episodeLabel(e)}</Txt>
                 <Txt v="small">
-                  {e.durationMin} min{series.manhwa ? ` · adapte les ${approx(series)}${chapterRangeLabel(e)}` : ''}
+                  {e.durationMin} min{series.manhwa ? ` · adapte les ${approxEp(series, e)}${chapterRangeLabel(e)}` : ''}
                 </Txt>
               </View>
             </Press>
@@ -111,6 +116,13 @@ export default function AnimeDetail() {
       </View>
     </ScrollView>
   );
+}
+
+/** "SAISON 2" once the franchise is known (also starts resolving it, which shifts the chapters). */
+function SeasonChip({ series }: { series: Series }) {
+  const season = useSeasonNumber(series);
+  if (series.status === 'completed' && (season ?? 1) === 1) return <Chip kind="neutral" label="TERMINÉ" />;
+  return <Chip kind="neutral" label={`SAISON ${season ?? 1}`} />;
 }
 
 const styles = StyleSheet.create({

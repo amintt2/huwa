@@ -18,7 +18,7 @@ const schema = require('./schema')
 const pow = require('./pow')
 const seal = require('./seal')
 const { makeAuth, verifyDeviceProof } = require('./auth')
-const { commentId, createRoomApply, createHomeApply, createDmApply, rateOk } = require('./apply')
+const { commentId, createRoomApply, createHomeApply, createDmApply, createMapApply, rateOk, mapKey, MAP_RATE } = require('./apply')
 const stats = require('./stats')
 
 const ROOM_IDLE_MS = 60_000
@@ -55,6 +55,11 @@ const dmBaseKey = (pair) => crypto.keyPair(hash('huwa/dm/' + PROTOCOL + '/' + pa
 const idTopic = (identity) => hash('huwa/id/v1/' + identity)
 // Community stats rooms have their own version (separate bases, untouched by PROTOCOL bumps).
 const statsBaseKey = (month) => crypto.keyPair(hash('huwa/stats/v' + stats.STATS_VERSION + '/' + month)).publicKey
+// Mapping rooms (episode ↔ chapter corrections) are new bases with their own version: older peers
+// never open them, so no PROTOCOL bump (comment rooms and DMs are untouched).
+const MAP_VERSION = 'v1'
+const mapBaseKey = (room) => crypto.keyPair(hash('huwa/map/' + MAP_VERSION + '/' + room)).publicKey
+const MAX_MAPPING = 5000
 /** The stats swarm and bases close after this long without use. */
 const STATS_IDLE_MS = 5 * 60_000
 const MAX_STATS_READ = 5000
@@ -100,6 +105,7 @@ class HuwaNode {
     this.home = null // my personal Autobase
     this.meProfile = undefined
     this.rooms = new Map() // work -> { base, refs, timer, discovery }
+    this.mapRooms = new Map() // manhwa room -> { base, refs, timer, discovery }
     this.homes = new Map() // identity -> { base, discovery } (other people's personal bases)
     this.dms = new Map() // peer -> { base, discovery }
     this.peers = new Map() // identity -> { home, box, name }
@@ -181,13 +187,13 @@ class HuwaNode {
     for (const sub of this.subs.values()) sub()
     this.subs.clear()
     if (this._statusTimer) clearTimeout(this._statusTimer)
-    for (const room of this.rooms.values()) if (room.timer) clearTimeout(room.timer)
+    for (const room of [...this.rooms.values(), ...this.mapRooms.values()]) if (room.timer) clearTimeout(room.timer)
     for (const member of this.pairingMembers) await member.close().catch(noop)
     if (this.pairing) await this.pairing.close().catch(noop)
     if (this.swarm) await this.swarm.destroy().catch(noop)
     await this._closeStats().catch(noop)
     if (this.statsStore) await this.statsStore.close().catch(noop)
-    const bases = [...this.rooms.values(), ...this.homes.values(), ...this.dms.values()].map((r) => r.base)
+    const bases = [...this.rooms.values(), ...this.mapRooms.values(), ...this.homes.values(), ...this.dms.values()].map((r) => r.base)
     if (this.home) bases.push(this.home)
     await Promise.all(bases.map((b) => b.close().catch(noop)))
     await this.store.close()
@@ -660,7 +666,7 @@ class HuwaNode {
     return room
   }
 
-  _retain(room, work) {
+  _retain(room, work, rooms = this.rooms) {
     room.refs++
     if (room.timer) clearTimeout(room.timer)
     room.timer = null
@@ -668,7 +674,7 @@ class HuwaNode {
       if (--room.refs > 0) return
       room.timer = later(() => {
         if (room.refs > 0) return
-        this.rooms.delete(work)
+        rooms.delete(work)
         if (room.discovery) room.discovery.destroy().catch(noop)
         room.base.close().catch(noop)
       }, ROOM_IDLE_MS)
@@ -769,6 +775,65 @@ class HuwaNode {
   }
 
   // ---- moderation (phase 4) ---------------------------------------------------
+
+  // ---- episode ↔ chapter corrections ---------------------------------------------
+
+  async _mapRoom(key) {
+    if (!schema.WORK.test(key)) throw new Error('Œuvre invalide')
+    let room = this.mapRooms.get(key)
+    if (!room) {
+      const base = new Autobase(this.store.namespace('map/' + MAP_VERSION + '/' + key), mapBaseKey(key), {
+        optimistic: true,
+        valueEncoding: 'json',
+        wakeup: this.wakeup,
+        open: viewOf,
+        apply: createMapApply(key)
+      })
+      room = { base, refs: 0, timer: null, discovery: null, ready: base.ready() }
+      this.mapRooms.set(key, room)
+      await room.ready
+      room.discovery = this._join(base.discoveryKey)
+      base.on('update', () => this._notify('mapping:' + key))
+    }
+    await room.ready
+    return room
+  }
+
+  /** Every active proposal of a manhwa room (see MappingProposal in src/p2p/contract.ts). */
+  async listMapping(key) {
+    const room = await this._mapRoom(key)
+    const out = []
+    for (const e of await rangeValues(room.base.view, 'p/', { limit: MAX_MAPPING })) {
+      const [, season, field, author] = e.key.split('/')
+      const v = e.value
+      if (field === 'end') out.push({ season, field: 'end', to: v.to, author, ts: v.ts })
+      else out.push({ season, field: 'ep', ep: Number(field.slice(2)), from: v.from, to: v.to, author, ts: v.ts })
+    }
+    return out
+  }
+
+  async proposeMapping(input) {
+    this._requireIdentity()
+    const p = input || {}
+    const key = String(p.room)
+    const body =
+      p.field === 'end'
+        ? { s: String(p.season), f: 'end', b: p.to }
+        : { s: String(p.season), f: 'ep', n: p.ep, a: p.from, b: p.to }
+    if (!schema.mapBody(body)) throw new Error('Correction invalide')
+    const room = await this._mapRoom(key)
+    const release = this._retain(room, key, this.mapRooms)
+    try {
+      const me = this.secret.identity
+      const stats = await valueOf(room.base.view, 'a/' + me)
+      if (!rateOk(stats, Date.now(), MAP_RATE).ok) throw new Error('Patiente quelques secondes avant une nouvelle correction')
+      const value = await this._append(room.base, 'map', 'map:' + key, body, { nonceBits: pow.difficultyFor(stats) })
+      const stored = await valueOf(room.base.view, mapKey(body, me))
+      if (!stored || stored.ts !== value.ts) throw new Error('Correction refusée')
+    } finally {
+      release()
+    }
+  }
 
   async _flag(t, key, on) {
     this._requireIdentity()
@@ -1106,6 +1171,12 @@ class HuwaNode {
       this._room(arg).then((room) => {
         release = this._retain(room, arg)
       }, noop)
+    } else if (kind === 'mapping') {
+      topic = 'mapping:' + arg
+      load = () => this.listMapping(arg)
+      this._mapRoom(arg).then((room) => {
+        release = this._retain(room, arg, this.mapRooms)
+      }, noop)
     } else if (kind === 'labels') {
       topic = 'labels'
       load = () => this.listLabels()
@@ -1165,4 +1236,4 @@ class HuwaNode {
   }
 }
 
-module.exports = { HuwaNode, workBaseKey, dmBaseKey, idTopic }
+module.exports = { HuwaNode, workBaseKey, dmBaseKey, mapBaseKey, idTopic }

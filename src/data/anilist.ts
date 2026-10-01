@@ -4,8 +4,10 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 import { isDemo } from '@/demo/flags';
+import { DEMO_SEASONS } from '@/demo/seasons';
 
-import { hydrateExtraSeries, makeChapters, makeEpisodes, setCatalog, type Palette, type Series } from './catalog';
+import { hydrateExtraSeries, makeChapters, makeEpisodes, registerSeries, setCatalog, type Palette, type Series } from './catalog';
+import { estimateCoverage } from './mapping';
 
 export const ENDPOINT = 'https://graphql.anilist.co';
 const CACHE_KEY = 'huwa/catalog/v2';
@@ -89,8 +91,9 @@ export function build(anime: Media | null, manhwa: Media | null, trendRank: numb
   if (anime && eps === 0 && !manhwa) return null; // not aired yet, nothing to watch
 
   const chapterTotal = manhwa ? manhwa.chapters ?? 120 : 0;
-  // Estimated coverage: ~2.4 chapters per episode, leaving the manhwa ahead of the anime.
-  const covered = manhwa ? Math.max(1, Math.min(chapterTotal - 5, Math.round(eps * 2.4))) : eps;
+  // Estimated coverage: ~2.4 chapters per episode, leaving the manhwa ahead of the anime. This is
+  // the first-season view; data/mapping-overlay.ts shifts later seasons after their prequels.
+  const covered = manhwa ? Math.max(1, Math.min(chapterTotal - 5, estimateCoverage(eps))) : eps;
 
   return {
     id,
@@ -109,6 +112,8 @@ export function build(anime: Media | null, manhwa: Media | null, trendRank: numb
     // Earlier season of the same show, when AniList links one (null: this is the first entry).
     prequel: anime?.relations ? (prequelOf(anime)?.id ?? null) : undefined,
     estimated: !!(anime && manhwa),
+    manhwaId: manhwa?.id,
+    chaptersKnown: manhwa ? manhwa.chapters != null : undefined,
     anime: anime && eps > 0 ? { episodes: makeEpisodes(id, eps, covered, false) } : undefined,
     manhwa: manhwa ? { chapters: makeChapters(id, chapterTotal, false) } : undefined,
   };
@@ -156,8 +161,12 @@ async function fetchCatalog(): Promise<Series[]> {
  * keep the offline demo if both fail. Resolves once something real is on screen (or on failure).
  */
 export async function loadCatalog(): Promise<void> {
-  // Demo mode: only the original fictional series, never AniList.
-  if (isDemo) return;
+  // Demo mode: only the original fictional series, never AniList (plus a second season of one of
+  // them, reachable by id only, to show the bridge across seasons).
+  if (isDemo) {
+    registerSeries(DEMO_SEASONS);
+    return;
+  }
   await hydrateExtraSeries();
   let hadCache = false;
   try {
