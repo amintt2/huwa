@@ -73,7 +73,12 @@ export type StreamItem = {
   behaviorHints?: StreamBehaviorHints;
 };
 
-export type AddonStream = StreamItem & { addonId: string; addonName: string };
+export type AddonStream = StreamItem & {
+  addonId: string;
+  addonName: string;
+  /** Served from the on-disk answer cache (epoch ms of the answer): its link may have expired. */
+  cachedAt?: number;
+};
 
 export type MetaPreview = {
   id: string;

@@ -20,12 +20,15 @@ import Animated, {
 } from 'react-native-reanimated';
 import { scheduleOnRN } from 'react-native-worklets';
 
+import { traceTap } from '@/addons/timing';
 import { seriesHref } from '@/data/anilist-api';
 import { continuationChapter } from '@/data/bridge';
+import { episodeLabel, getEpisode } from '@/data/catalog';
 import type { Series } from '@/data/catalog';
 import { franchiseTarget, resolvePrequels, useFranchiseTarget } from '@/data/franchise';
 import { C, S } from '@/theme/tokens';
 
+import { PRIORITY, usePresearch } from './presearch';
 import { Button, Chip, Cover, Txt } from './ui';
 
 /**
@@ -305,6 +308,13 @@ function Slide({
 }) {
   const eps = series.anime?.episodes ?? [];
   const { target, seasonNumber } = useFranchiseTarget(series, active);
+  // The slide on screen for a second: its "Regarder" episode is pre-searched (lowest priority).
+  usePresearch(
+    'hero',
+    target ? { seriesId: getEpisode(target.episode.id)?.series.id ?? series.id, episodeId: target.episode.id, episode: target.episode.number, meta: { title: series.title, artist: episodeLabel(target.episode), artwork: series.image } } : null,
+    PRIORITY.hero,
+    { active: active && !clone },
+  );
   const nextCh = series.anime ? continuationChapter(series) : series.manhwa?.chapters[0];
   const opening = useRef(false);
 
@@ -342,7 +352,10 @@ function Slide({
         await Promise.race([resolvePrequels(series), new Promise((r) => setTimeout(r, 4000))]);
         t = franchiseTarget(series);
       }
-      if (t) router.push(`/watch/${t.episode.id}`);
+      if (t) {
+        traceTap(t.episode.id);
+        router.push(`/watch/${t.episode.id}`);
+      }
     } finally {
       opening.current = false;
     }

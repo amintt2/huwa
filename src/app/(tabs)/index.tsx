@@ -7,9 +7,10 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { ContinueCard, RankCard, ReleaseCard } from '@/components/cards';
 import { HeroCarousel } from '@/components/hero';
+import { PRIORITY, usePresearch } from '@/components/presearch';
 import { Cover, IconButton, Press, SectionHeader, Txt } from '@/components/ui';
 import { continuationChapter, hasBoth } from '@/data/bridge';
-import { allSeries, animeSeries, useCatalog } from '@/data/catalog';
+import { allSeries, animeSeries, episodeLabel, getEpisode, useCatalog } from '@/data/catalog';
 import { animeReleases, manhwaReleases, weeklyTop } from '@/data/releases';
 import { useContinueItems } from '@/store/derived';
 import { useStore } from '@/store/store';
@@ -20,6 +21,16 @@ export default function Home() {
   const insets = useSafeAreaInsets();
   const catalogVersion = useCatalog();
   const continueItems = useContinueItems();
+  // The most recent "Reprendre" episode is pre-searched once the row has been on screen a second.
+  const resume = continueItems.find((i) => i.kind === 'anime' && !i.bridged);
+  const resumeEp = resume ? getEpisode(resume.key) : undefined;
+  usePresearch(
+    'continue',
+    resumeEp
+      ? { seriesId: resumeEp.series.id, episodeId: resumeEp.episode.id, episode: resumeEp.episode.number, meta: { title: resumeEp.series.title, artist: episodeLabel(resumeEp.episode), artwork: resumeEp.series.image } }
+      : null,
+    PRIORITY.continue,
+  );
   // Recomputed when AniList data replaces the cached / demo catalog.
   const { featured, animeOut, manhwaOut, top } = useMemo(() => {
     void catalogVersion;
