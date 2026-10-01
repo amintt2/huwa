@@ -132,6 +132,35 @@ export function toggleMyList(seriesId: string) {
   }));
 }
 
+/** Progress removed by `removeFromHistory`, for "Annuler". */
+export type HistorySnapshot = { episodes: State['episodes']; chapters: State['chapters'] };
+
+/**
+ * Removes a series from "En cours" (its episode or chapter progress) and returns what was removed
+ * so it can be put back. The rank journal (XP) is not touched.
+ */
+export function removeFromHistory(seriesId: string, kind: 'anime' | 'manhwa'): HistorySnapshot {
+  const series = getSeries(seriesId);
+  const ids = new Set(kind === 'anime' ? (series?.anime?.episodes ?? []).map((e) => e.id) : (series?.manhwa?.chapters ?? []).map((c) => c.id));
+  const removed: HistorySnapshot = { episodes: {}, chapters: {} };
+  set((s) => {
+    const pick = <T,>(rec: Record<string, T>, out: Record<string, T>) => {
+      const keep: Record<string, T> = {};
+      for (const [id, v] of Object.entries(rec)) {
+        if (ids.has(id)) out[id] = v;
+        else keep[id] = v;
+      }
+      return keep;
+    };
+    return kind === 'anime' ? { ...s, episodes: pick(s.episodes, removed.episodes) } : { ...s, chapters: pick(s.chapters, removed.chapters) };
+  });
+  return removed;
+}
+
+export function restoreHistory(snap: HistorySnapshot) {
+  set((s) => ({ ...s, episodes: { ...s.episodes, ...snap.episodes }, chapters: { ...s.chapters, ...snap.chapters } }));
+}
+
 export function resetAll() {
   set(() => ({ ...initial, comments: [], liked: {} }));
 }
