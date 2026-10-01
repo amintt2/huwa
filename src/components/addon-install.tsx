@@ -1,30 +1,19 @@
 // Confirmation sheet shown before installing a Stremio addon, whatever the entry point:
 // deep link (`huwa://addon?url=…`, `huwa://install?url=…`), pasted URL or an addon catalog.
 import Ionicons from '@expo/vector-icons/Ionicons';
-import { Image } from 'expo-image';
 import { router, type Href } from 'expo-router';
-import { useEffect, useState, type ComponentProps } from 'react';
+import { useEffect, useState } from 'react';
 import { ActivityIndicator, ScrollView, StyleSheet, TextInput, View } from 'react-native';
 
 import { configureAddon } from '@/addons/configure';
-import { needsConfiguration, resourceNames, type Manifest } from '@/addons/protocol';
+import { needsConfiguration, type Manifest } from '@/addons/protocol';
 import { installAddon, previewAddon, setPrefs } from '@/addons/registry';
 import { Button, IconButton, Txt } from '@/components/ui';
+
+import { capabilities, hostOf, installedWhat, logoOf, PreviewCard, TrustNote, type PreviewLine } from './extension-ui';
 import { C, F, R, S } from '@/theme/tokens';
 
-export const ADDON_LEGAL =
-  'Huwa ne fournit, n’héberge ni n’indexe aucun contenu, et ne vérifie pas les extensions. Une extension est un service tiers, hébergé par son auteur : ' +
-  'tu es seul responsable de celles que tu installes et de la légalité de leurs contenus dans ton pays.';
-
-const RESOURCE_LABEL: Record<string, string> = {
-  stream: 'Sources vidéo',
-  catalog: 'Catalogues',
-  meta: 'Fiches',
-  subtitles: 'Sous-titres',
-  addon_catalog: 'Catalogue d’extensions',
-};
-
-const TYPE_LABEL: Record<string, string> = { series: 'séries', movie: 'films', anime: 'anime', channel: 'chaînes', tv: 'TV', other: 'autres' };
+export { ADDON_LEGAL } from './extension-ui';
 
 type Preview = { baseUrl: string; manifest: Manifest; existing?: unknown };
 
@@ -87,11 +76,15 @@ export function AddonInstallSheet({ url }: { url: string }) {
   if (done && m) {
     return (
       <View style={[styles.wrap, { alignItems: 'center', justifyContent: 'center' }]}>
-        <Ionicons name="checkmark-circle" size={56} color={C.success} />
-        <Txt v="title" style={{ textAlign: 'center' }}>{m.name} est installé</Txt>
-        <Txt v="small" style={{ textAlign: 'center' }}>Ses sources apparaissent dans le menu Sources de chaque épisode, ses catalogues dans Découvrir.</Txt>
-        <Button label="Terminé" onPress={closeSheet} />
-        <Button small variant="ghost" label="Voir mes extensions" onPress={() => router.replace('/addons' as Href)} />
+        <View style={styles.doneIcon}>
+          <Ionicons name="checkmark" size={36} color={C.success} />
+        </View>
+        <Txt v="title" style={{ textAlign: 'center' }}>{m.name} est installée</Txt>
+        <Txt v="small" style={{ textAlign: 'center', lineHeight: 19, maxWidth: 320 }}>{installedWhat(m)}</Txt>
+        <View style={{ alignSelf: 'stretch', gap: S.sm, marginTop: S.md }}>
+          <Button label="Terminé" onPress={closeSheet} />
+          <Button small variant="ghost" label="Voir mes extensions" onPress={() => router.replace('/addons' as Href)} />
+        </View>
       </View>
     );
   }
@@ -99,8 +92,8 @@ export function AddonInstallSheet({ url }: { url: string }) {
   return (
     <ScrollView style={{ flex: 1, backgroundColor: C.surface }} contentContainerStyle={styles.wrap} keyboardShouldPersistTaps="handled">
       <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-        <Txt v="section" style={{ flex: 1 }}>Ajouter une extension</Txt>
-        <IconButton icon="close" label="Fermer" onPress={closeSheet} />
+        <Txt v="title" style={{ flex: 1, fontSize: 20 }} accessibilityRole="header">Installer une extension</Txt>
+        <IconButton icon="close" label="Fermer" tone="solid" onPress={closeSheet} />
       </View>
 
       {!m && !cur.error && (
@@ -111,50 +104,34 @@ export function AddonInstallSheet({ url }: { url: string }) {
       )}
 
       {!!cur.error && (
-        <View style={{ gap: S.md }}>
-          <Txt v="label" color="#FF6B6B">{cur.error}</Txt>
-          <Txt v="small" selectable>{target}</Txt>
+        <View style={styles.error}>
+          <View style={{ flexDirection: 'row', gap: S.sm, alignItems: 'flex-start' }}>
+            <Ionicons name="alert-circle-outline" size={18} color="#FF8A8A" style={{ marginTop: 1 }} />
+            <Txt v="label" color="#FF8A8A" style={{ flex: 1 }}>{cur.error}</Txt>
+          </View>
+          <Txt v="small" selectable numberOfLines={3}>{target}</Txt>
           <Button small variant="soft" icon="refresh" label="Réessayer" onPress={() => setAttempt((n) => n + 1)} />
         </View>
       )}
 
       {m && (
         <>
-          <View style={styles.head}>
-            {m.logo ? <Image source={{ uri: m.logo }} style={styles.logo} contentFit="contain" /> : (
-              <View style={[styles.logo, { alignItems: 'center', justifyContent: 'center' }]}>
-                <Ionicons name="extension-puzzle-outline" size={28} color={C.accentText} />
-              </View>
-            )}
-            <View style={{ flex: 1, gap: 2 }}>
-              <Txt v="title" numberOfLines={2}>{m.name}</Txt>
-              <Txt v="small">{[m.version && `v${m.version}`, hostOf(cur.data!.baseUrl)].filter(Boolean).join(' · ')}</Txt>
-            </View>
-          </View>
-          {!!m.description && <Txt v="body" numberOfLines={8}>{m.description}</Txt>}
-
-          <View style={styles.box}>
-            <Line icon="layers-outline" text={resourceNames(m).map((r) => RESOURCE_LABEL[r] ?? r).join(' · ') || 'Aucune ressource tant que l’extension n’est pas configurée'} />
-            {!!m.types?.length && <Line icon="film-outline" text={`Types : ${m.types.map((t) => TYPE_LABEL[t] ?? t).join(', ')}`} />}
-            {!!m.catalogs?.length && <Line icon="grid-outline" text={`${m.catalogs.length} catalogue${m.catalogs.length > 1 ? 's' : ''}`} />}
-            <Line icon="server-outline" text={`Hébergée par ${hostOf(cur.data!.baseUrl)}, pas par Huwa`} />
-            {m.behaviorHints?.p2p && <Line icon="git-network-outline" text="Utilise le pair-à-pair (torrent)" />}
-            {m.behaviorHints?.adult && <Line icon="warning-outline" text="Contenu réservé aux adultes" />}
-            {!!cur.data?.existing && <Line icon="refresh-outline" text="Déjà installée : cette version remplacera l’actuelle" />}
-          </View>
-
-          <View style={[styles.box, { borderColor: 'rgba(255,196,0,0.35)' }]}>
-            <Txt v="small" style={{ lineHeight: 18 }}>{ADDON_LEGAL}</Txt>
-          </View>
+          <PreviewCard
+            kind="Vidéo · addon Stremio"
+            logo={logoOf(m)}
+            name={m.name}
+            meta={[m.version && `v${m.version}`, hostOf(cur.data!.baseUrl)].filter(Boolean).join(' · ')}
+            description={m.description}
+            caps={capabilities(m)}
+            lines={trustLines(cur.data!, mustConfigure)}
+          />
+          <TrustNote />
 
           {mustConfigure ? (
-            <>
-              <Txt v="small">Cette extension doit être configurée sur son site avant de servir quoi que ce soit.</Txt>
-              <Button label={busy === 'configure' ? 'Ouverture…' : 'Configurer sur son site'} icon="settings-outline" onPress={configure} />
-            </>
+            <Button label={busy === 'configure' ? 'Ouverture…' : 'Configurer sur son site'} icon="settings-outline" onPress={configure} />
           ) : (
             <>
-              <Button label={busy === 'install' ? 'Installation…' : 'J’ai compris, installer'} icon="add" onPress={install} />
+              <Button label={busy === 'install' ? 'Installation…' : cur.data?.existing ? 'Mettre à jour' : 'Installer'} icon="add" onPress={install} />
               {m.behaviorHints?.configurable && (
                 <Button small variant="soft" icon="settings-outline" label={busy === 'configure' ? 'Ouverture…' : 'Configurer d’abord'} onPress={configure} />
               )}
@@ -185,25 +162,20 @@ export function AddonInstallSheet({ url }: { url: string }) {
   );
 }
 
-function Line({ icon, text }: { icon: ComponentProps<typeof Ionicons>['name']; text: string }) {
-  return (
-    <View style={{ flexDirection: 'row', gap: S.sm, alignItems: 'flex-start' }}>
-      <Ionicons name={icon} size={16} color={C.accentText} style={{ marginTop: 1 }} />
-      <Txt v="small" style={{ flex: 1, color: C.body }}>{text}</Txt>
-    </View>
-  );
+function trustLines(p: Preview, mustConfigure: boolean): PreviewLine[] {
+  const lines: PreviewLine[] = [{ icon: 'server-outline', text: `Hébergée par ${hostOf(p.baseUrl)}, pas par Huwa` }];
+  if (!resourceCount(p.manifest)) lines.push({ icon: 'layers-outline', text: 'Aucune ressource tant que l’extension n’est pas configurée' });
+  if (mustConfigure) lines.push({ icon: 'settings-outline', text: 'À configurer sur son site avant de servir quoi que ce soit', tone: 'warn' });
+  if (p.existing) lines.push({ icon: 'refresh-outline', text: 'Déjà installée : cette version remplacera l’actuelle' });
+  return lines;
 }
 
-const hostOf = (u: string) => {
-  const m = /^https?:\/\/([^/]+)/i.exec(u);
-  return m ? m[1] : u;
-};
+const resourceCount = (m: Manifest) => m.resources.length;
 
 const styles = StyleSheet.create({
   wrap: { flexGrow: 1, padding: S.lg, gap: S.lg, paddingBottom: S.xxl, backgroundColor: C.surface },
-  head: { flexDirection: 'row', alignItems: 'center', gap: S.md },
-  logo: { width: 56, height: 56, borderRadius: 14, backgroundColor: C.elevated },
-  box: { gap: S.sm, padding: S.md, borderRadius: R.card, backgroundColor: C.elevated, borderWidth: 1, borderColor: C.border },
+  doneIcon: { width: 72, height: 72, borderRadius: 36, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(61,220,151,0.14)' },
+  error: { gap: S.md, padding: S.md, borderRadius: R.card, borderCurve: 'continuous', backgroundColor: C.elevated, borderWidth: 1, borderColor: 'rgba(255,107,107,0.35)' },
   input: {
     minHeight: 44, paddingHorizontal: S.lg, borderRadius: R.card, backgroundColor: C.elevated,
     color: C.text, ...F.medium, fontSize: 15,

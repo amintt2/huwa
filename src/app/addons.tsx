@@ -1,235 +1,221 @@
 // "Extensions": every source the user adds himself. Huwa ships none.
 //  - Vidéo: Stremio-compatible addons (streams, catalogs, subtitles, addon catalogs).
-//  - Manhwa: Paperback repositories, managed by `/manga-sources`.
+//  - Manhwa: Paperback repositories and sources, managed in detail by `/manga-sources`.
+// Adding anything goes through one screen, `/extension-add`, which recognizes the pasted link.
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { router, type Href } from 'expo-router';
 import * as WebBrowser from 'expo-web-browser';
 import { useState } from 'react';
-import { Alert, ScrollView, StyleSheet, Switch, TextInput, View } from 'react-native';
+import { ScrollView, StyleSheet, Switch, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { configureAddon } from '@/addons/configure';
-import { hasResource, resourceNames } from '@/addons/protocol';
+import { hasResource } from '@/addons/protocol';
 import { QUALITIES, type Quality } from '@/addons/quality';
-import {
-  BUILTIN_ID,
-  moveAddon,
-  refreshAddon,
-  removeAddon,
-  setPrefs,
-  toggleAddon,
-  useAddonPrefs,
-  useAddons,
-} from '@/addons/registry';
-import { ADDON_LEGAL } from '@/components/addon-install';
-import { RecommendedExtensions } from '@/components/recommended-extensions';
-import { Group, Row } from '@/components/states';
+import { EXTENSIONS_SITE } from '@/addons/recommended';
+import { BUILTIN_ID, moveAddon, setPrefs, toggleAddon, useAddonPrefs, useAddons, type InstalledAddon } from '@/addons/registry';
+import { capabilities, CapChips, Card, EmptyCard, ExtLogo, LinkRow, logoOf, SectionTitle, TrustNote } from '@/components/extension-ui';
+import { SourceIcon } from '@/components/paperback';
 import { Button, IconButton, Press, Txt } from '@/components/ui';
 import { useDebrid } from '@/debrid/store';
-import { classifyLink } from '@/packs/format';
-import { hrefFor } from '@/packs/routes';
+import { extensionsSupported, toggleSource, useMangaExt } from '@/manga-ext/registry';
 import { C, F, R, S } from '@/theme/tokens';
 
-const EXTENSIONS_SITE = 'https://huwa.mciut.fr/extensions';
+const MAX_SOURCES = 5;
 
-const openInstall = (url: string) => router.push({ pathname: '/addon', params: { url } } as unknown as Href);
+const openAdd = (kind?: 'video' | 'manga') => router.push({ pathname: '/extension-add', params: kind ? { kind } : {} } as unknown as Href);
 
 export default function Extensions() {
   const insets = useSafeAreaInsets();
   const addons = useAddons();
   const prefs = useAddonPrefs();
   const { provider } = useDebrid();
-  const [url, setUrl] = useState('');
-  const catalogs = addons.filter((a) => a.enabled && hasResource(a.manifest, 'addon_catalog'))
+  const { repos, installed } = useMangaExt();
+  const [reorder, setReorder] = useState(false);
+  const mine = addons.filter((a) => a.manifest.id !== BUILTIN_ID);
+  const directories = addons
+    .filter((a) => a.enabled && hasResource(a.manifest, 'addon_catalog'))
     .flatMap((a) => (a.manifest.addonCatalogs ?? []).map((c) => ({ a, c })));
-
-  const add = () => {
-    if (!url.trim()) return;
-    // A pack link or a Paperback repository pasted here goes to its own screen.
-    const link = classifyLink(url);
-    if (link && link.kind !== 'addon') router.push(hrefFor(link));
-    else openInstall(url.trim());
-    setUrl('');
-  };
-
-  const reconfigure = async (baseUrl: string) => {
-    const configured = await configureAddon(baseUrl).catch(() => null);
-    if (configured) openInstall(configured);
-  };
 
   return (
     <ScrollView
       style={{ flex: 1, backgroundColor: C.bg }}
-      keyboardShouldPersistTaps="handled"
       contentContainerStyle={{ paddingTop: insets.top + S.sm, paddingHorizontal: S.lg, gap: S.xl, paddingBottom: S.xxl + insets.bottom }}>
       <View style={{ flexDirection: 'row', alignItems: 'center', gap: S.md }}>
         <IconButton icon="chevron-back" label="Retour" onPress={() => router.back()} />
-        <Txt v="display" style={{ fontSize: 28 }}>Extensions</Txt>
+        <Txt v="display" style={{ fontSize: 28, flexShrink: 1 }} numberOfLines={1} accessibilityRole="header">Extensions</Txt>
       </View>
 
-      <Txt v="small">
-        Huwa est une bibliothèque : il ne fournit aucun contenu, et à part la démo (vidéos libres de droits, désactivable) aucune extension n’est préinstallée. Tu ajoutes celles que tu veux, hébergées par leurs auteurs.
-      </Txt>
-
-      <View style={{ gap: S.sm }}>
-        <Txt v="section">Recommandées</Txt>
-        <Txt v="small">Sous-titres, catalogues et fiches : elles ne fournissent aucune vidéo.</Txt>
-        <RecommendedExtensions />
+      <View style={{ gap: S.md }}>
+        <Txt v="body" style={{ color: C.body }}>
+          Les extensions apportent à Huwa les vidéos, sous-titres et chapitres. Tu choisis celles que tu ajoutes.
+        </Txt>
+        <Button label="Ajouter une extension" icon="add" onPress={() => openAdd()} />
+        <TrustNote />
       </View>
 
       {/* ---------- Vidéo ---------- */}
-      <View style={{ gap: S.sm }}>
-        <Txt v="section">Vidéo · addons Stremio</Txt>
-        <Txt v="small">
-          Colle le lien d’un addon compatible Stremio (manifest.json, stremio://… ou lien web.stremio.com) ou d’un pack d’extensions. Ses sources, catalogues et sous-titres apparaîtront dans l’app.
-        </Txt>
-        <TextInput
-          value={url}
-          onChangeText={setUrl}
-          onSubmitEditing={add}
-          placeholder="https://…/manifest.json"
-          placeholderTextColor={C.text2}
-          autoCapitalize="none"
-          autoCorrect={false}
-          keyboardType="url"
-          returnKeyType="go"
-          style={styles.input}
-          accessibilityLabel="Lien de l’addon"
-        />
-        <Button label="Ajouter" icon="add" onPress={add} />
-      </View>
-
-      <View style={{ flexDirection: 'row', gap: S.sm }}>
-        <Button style={{ flex: 1 }} small variant="soft" icon="compass-outline" label="Découvrir" onPress={() => router.push('/discover' as Href)} />
-        <Button style={{ flex: 1 }} small variant="soft" icon="flash-outline" label={provider ? provider.name : 'Débrid'} onPress={() => router.push('/debrid' as Href)} />
-      </View>
-      <Button small variant="ghost" icon="book-outline" label="Extensions manhwa (Paperback)" onPress={() => router.push('/manga-sources' as Href)} />
-
-      <Press onPress={() => router.push('/pack-create' as Href)} style={styles.site} accessibilityRole="button">
-        <Ionicons name="share-social-outline" size={20} color={C.accentText} />
-        <View style={{ flex: 1, gap: 2 }}>
-          <Txt v="label">Partager mes extensions</Txt>
-          <Txt v="small">Crée un pack (lien + QR code) pour qu’un ami installe les mêmes en un geste.</Txt>
-        </View>
-        <Ionicons name="chevron-forward" size={16} color={C.text2} />
-      </Press>
-
       <View style={{ gap: S.md }}>
-        <Txt v="section">Installés</Txt>
-        <Txt v="small">Ordre = priorité : à qualité égale, les sources du premier addon passent devant.</Txt>
-        {addons.map((a, i) => (
-          <View key={a.baseUrl} style={styles.row}>
-            <View style={{ gap: 2 }}>
-              <IconButton icon="chevron-up" label={`Monter ${a.manifest.name}`} size={30} tone="solid" onPress={() => moveAddon(a.baseUrl, -1)} />
-              <IconButton icon="chevron-down" label={`Descendre ${a.manifest.name}`} size={30} tone="solid" onPress={() => moveAddon(a.baseUrl, 1)} />
-            </View>
-            <View style={{ flex: 1, gap: 2 }}>
-              <Txt v="label" numberOfLines={1}>{i + 1}. {a.manifest.name}</Txt>
-              <Txt v="small" numberOfLines={2}>{a.manifest.description ?? a.baseUrl}</Txt>
-              <Txt v="caption" style={{ fontSize: 10 }} numberOfLines={1}>{resourceNames(a.manifest).join(' · ')}</Txt>
-            </View>
-            <Switch value={a.enabled} onValueChange={() => toggleAddon(a.baseUrl)} trackColor={{ true: C.accent }} />
-            {a.manifest.id !== BUILTIN_ID && (
-              <IconButton
-                icon="ellipsis-horizontal"
-                label={`Options de ${a.manifest.name}`}
-                size={36}
-                onPress={() =>
-                  Alert.alert(a.manifest.name, a.baseUrl, [
-                    ...(a.manifest.behaviorHints?.configurable ? [{ text: 'Reconfigurer', onPress: () => reconfigure(a.baseUrl) }] : []),
-                    { text: 'Mettre à jour le manifest', onPress: () => refreshAddon(a.baseUrl).catch((e) => Alert.alert('Échec', e instanceof Error ? e.message : String(e))) },
-                    { text: 'Supprimer', style: 'destructive' as const, onPress: () => removeAddon(a.baseUrl) },
-                    { text: 'Annuler', style: 'cancel' as const },
-                  ])
-                }
-              />
-            )}
-          </View>
-        ))}
-      </View>
+        <SectionTitle icon="play-circle-outline" title="Vidéo" subtitle="Addons Stremio : flux, sous-titres, catalogues" count={mine.length} action={mine.length ? 'Ajouter' : undefined} onAction={() => openAdd('video')} />
 
-      {catalogs.length > 0 && (
-        <Group title="CATALOGUES D’EXTENSIONS (FOURNIS PAR TES ADDONS)">
-          {catalogs.map(({ a, c }, i) => (
-            <Row
+        {!mine.length && (
+          <EmptyCard icon="film-outline" text="Aucun addon vidéo pour l’instant. Ajoute un addon compatible Stremio pour trouver des sources." action="Ajouter un addon" onAction={() => openAdd('video')} />
+        )}
+
+        <Card>
+          {addons.map((a, i) => (
+            <AddonRow key={a.baseUrl} a={a} index={i} count={addons.length} reorder={reorder} last={i === addons.length - 1} />
+          ))}
+        </Card>
+        {addons.length > 1 && (
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: S.md, paddingHorizontal: S.xs }}>
+            <Txt v="small" style={{ flex: 1, lineHeight: 18 }}>L’ordre fixe la priorité : à qualité égale, les sources du premier passent devant.</Txt>
+            <Press onPress={() => setReorder(!reorder)} hitSlop={8} accessibilityRole="button" accessibilityState={{ selected: reorder }} style={[styles.reorder, reorder && { backgroundColor: C.accentSoft, borderColor: C.accentLine }]}>
+              <Ionicons name={reorder ? 'checkmark' : 'swap-vertical'} size={14} color={C.accentText} />
+              <Txt v="small" color={C.accentText} style={F.semibold}>{reorder ? 'OK' : 'Réordonner'}</Txt>
+            </Press>
+          </View>
+        )}
+
+        <Card tinted={!!provider}>
+          <LinkRow
+            icon="flash-outline"
+            label="Accélérer avec un service débrid"
+            hint={provider ? `${provider.name} actif : les sources torrent sont lisibles.` : 'Optionnel : rend lisibles les sources torrent (TorBox, Real-Debrid…).'}
+            last={!directories.length}
+            onPress={() => router.push('/debrid' as Href)}
+          />
+          {directories.map(({ a, c }, i) => (
+            <LinkRow
               key={`${a.baseUrl}|${c.type}|${c.id}`}
-              icon="albums-outline"
-              label={`${c.name ?? c.id} · ${c.type}`}
-              hint={a.manifest.name}
-              last={i === catalogs.length - 1}
+              icon="compass-outline"
+              label={`Annuaire : ${c.name ?? c.id}`}
+              hint={`Addons publics, liste fournie par ${a.manifest.name}`}
+              last={i === directories.length - 1}
               onPress={() => router.push({ pathname: '/addon-catalog', params: { addon: a.baseUrl, type: c.type, id: c.id, name: c.name ?? c.id } } as unknown as Href)}
             />
           ))}
-        </Group>
-      )}
+        </Card>
 
-      {/* ---------- Manhwa ---------- */}
-      <Group title="MANHWA">
-        <Row
-          icon="book-outline"
-          label="Extensions manhwa (dépôts Paperback)"
-          hint="Ajoute un dépôt compatible Paperback pour lire les chapitres."
-          last
-          onPress={() => router.push('/manga-sources')}
-        />
-      </Group>
-
-      <Group title="BIBLIOTHÈQUE">
-        <Row
-          icon="download-outline"
-          label="Importer depuis Stremio ou anime-sama"
-          hint="Reprends ta liste et tes addons sans repartir de zéro."
-          last
-          onPress={() => router.push('/import' as Href)}
-        />
-      </Group>
-
-      <View style={{ gap: S.md }}>
-        <Txt v="section">Qualité préférée</Txt>
-        <View style={{ flexDirection: 'row', gap: S.sm, flexWrap: 'wrap' }}>
-          {(['auto', ...QUALITIES] as (Quality | 'auto')[]).map((q) => {
-            const on = prefs.preferredQuality === q;
-            return (
-              <Press
-                key={q}
-                onPress={() => setPrefs({ preferredQuality: q })}
-                accessibilityRole="button"
-                accessibilityState={{ selected: on }}
-                style={[styles.qual, on && { backgroundColor: C.accentSoft, borderColor: C.accentLine }]}>
-                <Txt v="label" color={on ? C.accentText : C.text} style={{ fontSize: 14 }}>
-                  {q === 'auto' ? 'Auto' : q === 2160 ? '4K' : `${q}p`}
-                </Txt>
-              </Press>
-            );
-          })}
+        <View style={{ gap: S.sm }}>
+          <Txt v="caption" style={{ paddingHorizontal: S.xs }}>Qualité préférée</Txt>
+          <View style={{ flexDirection: 'row', gap: S.sm, flexWrap: 'wrap' }}>
+            {(['auto', ...QUALITIES] as (Quality | 'auto')[]).map((q) => {
+              const on = prefs.preferredQuality === q;
+              return (
+                <Press
+                  key={q}
+                  onPress={() => setPrefs({ preferredQuality: q })}
+                  accessibilityRole="button"
+                  accessibilityState={{ selected: on }}
+                  style={[styles.qual, on && { backgroundColor: C.accentSoft, borderColor: C.accentLine }]}>
+                  <Txt v="label" color={on ? C.accentText : C.text} style={{ fontSize: 14 }}>
+                    {q === 'auto' ? 'Auto' : q === 2160 ? '4K' : `${q}p`}
+                  </Txt>
+                </Press>
+              );
+            })}
+          </View>
+          <Txt v="small" style={{ paddingHorizontal: S.xs, lineHeight: 18 }}>Si une source échoue, Huwa passe automatiquement à la suivante.</Txt>
         </View>
-        <Txt v="small">Les flux sont triés par qualité détectée dans leur nom. En cas d’échec de lecture, Huwa passe automatiquement au suivant.</Txt>
       </View>
 
-      <Press onPress={() => WebBrowser.openBrowserAsync(EXTENSIONS_SITE)} style={styles.site} accessibilityRole="link">
-        <Ionicons name="globe-outline" size={20} color={C.accentText} />
-        <View style={{ flex: 1, gap: 2 }}>
-          <Txt v="label">Ajouter des extensions en 1 clic</Txt>
-          <Txt v="small">huwa.mciut.fr/extensions : génère un bouton « Ajouter à Huwa » et un QR code pour n’importe quel addon.</Txt>
-        </View>
-        <Ionicons name="open-outline" size={16} color={C.text2} />
-      </Press>
+      {/* ---------- Manhwa ---------- */}
+      <View style={{ gap: S.md }}>
+        <SectionTitle
+          icon="book-outline"
+          title="Manhwa"
+          subtitle="Dépôts Paperback : chapitres à lire"
+          count={installed.length}
+          action={extensionsSupported && (installed.length || repos.length) ? 'Ajouter' : undefined}
+          onAction={() => openAdd('manga')}
+        />
+        {!extensionsSupported ? (
+          <Txt v="small">Les extensions Paperback ne sont disponibles que dans l’app iOS / Android.</Txt>
+        ) : !installed.length && !repos.length ? (
+          <EmptyCard icon="library-outline" text="Aucune source manhwa. Ajoute un dépôt Paperback, puis choisis les sources à installer." action="Ajouter un dépôt" onAction={() => openAdd('manga')} />
+        ) : (
+          <Card>
+            {installed.slice(0, MAX_SOURCES).map((s) => (
+              <View key={s.key} style={[styles.row, styles.line]}>
+                <SourceIcon source={s} size={40} />
+                <View style={{ flex: 1, gap: 2 }}>
+                  <Txt v="label" numberOfLines={1}>{s.name}</Txt>
+                  <Txt v="small" numberOfLines={1} style={{ fontSize: 12 }}>
+                    {[s.language?.toUpperCase(), `v${s.version}`, `Paperback ${s.format}`].filter(Boolean).join(' · ')}
+                  </Txt>
+                </View>
+                <Switch value={s.enabled} onValueChange={() => toggleSource(s.key)} trackColor={{ true: C.accent }} accessibilityLabel={`Activer ${s.name}`} />
+              </View>
+            ))}
+            <LinkRow
+              icon="layers-outline"
+              label={installed.length ? 'Gérer les dépôts et sources' : 'Choisir des sources'}
+              hint={[
+                `${repos.length} dépôt${repos.length > 1 ? 's' : ''}`,
+                installed.length > MAX_SOURCES && `${installed.length - MAX_SOURCES} autre${installed.length - MAX_SOURCES > 1 ? 's' : ''} source${installed.length - MAX_SOURCES > 1 ? 's' : ''}`,
+              ].filter(Boolean).join(' · ')}
+              last
+              onPress={() => router.push('/manga-sources')}
+            />
+          </Card>
+        )}
+      </View>
 
-      <Txt v="small">
-        Les flux torrent (infoHash) se lisent via un service débrid (TorBox, AllDebrid, Premiumize, Real-Debrid) configuré dans Débrid.
-        {'\n\n'}{ADDON_LEGAL}
-      </Txt>
+      {/* ---------- More ---------- */}
+      <View style={{ gap: S.sm }}>
+        <Txt v="caption" style={{ paddingHorizontal: S.xs }}>Plus</Txt>
+        <Card>
+          <LinkRow icon="share-social-outline" label="Partager mes extensions" hint="Un pack (lien + QR) pour qu’un ami installe les mêmes en un geste." onPress={() => router.push('/pack-create' as Href)} />
+          <LinkRow icon="download-outline" label="Importer depuis Stremio ou anime-sama" hint="Reprends ta liste et tes addons sans repartir de zéro." onPress={() => router.push('/import' as Href)} />
+          <LinkRow icon="globe-outline" label="Site des extensions" hint="huwa.mciut.fr : bouton « Ajouter à Huwa » et QR pour n’importe quel addon." external last onPress={() => WebBrowser.openBrowserAsync(EXTENSIONS_SITE)} />
+        </Card>
+      </View>
     </ScrollView>
   );
 }
 
+function AddonRow({ a, index, count, reorder, last }: { a: InstalledAddon; index: number; count: number; reorder: boolean; last: boolean }) {
+  const m = a.manifest;
+  const builtin = m.id === BUILTIN_ID;
+  const caps = capabilities(m, false);
+  return (
+    <Press
+      onPress={() => router.push({ pathname: '/extension', params: { url: a.baseUrl } } as unknown as Href)}
+      scaleTo={0.99}
+      accessibilityRole="button"
+      accessibilityLabel={`${m.name}, priorité ${index + 1}, ${a.enabled ? 'activée' : 'désactivée'}`}
+      accessibilityHint="Ouvre le détail de l’extension"
+      style={[styles.row, !last && styles.line]}>
+      <View style={!a.enabled && { opacity: 0.45 }}>
+        <ExtLogo uri={logoOf(m)} name={m.name} size={44} icon={builtin ? 'play-circle-outline' : undefined} />
+      </View>
+      <View style={{ flex: 1, gap: 4, opacity: a.enabled ? 1 : 0.6 }}>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+          {reorder && <Txt v="small" color={C.accentText} style={{ fontSize: 12, ...F.bold }}>{index + 1}.</Txt>}
+          <Txt v="label" numberOfLines={1} style={{ flexShrink: 1 }}>{m.name}</Txt>
+        </View>
+        {!!m.description && <Txt v="small" numberOfLines={1} style={{ fontSize: 12 }}>{m.description}</Txt>}
+        <CapChips caps={caps} max={2} />
+      </View>
+      {reorder ? (
+        <View style={{ gap: 6 }}>
+          <IconButton icon="chevron-up" label={`Monter ${m.name}`} size={30} tone="solid" color={index === 0 ? C.text2 : C.text} onPress={() => moveAddon(a.baseUrl, -1)} />
+          <IconButton icon="chevron-down" label={`Descendre ${m.name}`} size={30} tone="solid" color={index === count - 1 ? C.text2 : C.text} onPress={() => moveAddon(a.baseUrl, 1)} />
+        </View>
+      ) : (
+        <Switch value={a.enabled} onValueChange={() => toggleAddon(a.baseUrl)} trackColor={{ true: C.accent }} accessibilityLabel={`Activer ${m.name}`} />
+      )}
+    </Press>
+  );
+}
+
 const styles = StyleSheet.create({
-  input: {
-    minHeight: 48, paddingHorizontal: S.lg, borderRadius: R.card, backgroundColor: C.surface,
-    color: C.text, ...F.medium, fontSize: 16,
+  row: { flexDirection: 'row', alignItems: 'center', gap: S.md, padding: S.md },
+  line: { borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: C.borderStrong },
+  reorder: {
+    flexDirection: 'row', alignItems: 'center', gap: 4, minHeight: 32, paddingHorizontal: 10, borderRadius: R.pill,
+    borderWidth: 1, borderColor: C.border, backgroundColor: C.surface,
   },
-  row: { flexDirection: 'row', alignItems: 'center', gap: S.md, padding: S.md, borderRadius: R.card, backgroundColor: C.surface },
-  site: { flexDirection: 'row', alignItems: 'center', gap: S.md, padding: S.md, borderRadius: R.card, backgroundColor: C.accentSoft, borderWidth: 1, borderColor: C.accentLine },
   qual: {
     minHeight: 40, minWidth: 64, paddingHorizontal: S.md, alignItems: 'center', justifyContent: 'center',
     borderRadius: R.control, borderWidth: 1, borderColor: C.border, backgroundColor: C.surface,
