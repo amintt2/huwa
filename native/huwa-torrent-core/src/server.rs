@@ -20,7 +20,7 @@ use tokio::io::{AsyncRead, AsyncReadExt, AsyncSeekExt};
 use tracing::{debug, warn};
 
 use crate::{
-    engine::{Engine, Entry, ManagedTorrentHandle},
+    engine::{Engine, Entry, ManagedTorrentHandle, ServerHandle},
     priorities::{
         classify_request, prefetch_windows, MemoryPressure, PlaybackIntent, PlaybackPriorityPolicy, PriorityContext,
     },
@@ -35,17 +35,22 @@ pub fn router(engine: Arc<Engine>) -> Router {
         .with_state(engine)
 }
 
-/// Binds the listener and serves forever on the engine runtime. Returns the port.
+/// Binds the listener and serves on the engine runtime until `Engine::shutdown`. Returns the port.
 pub async fn start(engine: Arc<Engine>) -> anyhow::Result<u16> {
     let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0)).await?;
     let port = listener.local_addr()?.port();
     engine.set_port(port);
     let app = router(engine.clone());
-    engine.runtime.spawn(async move {
-        if let Err(e) = axum::serve(listener, app).await {
+    let (stop, stopped) = tokio::sync::oneshot::channel::<()>();
+    let task = engine.runtime.spawn(async move {
+        let serve = axum::serve(listener, app).with_graceful_shutdown(async move {
+            let _ = stopped.await;
+        });
+        if let Err(e) = serve.await {
             warn!("http server stopped: {e:#}");
         }
     });
+    engine.set_server(ServerHandle { stop, task });
     Ok(port)
 }
 

@@ -11,6 +11,7 @@
 
 use std::{
     collections::{HashMap, HashSet},
+    mem::ManuallyDrop,
     path::{Path, PathBuf},
     sync::{
         atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering},
@@ -177,6 +178,9 @@ pub struct Entry {
     pub first_byte_sent: AtomicBool,
     pub last_served_end: AtomicU64,
     pub consecutive_waits: AtomicU64,
+    /// Background magnet resolution (`start_stream`). Aborted and awaited by `remove`, so a torrent
+    /// deleted while resolving cannot come back as an unlisted download.
+    pub resolver: parking_lot::Mutex<Option<tokio::task::JoinHandle<()>>>,
 }
 
 impl Entry {
@@ -213,13 +217,31 @@ impl Entry {
     }
 }
 
+/// The loopback HTTP server task (see `server::start`) and its graceful-stop signal.
+pub struct ServerHandle {
+    pub stop: tokio::sync::oneshot::Sender<()>,
+    pub task: tokio::task::JoinHandle<()>,
+}
+
 pub struct Engine {
-    pub runtime: tokio::runtime::Runtime,
+    /// Never dropped in place: the last `Arc<Engine>` may go away inside one of the runtime's own
+    /// tasks (an HTTP connection ending after `shutdown`), where a blocking runtime drop panics.
+    /// `Drop` uses `shutdown_background` instead.
+    pub runtime: ManuallyDrop<tokio::runtime::Runtime>,
     pub session: Arc<Session>,
     config: RwLock<Config>,
     entries: RwLock<HashMap<String, Arc<Entry>>>,
     port: AtomicU64,
     torrents_dir: PathBuf,
+    server: parking_lot::Mutex<Option<ServerHandle>>,
+}
+
+impl Drop for Engine {
+    fn drop(&mut self) {
+        // SAFETY: taken exactly once, here; the field is never used afterwards.
+        let runtime = unsafe { ManuallyDrop::take(&mut self.runtime) };
+        runtime.shutdown_background();
+    }
 }
 
 pub fn now_secs() -> u64 {
@@ -335,12 +357,13 @@ impl Engine {
             .context("creating librqbit session")?;
 
         let engine = Arc::new(Self {
-            runtime,
+            runtime: ManuallyDrop::new(runtime),
             session,
             config: RwLock::new(config),
             entries: RwLock::new(HashMap::new()),
             port: AtomicU64::new(0),
             torrents_dir,
+            server: parking_lot::Mutex::new(None),
         });
         engine.restore_entries();
         engine.spawn_janitor();
@@ -357,6 +380,14 @@ impl Engine {
 
     pub fn set_port(&self, port: u16) {
         self.port.store(port as u64, Ordering::Relaxed);
+    }
+
+    /// Called by `server::start`; `shutdown` stops and awaits it.
+    pub fn set_server(&self, server: ServerHandle) {
+        if let Some(old) = self.server.lock().replace(server) {
+            let _ = old.stop.send(());
+            old.task.abort();
+        }
     }
 
     pub fn url_for(&self, hex: &str, file: Option<usize>) -> String {
@@ -436,6 +467,7 @@ impl Engine {
                 first_byte_sent: AtomicBool::new(false),
                 last_served_end: AtomicU64::new(0),
                 consecutive_waits: AtomicU64::new(0),
+                resolver: parking_lot::Mutex::new(None),
             });
             map.insert(hex, entry);
         }
@@ -506,13 +538,16 @@ impl Engine {
             first_byte_sent: AtomicBool::new(false),
             last_served_end: AtomicU64::new(0),
             consecutive_waits: AtomicU64::new(0),
+            resolver: parking_lot::Mutex::new(None),
         });
         self.entries.write().insert(hex.clone(), entry.clone());
         self.persist_entries();
 
         let engine = self.clone();
         let magnet = build_magnet(&hex, &trackers, req.name.as_deref());
-        self.runtime.spawn(async move {
+        let task_entry = entry.clone();
+        let task = self.runtime.spawn(async move {
+            let entry = task_entry;
             let opts = AddTorrentOptions {
                 overwrite: true,
                 trackers: if trackers.is_empty() { None } else { Some(trackers.clone()) },
@@ -521,6 +556,12 @@ impl Engine {
             let result = engine.session.add_torrent(AddTorrent::from_url(magnet), Some(opts)).await;
             match result {
                 Ok(resp) => match resp.into_handle() {
+                    // Removed while resolving (normally aborted before this point, see `remove`):
+                    // the late torrent is deleted instead of downloading unlisted.
+                    Some(handle) if !engine.owns(&entry) => {
+                        engine.discard_late(&entry, &handle).await;
+                        return;
+                    }
                     Some(handle) => {
                         // Select the requested file (or the largest video) so only it is downloaded.
                         let files: Vec<(String, u64)> = handle
@@ -544,7 +585,20 @@ impl Engine {
                         if entry.display_name.read().is_none() {
                             *entry.display_name.write() = handle.name();
                         }
-                        *entry.state.write() = EntryState::Ready(handle);
+                        // Ownership re-checked under the registry lock: `remove` takes the write
+                        // lock, so it either sees `Ready` (and deletes the handle) or we see it gone.
+                        let adopted = {
+                            let map = engine.entries.read();
+                            let owned = map.get(&entry.hex).is_some_and(|e| Arc::ptr_eq(e, &entry));
+                            if owned {
+                                *entry.state.write() = EntryState::Ready(handle.clone());
+                            }
+                            owned
+                        };
+                        if !adopted {
+                            engine.discard_late(&entry, &handle).await;
+                            return;
+                        }
                     }
                     None => {
                         *entry.state.write() = EntryState::Failed("torrent added in list-only mode".into());
@@ -562,6 +616,7 @@ impl Engine {
                 warn!("quota enforcement failed: {e:#}");
             }
         });
+        *entry.resolver.lock() = Some(task);
 
         Ok(StartStreamResponse { id: hex.clone(), url: self.url_for(&hex, req.file_idx), info_hash: hex })
     }
@@ -686,13 +741,41 @@ impl Engine {
         Ok(())
     }
 
+    /// True while `entry` is the registered one for its hash (not removed, not replaced by a retry).
+    fn owns(&self, entry: &Arc<Entry>) -> bool {
+        self.entries.read().get(&entry.hex).is_some_and(|e| Arc::ptr_eq(e, entry))
+    }
+
+    /// A resolution finished for an entry that was removed meanwhile: delete what it added, unless
+    /// a newer entry for the same hash exists (its own resolution adopts the same session torrent).
+    async fn discard_late(&self, entry: &Entry, handle: &ManagedTorrentHandle) {
+        *entry.state.write() = EntryState::Failed("removed".into());
+        entry.ready.notify_waiters();
+        if self.entry(&entry.hex).is_none() {
+            if let Err(e) = self.session.delete(TorrentIdOrHash::Id(handle.id()), true).await {
+                warn!("deleting late torrent {} failed: {e:#}", entry.hex);
+            }
+        }
+    }
+
     /// Removes the torrent from the session and deletes its files.
     pub async fn remove(&self, hex: &str) -> Result<()> {
         let entry = self.entries.write().remove(hex).context("unknown torrent")?;
+        let resolving = matches!(&*entry.state.read(), EntryState::Resolving);
+        let task = entry.resolver.lock().take();
+        if let Some(task) = task {
+            // Still resolving: stop it and wait until it is really gone, so anything it registered
+            // in the session is visible to the delete below. (A finished resolution is left alone:
+            // it may be running this very removal through `enforce_quota`.)
+            if resolving && tokio::task::try_id() != Some(task.id()) {
+                task.abort();
+                let _ = task.await;
+            }
+        }
         if let Some(handle) = entry.handle() {
             self.session.delete(TorrentIdOrHash::Id(handle.id()), true).await?;
         } else {
-            // Still resolving: librqbit may register it later; delete by hash, ignore "not found".
+            // Never resolved: nothing in the session unless librqbit registered it; ignore "not found".
             let _ = self.session.delete(TorrentIdOrHash::Hash(entry.id20), true).await;
         }
         self.persist_entries();
@@ -768,9 +851,29 @@ impl Engine {
         cfg.clone()
     }
 
+    /// Stops everything that keeps the engine alive: the HTTP server (its task owns an
+    /// `Arc<Engine>`), the magnet resolutions still running, then the librqbit session.
     pub fn shutdown(&self) {
         self.persist_entries();
-        self.runtime.block_on(self.session.stop());
+        let server = self.server.lock().take();
+        let resolvers: Vec<_> = self.entries.read().values().filter_map(|e| e.resolver.lock().take()).collect();
+        self.runtime.block_on(async {
+            if let Some(ServerHandle { stop, mut task }) = server {
+                let _ = stop.send(());
+                // Graceful first (in-flight responses end); a video stream can last for ever, so
+                // the listener is dropped after a short grace period anyway.
+                if tokio::time::timeout(Duration::from_secs(2), &mut task).await.is_err() {
+                    task.abort();
+                    let _ = task.await;
+                }
+            }
+            for t in resolvers {
+                t.abort();
+                let _ = t.await;
+            }
+            self.session.stop().await;
+        });
+        self.port.store(0, Ordering::Relaxed);
     }
 }
 
@@ -814,6 +917,49 @@ mod tests {
         assert_eq!(hex, "0123456789abcdef0123456789abcdef01234567");
         assert!(normalize_hash("nope").is_err());
         assert!(normalize_hash("magnet:?xt=urn:btih:0123456789abcdef0123456789abcdef01234567").is_ok());
+    }
+
+    fn test_engine(tag: &str) -> Arc<Engine> {
+        let dir = std::env::temp_dir().join(format!("huwa-torrent-test-{tag}-{}-{}", std::process::id(), now_secs()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let config: Config = serde_json::from_value(serde_json::json!({ "dataDir": dir })).unwrap();
+        Engine::new(config).unwrap()
+    }
+
+    fn session_torrents(engine: &Engine) -> usize {
+        engine.session.with_torrents(|it| it.count())
+    }
+
+    #[test]
+    fn removing_a_resolving_torrent_stops_its_resolution() {
+        let engine = test_engine("remove");
+        // No peer will ever answer for this hash: it stays in `Resolving`.
+        let hex = "00112233445566778899aabbccddeeff00112233";
+        engine
+            .start_stream(StartStreamRequest { info_hash: hex.into(), file_idx: None, sources: vec![], name: Some("x".into()) })
+            .unwrap();
+        let entry = engine.entry(hex).unwrap();
+        assert!(matches!(&*entry.state.read(), EntryState::Resolving));
+        assert!(entry.resolver.lock().is_some());
+        engine.runtime.block_on(engine.remove(hex)).unwrap();
+        assert!(engine.entry(hex).is_none());
+        assert!(entry.resolver.lock().is_none(), "resolution task taken, aborted and awaited");
+        // Only `entry` (this test) still references it: the aborted task dropped its clone.
+        assert_eq!(Arc::strong_count(&entry), 1);
+        assert_eq!(session_torrents(&engine), 0);
+        engine.shutdown();
+    }
+
+    #[test]
+    fn shutdown_stops_the_http_server_and_releases_the_engine() {
+        let engine = test_engine("shutdown");
+        let port = engine.runtime.block_on(crate::server::start(engine.clone())).unwrap();
+        assert!(std::net::TcpStream::connect(("127.0.0.1", port)).is_ok());
+        assert!(Arc::strong_count(&engine) >= 2, "the server task holds the engine");
+        engine.shutdown();
+        assert_eq!(Arc::strong_count(&engine), 1, "server task gone: nothing else keeps the engine alive");
+        assert!(std::net::TcpStream::connect(("127.0.0.1", port)).is_err(), "listener closed");
+        drop(engine); // runtime shut down without blocking
     }
 
     #[test]

@@ -134,6 +134,8 @@ export class BareP2P implements P2P {
 
   private async handshake() {
     const hello = await this.call<{ status: P2PStatus; me: Profile | null; readyMs: number }>('hello', []);
+    // Older worklets answered `hello` even after a failed start: not a successful boot.
+    if (hello.status?.state === 'error') throw new Error(hello.status.error ?? 'Démarrage P2P échoué');
     this.lastReadyMs = hello.readyMs;
     this.meValue = hello.me ?? undefined;
     this.setStatus(hello.status);

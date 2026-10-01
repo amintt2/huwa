@@ -24,6 +24,11 @@ export type DownloadEntry = {
   /** Position in the queue (lower starts first). */
   order: number;
   error?: string;
+  /**
+   * What the chapter id pointed to when its pages were fetched (source / manga / source chapter /
+   * language, see `RegisteredSource.provenance`). Absent for placeholder pages and old entries.
+   */
+  provenance?: string;
 };
 
 export type Downloads = Record<string, DownloadEntry>;
@@ -31,7 +36,7 @@ export type Downloads = Record<string, DownloadEntry>;
 export type QueueEvent =
   | { type: 'enqueue'; chapterId: string; seriesId: string; at: number }
   | { type: 'start'; chapterId: string }
-  | { type: 'pages'; chapterId: string; files: string[] }
+  | { type: 'pages'; chapterId: string; files: string[]; provenance?: string }
   | { type: 'progress'; chapterId: string; saved: number }
   | { type: 'done'; chapterId: string; bytes: number }
   | { type: 'fail'; chapterId: string; error: string }
@@ -43,6 +48,13 @@ export type QueueEvent =
   | { type: 'removeSeries'; seriesId: string }
   /** Saved state after an app restart: interrupted downloads go back to the queue. */
   | { type: 'restore'; saved: Downloads };
+
+/**
+ * A copy made from another mapping than the chapter's current one (language or source switched
+ * since): not to be shown as this chapter. Unknown on either side = trusted (offline, old entry).
+ */
+export const isStaleCopy = (e: Pick<DownloadEntry, 'provenance'> | undefined, current: string | undefined) =>
+  !!e?.provenance && !!current && e.provenance !== current;
 
 const ACTIVE: DownloadStatus[] = ['queued', 'downloading'];
 export const isActive = (e?: Pick<DownloadEntry, 'status'>) => !!e && ACTIVE.includes(e.status);
@@ -68,7 +80,7 @@ export function reduce(s: Downloads, ev: QueueEvent): Downloads {
     case 'start':
       return s[ev.chapterId]?.status === 'queued' ? put(s, ev.chapterId, { status: 'downloading', error: undefined }) : s;
     case 'pages':
-      return s[ev.chapterId]?.status === 'downloading' ? put(s, ev.chapterId, { files: ev.files, total: ev.files.length }) : s;
+      return s[ev.chapterId]?.status === 'downloading' ? put(s, ev.chapterId, { files: ev.files, total: ev.files.length, provenance: ev.provenance }) : s;
     case 'progress':
       return s[ev.chapterId]?.status === 'downloading' ? put(s, ev.chapterId, { saved: Math.min(ev.saved, s[ev.chapterId].total || ev.saved) }) : s;
     case 'done':

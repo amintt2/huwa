@@ -16,6 +16,8 @@ function sync() {
       id: 'huwa-torrent',
       label: 'moteur Huwa',
       available: enabled,
+      // The loopback URL only lives as long as the torrent in the engine: resolve each time.
+      cacheMs: 0,
       resolve: async (t) => {
         const handle = await resolveTorrent({ infoHash: t.infoHash, fileIdx: t.fileIdx, sources: t.sources, name: t.filename });
         if (!handle) throw new Error('Moteur torrent désactivé');

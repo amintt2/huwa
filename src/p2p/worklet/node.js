@@ -1398,7 +1398,9 @@ class HuwaNode {
       topic = 'mapping:' + arg
       load = () => this.listMapping(arg)
       this._mapRoom(arg).then((room) => {
+        // Same as comments: a late room must not stay retained once nobody watches it.
         release = this._retain(room, arg, this.mapRooms)
+        if (stopped) release()
       }, noop)
     } else if (kind === 'labels') {
       topic = 'labels'

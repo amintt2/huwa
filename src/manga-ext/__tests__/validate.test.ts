@@ -2,7 +2,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
-import { CookieJar, checkUrl, cleanHeaders, createNet, escapeUrl, parseHttpUrl, splitSetCookie, type RawFetch } from '../net';
+import { CookieJar, checkUrl, cleanHeaders, createNet, escapeUrl, parseHttpUrl, readCapped, resolveLocation, splitSetCookie, TooLargeError, type RawFetch } from '../net';
 import { httpUrl, mapStatus, normalizeChapters, normalizeDetails, normalizeImageHeaders, normalizeLang, normalizePages, normalizeSearch } from '../validate';
 
 test('details 0.8 (App.createSourceManga) and 0.9 (SourceManga)', () => {
@@ -140,4 +140,110 @@ test('net: a redirect landing on a refused host is not delivered', async () => {
   const net = createNet(fake, { jar: () => jar });
   await assert.rejects(net.request('a', { url: 'https://site.io/r', method: 'GET', headers: {} }), /redirection/);
   assert.equal(jar.header(parseHttpUrl('http://127.0.0.1:8081/')!), '', 'no cookie kept');
+});
+
+test('URL policy: loopback / link-local in every spelling the OS accepts', () => {
+  const bad = [
+    'http://[0:0:0:0:0:0:0:1]/',
+    'http://[::ffff:7f00:1]/',
+    'http://[::ffff:127.0.0.1]/',
+    'http://[::127.0.0.1]/',
+    'http://[0::1]/',
+    'http://[::]/',
+    'http://[fe80::1]/',
+    'http://[FEBF::1]/',
+    'http://[::ffff:a9fe:a9fe]/',
+    'http://[64:ff9b::7f00:1]/',
+    'http://[::ffff:0:7f00:1]/',
+    'http://[1::2::3]/',
+    'http://2130706433/',
+    'http://0x7f000001/',
+    'http://0x7f.1/',
+    'http://0177.0.0.1/',
+    'http://127.1/',
+    'http://127.0.1/',
+    'http://0/',
+    'http://0.0.0.0/',
+    'http://169.254.169.254/',
+    'http://0xa9.0xfe.0xa9.0xfe/',
+    'http://127.0.0.1./',
+    'http://LOCALHOST./',
+    'http://foo.localhost/',
+    'http://127.0.0.%31/',
+    'http://1.2.3.4.5/',
+    'http://256.0.0.1/',
+    'http://08.0.0.1/',
+  ];
+  for (const u of bad) assert.throws(() => checkUrl(u), Error, u);
+  for (const ok of ['http://192.168.1.10/', 'http://10.0.0.2:8080/', 'http://[fd00::1]/', 'http://[2001:db8::1]/', 'http://nas.local:25600/', 'https://1.1.1.1/', 'https://example.com/', 'https://a-b_c.example/']) {
+    assert.doesNotThrow(() => checkUrl(ok), ok);
+  }
+});
+
+test('net: every redirect hop is checked, cookies follow their host, POST→GET on 302/303', async () => {
+  const seen: { url: string; method: string; headers: Record<string, string>; body?: unknown }[] = [];
+  const routes: Record<string, { status: number; headers: Record<string, string>; setCookies?: string[] }> = {
+    'https://site.io/a': { status: 302, headers: { Location: '/b' }, setCookies: ['s=1; Path=/'] },
+    'https://site.io/b': { status: 303, headers: { Location: 'https://cdn.io/c' } },
+    'https://site.io/p': { status: 307, headers: { Location: '/b' } },
+    'https://cdn.io/c': { status: 200, headers: { 'Content-Type': 'text/plain' } },
+    'https://site.io/evil': { status: 301, headers: { Location: 'http://[::ffff:7f00:1]:8081/' } },
+    'https://site.io/evil2': { status: 307, headers: { Location: 'http://2130706433/' } },
+    'https://site.io/loop': { status: 302, headers: { Location: 'loop' } },
+  };
+  const fake: RawFetch = async (url, init) => {
+    assert.equal(init.redirect, 'manual');
+    seen.push({ url, method: init.method, headers: init.headers, body: init.body });
+    const r = routes[url];
+    if (!r) throw new Error(`unexpected ${url}`);
+    return { url, status: r.status, headers: r.headers, setCookies: r.setCookies ?? [], body: new TextEncoder().encode('x') };
+  };
+  const jar = new CookieJar();
+  const net = createNet(fake, { jar: () => jar });
+  const r = await net.request('a', { url: 'https://site.io/a', method: 'POST', headers: { Cookie: 'mine=1', Authorization: 'Bearer t', 'Content-Type': 'text/plain' }, body64: 'eA==' });
+  assert.equal(r.status, 200);
+  assert.equal(r.url, 'https://cdn.io/c');
+  assert.deepEqual(seen.map((s) => [s.url, s.method]), [['https://site.io/a', 'POST'], ['https://site.io/b', 'GET'], ['https://cdn.io/c', 'GET']]);
+  assert.equal(seen[1].headers.Cookie, 's=1; mine=1', 'same origin: jar + source cookie');
+  assert.equal(seen[2].headers.Cookie, undefined, 'cross origin: no source cookie, no foreign jar cookie');
+  assert.equal(seen[2].headers.Authorization, undefined);
+  assert.equal(seen[2].headers['Content-Type'], undefined);
+  assert.equal(seen[1].body, undefined);
+  assert.equal(seen[1].headers['Content-Type'], undefined);
+  seen.length = 0;
+  await net.request('a', { url: 'https://site.io/p', method: 'POST', headers: {}, body64: 'eA==' });
+  assert.deepEqual(seen.slice(0, 2).map((s) => [s.method, s.body]), [['POST', 'x'], ['POST', 'x']], '307 keeps method and body');
+  seen.length = 0;
+  await assert.rejects(net.request('a', { url: 'https://site.io/evil', method: 'GET', headers: {} }), /redirection/);
+  await assert.rejects(net.request('a', { url: 'https://site.io/evil2', method: 'GET', headers: {} }), /redirection/);
+  assert.equal(seen.length, 2, 'refused targets never reach the transport');
+  await assert.rejects(net.request('a', { url: 'https://site.io/loop', method: 'GET', headers: {} }), /redirections/);
+});
+
+test('resolveLocation', () => {
+  assert.equal(resolveLocation('https://a.io/x/y?q', 'z'), 'https://a.io/x/z');
+  assert.equal(resolveLocation('https://a.io/x/y', '/z'), 'https://a.io/z');
+  assert.equal(resolveLocation('https://a.io:8/x', '//b.io/z'), 'https://b.io/z');
+  assert.equal(resolveLocation('https://a.io/x', 'http://c.io/'), 'http://c.io/');
+  assert.equal(resolveLocation('https://a.io', '?p=1'), 'https://a.io/?p=1');
+});
+
+test('readCapped: stops receiving and cancels past the limit', async () => {
+  let reads = 0;
+  let cancelled = false;
+  const reader = {
+    async read() {
+      reads++;
+      return reads > 100 ? { done: true } : { done: false, value: new Uint8Array(400) };
+    },
+    async cancel() {
+      cancelled = true;
+    },
+  };
+  await assert.rejects(readCapped(reader, 1000), TooLargeError);
+  assert.equal(reads, 3, 'no read after the limit');
+  assert.ok(cancelled);
+  let n = 0;
+  const small = { read: async () => (n++ < 2 ? { done: false, value: new Uint8Array([n, n]) } : { done: true }), cancel: async () => {} };
+  assert.deepEqual([...(await readCapped(small, 4))], [1, 1, 2, 2]);
 });

@@ -14,6 +14,12 @@ export type TorrentResolver = {
   label: string;
   available: () => boolean;
   resolve: (t: TorrentRef, signal?: AbortSignal) => Promise<string>;
+  /**
+   * How long a resolved URL may be reused (default 1 h, debrid links last hours). 0 = never: the
+   * native engine's loopback URL dies with its torrent (deleted, evicted, engine restarted), and
+   * resolving again is cheap (it returns the running torrent).
+   */
+  cacheMs?: number;
 };
 
 const extra: TorrentResolver[] = [];
@@ -33,31 +39,64 @@ export function registerTorrentResolver(r: TorrentResolver) {
   };
 }
 
+/**
+ * Bumped whenever the debrid account changes (provider, key, sign-out): URLs resolved with the
+ * previous account are never handed out again.
+ */
+let account = 0;
+subscribeDebrid(() => {
+  account++;
+});
+
 function resolvers(): TorrentResolver[] {
   const d = getDebrid();
   const debrid: TorrentResolver[] = d
-    ? [{ id: d.provider.id, label: d.provider.name, available: () => true, resolve: (t, s) => d.provider.resolve(d.key, t, s) }]
+    ? [{ id: `${d.provider.id}#${account}`, label: d.provider.name, available: () => true, resolve: (t, s) => d.provider.resolve(d.key, t, s) }]
     : [];
   return [...debrid, ...extra.filter((r) => r.available())];
 }
 
 const EMPTY: Record<string, boolean> = {};
+const DEFAULT_CACHE_MS = 3600e3;
+const MAX_CACHE = 200;
 const cache = new Map<string, { url: string; at: number }>();
-const refKey = (t: TorrentRef) => `${t.infoHash.toLowerCase()}|${t.fileIdx ?? ''}|${t.filename ?? ''}`;
+
+/** Everything that changes which file / URL comes back: resolver (and account), torrent, file, episode. */
+export const resolveCacheKey = (resolverId: string, t: TorrentRef) =>
+  JSON.stringify([resolverId, t.infoHash.toLowerCase(), t.fileIdx ?? null, t.filename ?? null, t.episode ?? null]);
+
+function cached(r: TorrentResolver, t: TorrentRef): string | undefined {
+  const ttl = r.cacheMs ?? DEFAULT_CACHE_MS;
+  if (ttl <= 0) return undefined;
+  const key = resolveCacheKey(r.id, t);
+  const hit = cache.get(key);
+  if (!hit) return undefined;
+  if (Date.now() - hit.at < ttl) return hit.url;
+  cache.delete(key);
+  return undefined;
+}
+
+async function resolveWith(r: TorrentResolver, t: TorrentRef, signal?: AbortSignal): Promise<string> {
+  const url = await r.resolve(t, signal);
+  if ((r.cacheMs ?? DEFAULT_CACHE_MS) > 0) {
+    cache.set(resolveCacheKey(r.id, t), { url, at: Date.now() });
+    if (cache.size > MAX_CACHE) cache.delete(cache.keys().next().value!);
+  }
+  return url;
+}
 
 /** Resolves a torrent to an HTTP(S) URL. Throws when no resolver can play it. */
 export async function resolveTorrent(t: TorrentRef, signal?: AbortSignal): Promise<{ url: string; via: string }> {
   const list = resolvers();
   if (!list.length) throw new DebridError('Aucun service débrid configuré');
-  const hit = cache.get(refKey(t));
-  // Debrid links are valid for hours; keep them 1 h.
-  if (hit && Date.now() - hit.at < 3600e3) return { url: hit.url, via: list[0].label };
+  for (const r of list) {
+    const url = cached(r, t);
+    if (url) return { url, via: r.label };
+  }
   let last: unknown;
   for (const r of list) {
     try {
-      const url = await r.resolve(t, signal);
-      cache.set(refKey(t), { url, at: Date.now() });
-      return { url, via: r.label };
+      return { url: await resolveWith(r, t, signal), via: r.label };
     } catch (e) {
       last = e;
     }
@@ -70,13 +109,9 @@ export async function resolveTorrent(t: TorrentRef, signal?: AbortSignal): Promi
  * to measure cached torrents in the source race. Null when no debrid service is configured.
  */
 export async function resolveTorrentViaDebrid(t: TorrentRef, signal?: AbortSignal): Promise<{ url: string; via: string } | null> {
-  const d = getDebrid();
-  if (!d) return null;
-  const hit = cache.get(refKey(t));
-  if (hit && Date.now() - hit.at < 3600e3) return { url: hit.url, via: d.provider.name };
-  const url = await d.provider.resolve(d.key, t, signal);
-  cache.set(refKey(t), { url, at: Date.now() });
-  return { url, via: d.provider.name };
+  if (!getDebrid()) return null;
+  const r = resolvers()[0]; // the debrid service comes first
+  return { url: cached(r, t) ?? (await resolveWith(r, t, signal)), via: r.label };
 }
 
 /** Label of the first resolver ("TorBox"), or null when torrents cannot be played. */
