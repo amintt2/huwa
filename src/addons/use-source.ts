@@ -321,6 +321,8 @@ export function useSource(seriesId: string, episode: number, { enabled = true }:
     failed,
     /** Links are being measured before the first one starts. */
     racing: !current && race.probing.size > 0,
+    /** Playable candidates exist and one is about to be picked (race grace window, deadline). */
+    deciding: !current && pool.length > 0,
     /** Links measured / dead so far (sources menu summary). */
     raceStats: { measured: Object.keys(race.results).length, dead: deadKeys.size, enabled: budget.max > 0 },
     /** Addon status rows (not videos), see `infoKind`. */

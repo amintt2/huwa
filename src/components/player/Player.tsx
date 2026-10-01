@@ -26,6 +26,7 @@ import { Txt, type IconName } from '@/components/ui';
 import { C, F, R, S } from '@/theme/tokens';
 
 import { useIntroGuess, useSkipTimes, type Segment } from './aniskip';
+import { SourceLoadingBar, type LoadPhase } from './SourceLoadingBar';
 import { EngineView, useEnginePlayer, type EnginePlayer as VideoPlayer } from './engines';
 import { GestureLayer, type Hud } from './GestureLayer';
 import { AUTO_NEXT_SECONDS, NextCard, Pill } from './overlays';
@@ -73,6 +74,12 @@ export type PlayerProps = {
   introSkip?: number;
   /** Text shown when there is no source yet. */
   emptyText?: string;
+  /**
+   * Where the source search stands before anything plays (drives the loading bar): `search` =
+   * addons still answering (`answered` 0..1), `race` = links being tested / torrent resolved,
+   * null = nothing more is coming (the bar fades out, `emptyText` shows).
+   */
+  sourceSearch?: { phase: 'search' | 'race' | null; answered: number };
   /** Short message over the video (e.g. "better quality found"). */
   notice?: string;
   /** The parent should hide everything else and give the player the whole screen while `true`. */
@@ -143,6 +150,7 @@ export function Player({
   episodeNumber = 1,
   introSkip = 85,
   emptyText = 'Choisis une source pour lancer la lecture.',
+  sourceSearch,
   notice,
   onFullscreenChange,
   onOpenSources,
@@ -461,6 +469,20 @@ export function Player({
 
   const pipOk = Platform.OS !== 'web' && isPictureInPictureSupported();
   const loading = !!source?.uri && (status === 'loading' || (status === 'idle' && !ended));
+
+  // ---------- loading bar: from the source search until the first frame is ready ----------
+  // Once something played (upgrades, next source after a failure) the usual spinner is enough.
+  const [everReady, setEverReady] = useState(false);
+  if (!everReady && !!source?.uri && (status === 'readyToPlay' || isPlaying)) setEverReady(true);
+  const [barGone, setBarGone] = useState(false);
+  const barPhase: LoadPhase | null = everReady
+    ? 'ready'
+    : source?.uri
+      ? status === 'error' ? null : 'connect'
+      : sourceSearch?.phase ?? null;
+  // A new search signal after giving up (e.g. a link that was still being checked): show it again.
+  if (barGone && !everReady && barPhase && sourceSearch) setBarGone(false);
+  const barShown = !!sourceSearch && !barGone && status !== 'error';
   const remaining = duration - t;
   const sideInset = full ? Math.max(insets.left, insets.right, S.lg) : S.md;
   const panelW = Math.min(420, window.width * 0.42);
@@ -508,7 +530,10 @@ export function Player({
         />
       )}
 
-      {!source?.uri && (
+      {barShown && (
+        <SourceLoadingBar phase={barPhase} answered={sourceSearch?.answered} onGone={() => setBarGone(true)} />
+      )}
+      {!source?.uri && !barShown && (
         <View pointerEvents="none" style={styles.center}>
           <Ionicons name="play-circle-outline" size={36} color={C.text2} />
           <Txt v="small" style={{ textAlign: 'center', paddingHorizontal: S.xl }}>{emptyText}</Txt>
@@ -613,7 +638,8 @@ export function Player({
             <Ctl icon="settings-outline" label="Réglages de lecture" onPress={() => { setSettings(true); wake(); }} />
           </View>
 
-          <View pointerEvents="box-none" style={[styles.middle, full && { gap: 72 }]}>
+          <View pointerEvents={barShown && !everReady ? 'none' : 'box-none'}
+            style={[styles.middle, full && { gap: 72 }, barShown && !everReady && { opacity: 0 }]}>
             <Ctl icon="play-back" label="Reculer de 10 secondes" onPress={() => { seekTo(t - 10); wake(); }} size={26} />
             {loading ? (
               <View style={{ width: 64, height: 64, alignItems: 'center', justifyContent: 'center' }}><ActivityIndicator color={C.white} size="large" /></View>

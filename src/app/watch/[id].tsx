@@ -65,6 +65,13 @@ function WatchScreen({ id }: { id: string }) {
       return { url: x.url, lang: x.lang, source: x.addonName, label: same.length > 1 ? `Piste ${same.indexOf(x) + 1}` : '' };
     });
   }, [addonSubs, streamSubtitles, streamAddon]);
+  // Loading bar before playback: share of addons that answered, then the race / torrent step.
+  const [maxPending, setMaxPending] = useState(0);
+  if (src.pending > maxPending) setMaxPending(src.pending);
+  const sourceSearch = {
+    phase: src.racing || src.deciding || (src.current && !src.url) ? 'race' : src.pending > 0 ? 'search' : null,
+    answered: maxPending ? 1 - src.pending / maxPending : 0,
+  } as const;
   const [menuOpen, setMenuOpen] = useState(false);
   const [prefetchArmed, setPrefetchArmed] = useState(false);
   const streamPolicy = useStreamPolicy();
@@ -206,6 +213,7 @@ function WatchScreen({ id }: { id: string }) {
             malId={ids?.mal}
             episodeNumber={episode.number}
             notice={notice}
+            sourceSearch={sourceSearch}
             emptyText={
               src.racing
                 ? 'Test de la vitesse des sources…'
