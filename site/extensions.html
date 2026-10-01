@@ -118,7 +118,7 @@
               <button class="btn btn-soft" type="button" id="copyLink">Copier le lien huwa://</button>
               <button class="btn btn-soft" type="button" id="copyPage">Copier le lien de partage</button>
             </div>
-            <p class="muted">Sur ton téléphone, le bouton ouvre Huwa sur une fiche de confirmation. Sur ordinateur, scanne le QR code avec ton téléphone.</p>
+            <p class="muted">Sur ton téléphone, le bouton ouvre Huwa sur une fiche de confirmation. Sur ordinateur, scanne le QR code avec ton téléphone. Le lien de partage ouvre directement Huwa sur un iPhone où l’app est installée, et cette page sinon.</p>
             <details>
               <summary class="muted" style="cursor:pointer">Tu es l’auteur de cette extension ? Code du bouton</summary>
               <pre id="snippet" style="margin-top:10px"></pre>
@@ -216,8 +216,8 @@
       <div class="grid">
         <div class="card">
           <h3>Liens d’installation</h3>
-          <p>Addon Stremio : <code>huwa://addon?url=&lt;manifest encodé&gt;</code></p>
-          <p>Dépôt Paperback : <code>huwa://install?type=paperback&amp;url=&lt;dépôt encodé&gt;</code></p>
+          <p>Addon Stremio : <code>https://huwa.mciut.fr/addon?url=&lt;manifest encodé&gt;</code> (ouvre Huwa s’il est installé sur l’iPhone, cette page sinon) ou <code>huwa://addon?url=&lt;manifest encodé&gt;</code></p>
+          <p>Dépôt Paperback : <code>https://huwa.mciut.fr/install?type=paperback&amp;url=&lt;dépôt encodé&gt;</code> ou <code>huwa://install?type=paperback&amp;url=&lt;dépôt encodé&gt;</code></p>
           <p>Lien web (marche aussi sans l’app) : <code>https://huwa.mciut.fr/extensions?url=&lt;lien encodé&gt;</code></p>
           <p>Pack hébergé : <code>huwa://pack?url=&lt;adresse du fichier JSON encodée&gt;</code> ou <code>https://huwa.mciut.fr/pack.html#url=&lt;adresse encodée&gt;</code> (format décrit dans le <a href="https://github.com/amintt2/huwa/blob/huwa-v1/PLAN.md">plan du projet</a>).</p>
         </div>
@@ -305,7 +305,9 @@
         $('snippet').textContent = '<a href="' + share + '">Ajouter à Huwa</a>';
         const qr = $('qr');
         qr.innerHTML = '';
-        if (window.QRCode) new QRCode(qr, { text: r.link, width: 180, height: 180, correctLevel: QRCode.CorrectLevel.M });
+        // Universal link (opens Huwa when installed, this page otherwise); the button keeps huwa://
+        // because iOS never opens the app for a link to the page's own site.
+        if (window.QRCode) new QRCode(qr, { text: share, width: 180, height: 180, correctLevel: QRCode.CorrectLevel.M });
         else qr.textContent = 'QR code indisponible';
         clearTimeout(render.t);
         render.t = setTimeout(() => describe(r, mine), 400);

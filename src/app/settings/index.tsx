@@ -12,6 +12,7 @@ import { resetAll } from '@/store/store';
 import { langName } from '@/subtitles/lang';
 import { useSubtitlePrefs } from '@/subtitles/prefs';
 import { useSettings } from '@/settings/settings';
+import { isStoreBuild } from '@/config/channel';
 import { C, S } from '@/theme/tokens';
 
 export default function Settings() {
@@ -78,7 +79,9 @@ export default function Settings() {
 
         <Group title="Lecture">
           <Row icon="text" label="Sous-titres" detail={subtitleDetail} onPress={() => router.push('/settings/subtitles')} />
-          <Row icon="extension-puzzle-outline" label="Extensions" detail={`${addonCount} vidéo · ${mangaSources} manhwa`} onPress={() => router.push('/addons')} />
+          {!isStoreBuild && (
+            <Row icon="extension-puzzle-outline" label="Extensions" detail={`${addonCount} vidéo · ${mangaSources} manhwa`} onPress={() => router.push('/addons')} />
+          )}
           <Row icon="speedometer-outline" label="Statistiques de lecture" detail="Temps de démarrage, coupures, sources" onPress={() => router.push('/settings/stats')} />
           <Row
             icon="refresh"

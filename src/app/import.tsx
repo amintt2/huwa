@@ -18,6 +18,7 @@ import { parseJsonText, pickJsonFile } from '@/import/pick';
 import { resolveCandidates, toEntries, type Candidate, type Match } from '@/import/resolve';
 import { parseStremioExport } from '@/import/stremio';
 import { applyImportedEntries } from '@/settings/anilist-sync';
+import { isStoreBuild } from '@/config/channel';
 import { C, F, R, S } from '@/theme/tokens';
 
 type Source = 'Stremio' | 'anime-sama';
@@ -215,6 +216,12 @@ export default function ImportLibrary() {
 }
 
 function AddonsFound({ urls }: { urls: string[] }) {
+  // App Store flavor: no extensions (lists still import).
+  if (isStoreBuild) return null;
+  return <AddonsFoundList urls={urls} />;
+}
+
+function AddonsFoundList({ urls }: { urls: string[] }) {
   const installed = new Set(useAddons().map((a) => a.baseUrl));
   return (
     <View style={[styles.card, { marginTop: S.md }]}>

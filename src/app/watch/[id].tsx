@@ -28,6 +28,7 @@ import { useThread } from '@/store/derived';
 import { flushPendingWrites } from '@/store/persist';
 import { getState, markEpisodeDone, saveEpisodeProgress, toggleMyList, useStore } from '@/store/store';
 import { enableTorrentEngine, isAvailable as torrentEngineLinked, useTorrentSettings } from '@/torrent';
+import { isStoreBuild } from '@/config/channel';
 import { C, S } from '@/theme/tokens';
 
 // A player crash stays on this route (retry / back) instead of taking the whole app down.
@@ -294,7 +295,11 @@ function WatchScreen({ id }: { id: string }) {
                       ? 'Ces sources sont des torrents. Ouvre le menu des sources pour les lire avec le moteur intégré ou un service débrid.'
                       : 'Aucune source lisible. Ouvre le menu des sources.'
             }
-            emptyAction={noSource?.action ? { label: noSource.action.label, onPress: () => onNoSourceAction(noSource.action!.kind) } : null}
+            emptyAction={
+              noSource?.action && !(isStoreBuild && STORE_HIDDEN_ACTIONS.has(noSource.action.kind))
+                ? { label: noSource.action.label, onPress: () => onNoSourceAction(noSource.action!.kind) }
+                : null
+            }
             startAt={startAt}
             onProgress={onProgress}
             onEnd={() => markEpisodeDone(id)}
@@ -327,6 +332,9 @@ function WatchScreen({ id }: { id: string }) {
     </View>
   );
 }
+
+/** App Store flavor: no extension / debrid / torrent screens to send the user to. */
+const STORE_HIDDEN_ACTIONS = new Set<NoSourceAction>(['addons', 'debrid', 'enable-engine']);
 
 const styles = StyleSheet.create({
   langWarn: {

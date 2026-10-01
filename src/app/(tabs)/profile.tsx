@@ -6,6 +6,7 @@ import { Avatar, BadgeGrid, CountBadge, Group, RankCard, Row, WARN } from '@/com
 import { IconButton, Press, Txt } from '@/components/ui';
 import { useConversations, useMe, useRank, useSecurity } from '@/p2p/hooks';
 import { useStore } from '@/store/store';
+import { isStoreBuild } from '@/config/channel';
 import { C, R, S } from '@/theme/tokens';
 
 export default function Profile() {
@@ -95,8 +96,9 @@ export default function Profile() {
         />
         <Row icon="shield-half-outline" label="Modération" onPress={() => router.push('/settings/moderation')} />
         <Row icon="albums-outline" label="Mes listes" onPress={() => router.push('/lists')} />
-        <Row icon="extension-puzzle-outline" label="Extensions" onPress={() => router.push('/addons')} />
-        <Row icon="download-outline" label="Téléchargements torrent" onPress={() => router.push('/downloads')} />
+        {/* App Store flavor: no extensions, no torrent (PLAN.md « Version App Store »). */}
+        {!isStoreBuild && <Row icon="extension-puzzle-outline" label="Extensions" onPress={() => router.push('/addons')} />}
+        {!isStoreBuild && <Row icon="download-outline" label="Téléchargements torrent" onPress={() => router.push('/downloads')} />}
         <Row icon="cloud-offline-outline" label="Chapitres hors ligne" onPress={() => router.push('/offline')} />
         <Row icon="settings-outline" label="Réglages" onPress={() => router.push('/settings')} last />
       </Group>

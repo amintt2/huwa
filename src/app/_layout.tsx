@@ -8,6 +8,7 @@ import { useEffect, useState } from 'react';
 import { AppState } from 'react-native';
 
 import { hydrateAddons } from '@/addons/registry';
+import { isStoreBuild } from '@/config/channel';
 import { cloudBackup } from '@/p2p/cloud-backup';
 import { registerNativeTorrentEngine } from '@/torrent/register';
 import { Onboarding } from '@/components/onboarding';
@@ -133,21 +134,26 @@ export default function RootLayout() {
           <Stack.Screen name="settings/moderation" />
           <Stack.Screen name="settings/notifications" />
           <Stack.Screen name="settings/stats" />
-          <Stack.Screen name="addons" />
-          <Stack.Screen name="manga-sources" />
-          <Stack.Screen name="paperback" options={{ animation: 'none' }} />
-          <Stack.Screen name="extension" />
-          <Stack.Screen name="extension-add" options={{ presentation: 'modal', contentStyle: { backgroundColor: C.surface } }} />
-          <Stack.Screen name="addon" options={SHEET} />
-          <Stack.Screen name="install" options={SHEET} />
-          <Stack.Screen name="pack" options={{ presentation: 'modal', contentStyle: { backgroundColor: C.surface } }} />
-          <Stack.Screen name="pack-create" />
-          <Stack.Screen name="addon-catalog" />
+          {/* Extensions, packs, debrid and torrent: full flavor only. The App Store build is a
+              library app (PLAN.md « Version App Store »); links there are also redirected by
+              +native-intent. */}
+          <Stack.Protected guard={!isStoreBuild}>
+            <Stack.Screen name="addons" />
+            <Stack.Screen name="manga-sources" />
+            <Stack.Screen name="paperback" options={{ animation: 'none' }} />
+            <Stack.Screen name="extension" />
+            <Stack.Screen name="extension-add" options={{ presentation: 'modal', contentStyle: { backgroundColor: C.surface } }} />
+            <Stack.Screen name="addon" options={SHEET} />
+            <Stack.Screen name="install" options={SHEET} />
+            <Stack.Screen name="pack" options={{ presentation: 'modal', contentStyle: { backgroundColor: C.surface } }} />
+            <Stack.Screen name="pack-create" />
+            <Stack.Screen name="addon-catalog" />
+            <Stack.Screen name="debrid" />
+            <Stack.Screen name="discover" />
+            <Stack.Screen name="meta/[id]" />
+            <Stack.Screen name="downloads" />
+          </Stack.Protected>
           <Stack.Screen name="import" />
-          <Stack.Screen name="debrid" />
-          <Stack.Screen name="discover" />
-          <Stack.Screen name="meta/[id]" />
-          <Stack.Screen name="downloads" />
           <Stack.Screen name="offline" />
           <Stack.Screen name="search" />
           <Stack.Screen name="calendar" />
