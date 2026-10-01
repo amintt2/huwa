@@ -23,6 +23,8 @@ import {
   type RepoEntry,
 } from '@/manga-ext/registry';
 import type { RepoSource } from '@/manga-ext/repo';
+import { classifyLink } from '@/packs/format';
+import { hrefFor } from '@/packs/routes';
 import { C, F, R, S } from '@/theme/tokens';
 
 const LEGAL =
@@ -71,6 +73,13 @@ export default function MangaSources() {
 
   const add = async (input = url) => {
     if (!input.trim() || busy) return;
+    const link = classifyLink(input);
+    if (link?.kind === 'pack') {
+      // A pack pasted here: open its confirmation screen.
+      setUrl('');
+      router.push(hrefFor(link));
+      return;
+    }
     setBusy('add');
     setError('');
     try {
@@ -261,6 +270,10 @@ export default function MangaSources() {
             );
           })}
         </View>
+      )}
+
+      {repos.length > 0 && (
+        <Button small variant="soft" icon="share-social-outline" label="Partager mes extensions" onPress={() => router.push('/pack-create')} />
       )}
 
       {!repos.length && extensionsSupported && (

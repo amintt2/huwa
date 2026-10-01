@@ -82,7 +82,7 @@
       [
         "expo-camera",
         {
-          "cameraPermission": "Huwa utilise la caméra uniquement pour scanner le QR code d’appairage d’un autre appareil.",
+          "cameraPermission": "Huwa utilise la caméra uniquement pour scanner des QR codes : appairage d’un autre appareil, lien d’extension ou de pack.",
           "microphonePermission": false,
           "recordAudioAndroid": false
         }

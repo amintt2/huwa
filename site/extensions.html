@@ -130,6 +130,31 @@
       </div>
     </section>
 
+    <section id="pack">
+      <h2>Installer un pack partagé</h2>
+      <div class="card tool">
+        <p style="margin:0">Un pack est une liste d’extensions créée et partagée par un utilisateur de Huwa (Extensions → Partager mes extensions). Colle l’adresse d’un fichier de pack (<code>.json</code>), un lien de pack ou le JSON du pack : on te donne le lien qui l’ouvre dans Huwa et son QR code.</p>
+        <label for="packInput">Pack</label>
+        <input id="packInput" type="url" inputmode="url" autocomplete="off" autocapitalize="none" spellcheck="false"
+          placeholder="https://exemple.org/mon-pack.json ou huwa://pack?d=…">
+        <p class="muted" id="packErr" hidden style="margin:0;color:#FF8A8A"></p>
+        <div id="packResult" class="result" hidden>
+          <div style="display:grid;gap:14px;min-width:0">
+            <div class="info"><div><strong id="packName"></strong><span class="muted" id="packMeta"></span></div></div>
+            <div class="cta">
+              <a class="btn btn-primary" id="packOpen" href="#">Ouvrir dans Huwa</a>
+              <a class="btn btn-soft" id="packPage" href="#">Page du pack</a>
+            </div>
+            <p class="muted" id="packQrHint" style="margin:0">Huwa affiche la liste et te laisse choisir quoi installer.</p>
+          </div>
+          <div class="qr" id="packQr" role="img" aria-label="QR code du pack"></div>
+        </div>
+        <div class="card warn" style="padding:14px">
+          <p>Huwa ne fournit ni ne vérifie ces extensions : elles viennent de la personne qui a partagé ce pack. Tu es responsable de ce que tu installes.</p>
+        </div>
+      </div>
+    </section>
+
     <section id="recommandees">
       <h2>Extensions recommandées</h2>
       <p class="note" style="margin:0 0 16px">Sous-titres, catalogues et fiches : elles ne fournissent aucune vidéo. Ouvre cette page sur ton iPhone et touche « Ajouter à Huwa ».</p>
@@ -194,6 +219,7 @@
           <p>Addon Stremio : <code>huwa://addon?url=&lt;manifest encodé&gt;</code></p>
           <p>Dépôt Paperback : <code>huwa://install?type=paperback&amp;url=&lt;dépôt encodé&gt;</code></p>
           <p>Lien web (marche aussi sans l’app) : <code>https://huwa.mciut.fr/extensions?url=&lt;lien encodé&gt;</code></p>
+          <p>Pack hébergé : <code>huwa://pack?url=&lt;adresse du fichier JSON encodée&gt;</code> ou <code>https://huwa.mciut.fr/pack.html#url=&lt;adresse encodée&gt;</code> (format décrit dans le <a href="https://github.com/amintt2/huwa/blob/huwa-v1/PLAN.md">plan du projet</a>).</p>
         </div>
         <div class="card">
           <h3>Addons configurables</h3>
@@ -308,6 +334,54 @@
         }
         render();
       }
+    })();
+  </script>
+  <script src="/pack-lib.js"></script>
+  <script>
+    // "Installer un pack partagé": URL / link / JSON → huwa://pack link + QR + pack page.
+    (() => {
+      const P = window.HuwaPack;
+      const $ = (id) => document.getElementById(id);
+      let seq = 0;
+      let t;
+      async function update() {
+        const mine = ++seq;
+        const err = $('packErr');
+        err.hidden = true;
+        $('packResult').hidden = true;
+        let ref;
+        try {
+          const r = await P.parseInput($('packInput').value);
+          if (!r) return;
+          ref = r.json ? { d: await P.encode(r.json) } : r;
+        } catch (e) {
+          if (mine !== seq) return;
+          err.textContent = e.message;
+          err.hidden = false;
+          return;
+        }
+        if (mine !== seq) return;
+        const app = P.appLink(ref);
+        $('packOpen').href = app;
+        $('packPage').href = P.pageLink(ref);
+        const ok = P.qr($('packQr'), app);
+        $('packQr').hidden = !ok;
+        $('packQrHint').textContent = ok ? 'Huwa affiche la liste et te laisse choisir quoi installer. Sur ordinateur, scanne le QR code.' : 'Trop long pour un QR code : ouvre la page du pack sur ton téléphone.';
+        $('packName').textContent = ref.url ? 'Pack sur ' + P.host(ref.url) : 'Pack';
+        $('packMeta').textContent = '';
+        $('packResult').hidden = false;
+        try {
+          const pack = ref.d ? await P.decode(ref.d) : await P.fetchPack(ref.url);
+          if (mine !== seq) return;
+          const n = pack.video.length + pack.manga.length;
+          $('packName').textContent = pack.name;
+          $('packMeta').textContent = n + ' extension' + (n > 1 ? 's' : '') + (pack.author ? ' · par ' + pack.author : '');
+        } catch (e) {
+          if (mine !== seq) return;
+          $('packMeta').textContent = ref.d ? e.message : 'Contenu illisible depuis le navigateur : Huwa le vérifiera.';
+        }
+      }
+      $('packInput').addEventListener('input', () => { clearTimeout(t); t = setTimeout(update, 300); });
     })();
   </script>
 </body>

@@ -19,6 +19,7 @@ import { useEpisodeNotifications } from '@/notifications/episodes';
 import { useMe, useP2PStatus } from '@/p2p/hooks';
 import { canCarryAccount, consumePasskeyOffer, usePasskeyOfferPending, usePasskeyRecord } from '@/p2p/passkey';
 import { useJournalSync } from '@/p2p/sync';
+import { setPendingLink, usePendingLink } from '@/packs/routes';
 import { useSettings, useSettingsHydrated } from '@/settings/settings';
 import { useListsHydrated } from '@/store/lists';
 import { useHydrated } from '@/store/store';
@@ -121,6 +122,8 @@ export default function RootLayout() {
           <Stack.Screen name="paperback" options={{ animation: 'none' }} />
           <Stack.Screen name="addon" options={SHEET} />
           <Stack.Screen name="install" options={SHEET} />
+          <Stack.Screen name="pack" options={{ presentation: 'modal', contentStyle: { backgroundColor: C.surface } }} />
+          <Stack.Screen name="pack-create" />
           <Stack.Screen name="addon-catalog" />
           <Stack.Screen name="import" />
           <Stack.Screen name="debrid" />
@@ -141,6 +144,7 @@ export default function RootLayout() {
       </Stack>
       {isDemo ? <DemoRoute /> : <EpisodeNotifications />}
       {!isDemo && me ? <PasskeyOffer /> : null}
+      {me ? <PendingLink /> : null}
       <OfflineBanner />
       <PaperbackHost />
     </ThemeProvider>
@@ -165,6 +169,20 @@ function PasskeyOffer() {
       setTimeout(() => router.push('/passkey'), 700);
     })().catch(() => {});
   }, [pending, me, record]);
+  return null;
+}
+
+/** A link pasted or scanned during the introduction: opened (on its confirmation screen) once the app is ready. */
+function PendingLink() {
+  const href = usePendingLink();
+  useEffect(() => {
+    if (!href) return;
+    const timer = setTimeout(() => {
+      setPendingLink(undefined);
+      router.push(href);
+    }, 900);
+    return () => clearTimeout(timer);
+  }, [href]);
   return null;
 }
 

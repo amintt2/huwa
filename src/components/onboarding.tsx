@@ -14,6 +14,7 @@ import { setSetting, useSettings } from '@/settings/settings';
 import { BRIDGE, C, S } from '@/theme/tokens';
 
 import { LanguagePrefs } from './language-prefs';
+import { LinkPrompt } from './link-prompt';
 import { RecommendedExtensions } from './recommended-extensions';
 import { FilterChip } from './states';
 import { Button, Txt, type IconName } from './ui';
@@ -68,6 +69,20 @@ export function Onboarding() {
               <Txt v="body" style={{ fontSize: 16, lineHeight: 23 }}>{t(p.body)}</Txt>
               <LanguagePrefs />
             </ScrollView>
+          ) : p.extensions ? (
+            // Taller than the screen on small phones: scrolls vertically.
+            <ScrollView key={p.title} style={{ width }} contentContainerStyle={styles.extPage} showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
+              <LinearGradient colors={BRIDGE} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={[styles.badge, styles.badgeSmall]}>
+                <Ionicons name={p.icon} size={34} color={C.white} />
+              </LinearGradient>
+              <Txt v="display" style={{ fontSize: 28, textAlign: 'center' }} accessibilityRole="header">{t(p.title)}</Txt>
+              <Txt v="body" style={{ textAlign: 'center', fontSize: 16, lineHeight: 23, maxWidth: 340 }}>{t(p.body)}</Txt>
+              <View style={{ alignSelf: 'stretch', gap: S.md, marginTop: S.sm }}>
+                <LinkPrompt />
+                <RecommendedExtensions />
+                <Button small variant="ghost" icon="open-outline" label={t('onb.4.more')} onPress={() => WebBrowser.openBrowserAsync(EXTENSIONS_SITE)} />
+              </View>
+            </ScrollView>
           ) : (
           <View key={p.title} style={[styles.page, { width }]}>
             <LinearGradient colors={BRIDGE} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={styles.badge}>
@@ -75,12 +90,6 @@ export function Onboarding() {
             </LinearGradient>
             <Txt v="display" style={{ fontSize: 28, textAlign: 'center' }} accessibilityRole="header">{t(p.title)}</Txt>
             <Txt v="body" style={{ textAlign: 'center', fontSize: 16, lineHeight: 23, maxWidth: 340 }}>{t(p.body)}</Txt>
-            {p.extensions && (
-              <View style={{ alignSelf: 'stretch', gap: S.md, marginTop: S.sm }}>
-                <RecommendedExtensions />
-                <Button small variant="ghost" icon="open-outline" label={t('onb.4.more')} onPress={() => WebBrowser.openBrowserAsync(EXTENSIONS_SITE)} />
-              </View>
-            )}
           </View>
           ),
         )}
@@ -102,7 +111,9 @@ const styles = StyleSheet.create({
   top: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: S.lg },
   prefsPage: { paddingHorizontal: S.xl, paddingTop: S.xl, paddingBottom: S.xxl, gap: S.lg },
   page: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: S.lg, paddingHorizontal: S.xl },
+  extPage: { flexGrow: 1, alignItems: 'center', justifyContent: 'center', gap: S.lg, paddingHorizontal: S.xl, paddingVertical: S.xl },
   badge: { width: 104, height: 104, borderRadius: 32, borderCurve: 'continuous', alignItems: 'center', justifyContent: 'center', marginBottom: S.md },
+  badgeSmall: { width: 80, height: 80, borderRadius: 24, marginBottom: 0 },
   bottom: { paddingHorizontal: S.lg, gap: S.lg },
   dots: { flexDirection: 'row', justifyContent: 'center', gap: 6 },
   dot: { width: 7, height: 7, borderRadius: 4, backgroundColor: C.borderStrong },

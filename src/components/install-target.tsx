@@ -7,6 +7,7 @@ import { ActivityIndicator, View } from 'react-native';
 
 import { AddonInstallSheet, closeSheet } from '@/components/addon-install';
 import { Button, Txt } from '@/components/ui';
+import { looksLikePaperbackRepo } from '@/packs/format';
 import { C, S } from '@/theme/tokens';
 
 /**
@@ -14,7 +15,7 @@ import { C, S } from '@/theme/tokens';
  * after a `#` inside the value (e.g. wrapped `https://web.stremio.com/#/addons?addon=…` links),
  * so the raw link wins when it targets this route.
  */
-export function useInstallParam(route: 'addon' | 'install', parsed?: string) {
+export function useInstallParam(route: 'addon' | 'install' | 'pack', parsed?: string) {
   const raw = useLinkingURL();
   const m = raw && new RegExp(`^[a-z][\\w+.-]*://(?:/)?${route}\\?(?:.*&)?url=([^&]+)`, 'i').exec(raw);
   if (!m) return parsed;
@@ -24,10 +25,6 @@ export function useInstallParam(route: 'addon' | 'install', parsed?: string) {
     return parsed;
   }
 }
-
-/** Paperback repositories are folders with `versioning.json` (0.8) or a `/<version>` subfolder. */
-export const looksLikePaperbackRepo = (u: string) =>
-  /versioning\.json$/i.test(u) || /(^|\/\/)[^/]*github\.io\/[^?#]*(extensions|sources|paperback)/i.test(u) || /paperback/i.test(u);
 
 export function InstallTarget({ url, type }: { url?: string; type?: string }) {
   const kind = !url ? 'none' : type === 'paperback' || (type !== 'stremio' && looksLikePaperbackRepo(url)) ? 'paperback' : 'stremio';
