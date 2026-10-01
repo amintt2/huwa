@@ -81,6 +81,8 @@ export class BareP2P implements P2P {
   private restarts = 0;
   private restarting: Promise<void> | null = null;
   private generation = 0;
+  /** Set once the worklet crashed MAX_RESTARTS times in a row: P2P stays off until the next launch. */
+  private deadReason: string | null = null;
 
   constructor(private config: BareConfig) {
     this.ready = this.boot();
@@ -141,7 +143,18 @@ export class BareP2P implements P2P {
   private recover(reason: string) {
     if (this.restarting) return;
     this.setStatus({ state: 'error', peers: 0, error: reason });
-    if (this.restarts >= MAX_RESTARTS) return;
+    if (this.restarts >= MAX_RESTARTS) {
+      // Given up: drop the dead worklet so every call fails at once instead of timing out.
+      try {
+        this.worklet?.terminate();
+      } catch {
+        // already gone
+      }
+      this.worklet = null;
+      this.rpc = null;
+      this.deadReason = reason;
+      return;
+    }
     const attempt = ++this.restarts;
     this.restarting = (async () => {
       try {
@@ -202,7 +215,7 @@ export class BareP2P implements P2P {
   private async call<T>(m: string, a: unknown[]): Promise<T> {
     if (this.restarting && m !== 'hello') await this.restarting;
     const rpc = this.rpc;
-    if (!rpc) throw new Error('Worklet P2P indisponible');
+    if (!rpc) throw new Error(this.deadReason ? `P2P arrêté après plusieurs plantages (${this.deadReason}) : relance l’app.` : 'Worklet P2P indisponible');
     const req = rpc.request(CMD.CALL);
     req.send(JSON.stringify({ m, a }));
     const timeout = TIMEOUTS[m] ?? DEFAULT_TIMEOUT;
