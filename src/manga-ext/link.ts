@@ -203,6 +203,12 @@ export function unlink(seriesId: string) {
 /** What a Huwa chapter id currently points to: source, manga, source chapter and its language. */
 const provenanceOf = (link: SourceLink, chapter: StoredChapter) => JSON.stringify([link.key, link.mangaId, chapter.chapterId, chapter.lang]);
 
+function chapterProvenance(chapterId: string): string | undefined {
+  const ref = chapterIndex.get(chapterId);
+  const link = ref && links[ref.seriesId];
+  return ref && link ? provenanceOf(link, ref.chapter) : undefined;
+}
+
 /** Pages of a chapter coming from a source ([] when the chapter isn't from a source). */
 async function fetchPages(chapterId: string): Promise<{ pages: string[]; headers?: Record<string, string> }> {
   const ref = chapterIndex.get(chapterId);
@@ -227,7 +233,7 @@ let hydration: Promise<void> | undefined;
 export function hydrateLinks() {
   hydration ??= (async () => {
     await loadLinks();
-    registerPageSource({ id: 'paperback', name: 'Extensions', fetchPages });
+    registerPageSource({ id: 'paperback', name: 'Extensions', fetchPages, provenance: chapterProvenance });
     onSourceRemoved((key) => {
       for (const l of Object.values(links)) if (l.key === key) unlink(l.seriesId);
     });

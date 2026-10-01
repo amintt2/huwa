@@ -14,8 +14,8 @@ import { Platform } from 'react-native';
 import { getChapter } from '@/data/catalog';
 import { isDemo } from '@/demo/flags';
 
-import { bySeries, isActive, nextChapters, nextToStart, reduce, type DownloadEntry, type Downloads, type QueueEvent } from './download-queue';
-import { remotePages } from './pageSource';
+import { bySeries, isActive, isStaleCopy, nextChapters, nextToStart, reduce, type DownloadEntry, type Downloads, type QueueEvent } from './download-queue';
+import { currentProvenance, remotePages } from './pageSource';
 import { runPool } from './pool';
 
 export type { DownloadEntry, DownloadStatus, SeriesDownloads } from './download-queue';
@@ -134,10 +134,14 @@ export function setDownloadPref<K extends keyof DownloadPrefs>(key: K, value: Do
 
 export const chapterDir = (chapterId: string) => new Directory(Paths.document, 'chapters', chapterId);
 
-/** Local page URIs when the chapter is fully downloaded. */
+/**
+ * Local page URIs when the chapter is fully downloaded — and was downloaded from what the chapter
+ * maps to now (a French copy is not shown once the series was switched to English).
+ */
 export function offlinePages(chapterId: string): string[] | undefined {
   const e = state[chapterId];
   if (!downloadsSupported || e?.status !== 'done') return undefined;
+  if (isStaleCopy(e, currentProvenance(chapterId))) return undefined;
   const dir = chapterDir(chapterId);
   return e.files.map((f) => new File(dir, f).uri);
 }
@@ -174,17 +178,21 @@ async function run(chapterId: string) {
   controllers.set(chapterId, ctrl);
   running.add(chapterId);
   try {
-    const { pages, headers, origin, error } = await remotePages(chapterId);
+    const { pages, headers, origin, error, provenance } = await remotePages(chapterId);
     // Placeholder pages (no source answered) are never stored as an offline chapter — except in
     // demo mode, where the fictional catalog has nothing else.
     if (origin === 'placeholder' && !isDemo) throw new Error(error ?? 'Aucune source ne fournit ce chapitre');
     if (!pages.length) throw new Error(error ?? 'Aucune page');
     if (ctrl.signal.aborted) return;
     const files = pages.map((u, i) => `${String(i).padStart(4, '0')}.${extOf(u)}`);
+    const before = state[chapterId];
+    // Resuming a chapter whose mapping changed meanwhile (other language / source): its pages
+    // already on disk belong to another chapter, start over.
+    if (before?.provenance !== provenance && before?.files.length) deleteFiles(chapterId);
     const dir = chapterDir(chapterId);
     dir.create({ intermediates: true, idempotent: true });
     for (const name of files) removeFile(new File(dir, name + PART));
-    dispatch({ type: 'pages', chapterId, files });
+    dispatch({ type: 'pages', chapterId, files, provenance });
 
     let saved = 0;
     await runPool(

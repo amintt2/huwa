@@ -2,7 +2,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
-import { bySeries, nextChapters, nextToStart, reduce, type Downloads, type QueueEvent } from '../download-queue';
+import { bySeries, isStaleCopy, nextChapters, nextToStart, reduce, type Downloads, type QueueEvent } from '../download-queue';
 
 const run = (events: QueueEvent[], s: Downloads = {}) => events.reduce(reduce, s);
 const enq = (chapterId: string, seriesId = 's', at = 1): QueueEvent => ({ type: 'enqueue', chapterId, seriesId, at });
@@ -87,4 +87,13 @@ test('next chapters to fetch', () => {
   assert.deepEqual(nextChapters(ids, 'c2', 2, s, { includeFrom: true }), ['c2', 'c4']);
   assert.deepEqual(nextChapters(ids, null, 2, s), ['c1', 'c2'], 'from the start');
   assert.deepEqual(nextChapters(ids, 'zz', 2, s), [], 'unknown chapter: nothing');
+});
+
+test('provenance: stored with the pages, a copy of another mapping is stale', () => {
+  const s = run([enq('c1'), { type: 'start', chapterId: 'c1' }, { type: 'pages', chapterId: 'c1', files: ['0.jpg'], provenance: 'mangadex|m1|ch-fr|fr' }, { type: 'done', chapterId: 'c1', bytes: 1 }]);
+  assert.equal(s.c1.provenance, 'mangadex|m1|ch-fr|fr');
+  assert.equal(isStaleCopy(s.c1, 'mangadex|m1|ch-fr|fr'), false);
+  assert.equal(isStaleCopy(s.c1, 'mangadex|m1|ch-en|en'), true, 'language switched');
+  assert.equal(isStaleCopy(s.c1, undefined), false, 'mapping unknown (offline, source not loaded): keep the copy');
+  assert.equal(isStaleCopy({}, 'x'), false, 'entries from before provenance existed');
 });

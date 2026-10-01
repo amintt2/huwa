@@ -10,7 +10,18 @@ import { getChapter, pageUrl } from '@/data/catalog';
 export type PageSource = (chapterId: string) => Promise<string[] | { pages: string[]; headers?: Record<string, string> }>;
 
 /** A page to render: its URL plus optional request headers (e.g. Referer for some CDNs). */
-export type RegisteredSource = { id: string; name: string; fetchPages: PageSource; headers?: Record<string, string> };
+export type RegisteredSource = {
+  id: string;
+  name: string;
+  fetchPages: PageSource;
+  headers?: Record<string, string>;
+  /**
+   * What the chapter id maps to right now in this source (e.g. source + manga + source chapter +
+   * language), `undefined` when it doesn't have it. Stored with an offline copy so a copy made
+   * from another mapping (language / source switched since) is not shown.
+   */
+  provenance?: (chapterId: string) => string | undefined;
+};
 
 const sources: RegisteredSource[] = [];
 const listeners = new Set<() => void>();
@@ -51,17 +62,29 @@ export type ResolvedPages = {
   headers?: Record<string, string>;
   /** Last source error, when no source could provide the pages. */
   error?: string;
+  /** See `RegisteredSource.provenance`. */
+  provenance?: string;
 };
+
+/** Current mapping of a chapter, from the first source that knows it. */
+export function currentProvenance(chapterId: string): string | undefined {
+  for (const s of sources) {
+    const p = s.provenance?.(chapterId);
+    if (p) return p;
+  }
+  return undefined;
+}
 
 /** Online resolution: registered addons in order, then the placeholder. */
 export async function remotePages(chapterId: string): Promise<ResolvedPages> {
   let error: string | undefined;
   for (const s of [...sources]) {
     try {
+      const provenance = s.provenance?.(chapterId);
       const r = await s.fetchPages(chapterId);
       const pages = Array.isArray(r) ? r : r?.pages;
       const headers = (Array.isArray(r) ? undefined : r?.headers) ?? s.headers;
-      if (pages?.length) return { pages, origin: 'addon', sourceName: s.name, headers };
+      if (pages?.length) return { pages, origin: 'addon', sourceName: s.name, headers, provenance };
     } catch (e) {
       // try the next source
       error = e instanceof Error ? e.message : String(e);
