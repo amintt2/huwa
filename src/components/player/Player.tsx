@@ -22,8 +22,9 @@ import { ActivityIndicator, BackHandler, Platform, Pressable, StyleSheet, Text, 
 import Animated, { FadeIn, FadeOut, SlideInLeft, SlideInRight, SlideOutLeft, SlideOutRight } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { traceMark } from '@/addons/timing';
+import { traceInfo, traceMark } from '@/addons/timing';
 import { Txt, type IconName } from '@/components/ui';
+import { usePlayerTrace } from '@/stats/use-player-trace';
 import { C, F, R, S } from '@/theme/tokens';
 
 import { useIntroGuess, useSkipTimes, type Segment } from './aniskip';
@@ -219,6 +220,7 @@ export function Player({
   const [countdown, setCountdown] = useState<number | null>(null);
 
   const { isPlaying } = useEvent(player, 'playingChange', { isPlaying: player.playing });
+  usePlayerTrace(player, mediaKey);
   const { status, error } = useEvent(player, 'statusChange', { status: player.status, error: undefined });
 
   // ---------- fullscreen = landscape ----------
@@ -279,6 +281,7 @@ export function Player({
       tookWarm = player.adoptWarm(warm, src);
       if (!tookWarm) setTimeout(() => warm.release(), 0);
     }
+    if (mediaKey) traceInfo(mediaKey, { warm: tookWarm });
     if (mediaKey) traceMark(mediaKey, 'url', tookWarm ? 'lecteur préchauffé' : undefined);
     (tookWarm ? Promise.resolve() : player.replaceAsync(src))
       .then(() => {

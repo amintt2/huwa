@@ -118,6 +118,7 @@ export default function RootLayout() {
           <Stack.Screen name="passkey" options={{ ...SHEET, sheetAllowedDetents: [0.62, 1] }} />
           <Stack.Screen name="settings/moderation" />
           <Stack.Screen name="settings/notifications" />
+          <Stack.Screen name="settings/stats" />
           <Stack.Screen name="addons" />
           <Stack.Screen name="manga-sources" />
           <Stack.Screen name="paperback" options={{ animation: 'none' }} />

@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Huwa — confidentialité</title>
-  <meta name="description" content="Politique de confidentialité de l'app Huwa : aucune donnée collectée, aucun compte, aucun serveur central.">
+  <meta name="description" content="Politique de confidentialité de l'app Huwa : aucun compte, aucun serveur central, rien de collecté par défaut ; statistiques de lecture anonymes seulement sur option.">
   <meta name="theme-color" content="#05070D">
   <link rel="icon" href="/favicon.png" type="image/png">
   <style>
@@ -67,18 +67,21 @@
     <section style="border-top:0">
       <h2>Confidentialité</h2>
       <div class="card" style="display:grid;gap:14px">
-        <p><strong style="color:var(--text)">En bref : Huwa ne collecte aucune donnée.</strong> Il n’y a ni compte, ni publicité, ni outil de mesure d’audience, ni serveur Huwa qui stockerait tes informations.</p>
+        <p><strong style="color:var(--text)">En bref : par défaut, Huwa ne collecte aucune donnée.</strong> Il n’y a ni compte, ni publicité, ni outil de mesure d’audience, ni serveur Huwa qui stockerait tes informations. La seule mesure qui peut quitter ton appareil est optionnelle, désactivée par défaut et anonyme : un résumé de tes temps de démarrage des vidéos, si tu actives « Comparer avec la communauté » (voir plus bas).</p>
         <h3>Ce qui reste sur ton appareil</h3>
         <p>Ta progression, tes listes, tes réglages et ta clé d’identité sont enregistrés uniquement sur ton appareil. Ta phrase de récupération est dans le trousseau sécurisé d’iOS ; si tu laisses l’option activée, iOS en garde une copie chiffrée de bout en bout dans ton Trousseau iCloud, lisible par toi seul.</p>
         <h3>Ce qui passe de pair à pair</h3>
         <p>Les commentaires, ton profil public (pseudo, bio) et ton journal de progression que tu choisis de publier sont signés par ta clé et échangés directement avec les autres utilisateurs, sans passer par un serveur Huwa. Les messages privés sont chiffrés de bout en bout.</p>
+        <h3>Statistiques de lecture</h3>
+        <p>Huwa mesure sur ton appareil combien de temps chaque épisode met à démarrer (selon la source : lien direct, débrid, moteur torrent, lecteur web), les coupures, les échecs et le temps de réponse des extensions. Ces mesures ne contiennent ni titre, ni épisode, ni lien, et restent sur ton appareil (Réglages → Statistiques de lecture, où tu peux les effacer).</p>
+        <p><strong style="color:var(--text)">Option « Comparer avec la communauté » (désactivée par défaut).</strong> Si tu l’actives après avoir lu l’écran d’explication, Huwa publie au plus une fois par semaine, sur le réseau pair-à-pair, un résumé de ta semaine : pour chaque type de source, le nombre de démarrages par tranche de durée (moins de 0,5 s, 1 s, 2 s…), et trois compteurs (lectures réussies, échouées, avec coupure). Chaque nombre est brouillé par un bruit aléatoire. Le résumé ne contient ni titre, ni épisode, ni lien, ni extension, ni heure de visionnage, et n’est signé ni par ton identité Huwa ni par ton appareil : il part d’une clé jetable, sur une connexion séparée, et deux résumés ne peuvent pas être reliés entre eux. Ces résumés sont lisibles par tous les pairs du réseau (y compris l’auteur de Huwa) et servent à afficher des moyennes communes, seulement à partir de 20 contributions. Comme pour toute connexion pair-à-pair, ton adresse IP est visible des pairs connectés à ce moment-là. Un résumé publié ne peut pas être retiré (rien ne le relie à toi) ; désactiver l’option arrête les suivants.</p>
         <h3>Services tiers que l’app contacte</h3>
         <p>Pour afficher le catalogue, Huwa interroge l’API publique d’AniList et des services de correspondance d’identifiants. Les vidéos viennent des addons que tu ajoutes toi-même, et, si tu en configures un, de ton service de débridage. Ces services reçoivent ton adresse IP comme pour tout site web ; Huwa ne leur transmet aucune donnée personnelle.</p>
         <h3>Enfants</h3>
         <p>Huwa n’est pas destiné aux enfants de moins de 13 ans.</p>
         <h3>Contact</h3>
         <p>Pour toute question : <a href="mailto:amin2020e@gmail.com">amin2020e@gmail.com</a>.</p>
-        <p class="note">Dernière mise à jour : 30 septembre 2026.</p>
+        <p class="note">Dernière mise à jour : 1er octobre 2026.</p>
       </div>
     </section>
     <footer>Huwa · <a href="/">Accueil</a></footer>

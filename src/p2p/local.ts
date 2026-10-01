@@ -600,6 +600,14 @@ export function createLocalP2P(): P2P {
       if (!key || key === db.profile?.key) return db.journal.map((x) => x.e);
       return demoJournal(key);
     },
+
+    // Single device, no network: nothing to compare with.
+    async contributeStats() {
+      throw new Error('Réseau P2P indisponible');
+    },
+    async communityStats() {
+      return null;
+    },
   };
 
   return p2p;

@@ -77,6 +77,7 @@ export default function Settings() {
         <Group title="Lecture">
           <Row icon="text" label="Sous-titres" detail={subtitleDetail} onPress={() => router.push('/settings/subtitles')} />
           <Row icon="extension-puzzle-outline" label="Extensions" detail={`${addonCount} vidéo · ${mangaSources} manhwa`} onPress={() => router.push('/addons')} />
+          <Row icon="speedometer-outline" label="Statistiques de lecture" detail="Temps de démarrage, coupures, sources" onPress={() => router.push('/settings/stats')} />
           <Row
             icon="refresh"
             label="Réinitialiser la progression"

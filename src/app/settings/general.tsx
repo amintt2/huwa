@@ -149,6 +149,7 @@ export default function Settings() {
               ))}
             </View>
           </View>
+          <Row icon="speedometer-outline" label="Statistiques de lecture" hint="Temps de démarrage, coupures, sources — reste sur l’appareil" onPress={() => router.push('/settings/stats')} />
           <Row icon="text" label="Sous-titres" hint="Langues, police, taille, contour, style ASS" onPress={() => router.push('/settings/subtitles')} last />
         </Group>
 

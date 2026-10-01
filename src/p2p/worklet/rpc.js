@@ -37,7 +37,9 @@ const METHODS = new Set([
   'sendMessage',
   'markRead',
   'appendJournal',
-  'journal'
+  'journal',
+  'contributeStats',
+  'communityStats'
 ])
 
 function serve(stream, createNode, { log = () => {} } = {}) {

@@ -16,6 +16,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { WebView, type WebViewMessageEvent } from 'react-native-webview';
 import type { ShouldStartLoadRequest } from 'react-native-webview/lib/WebViewTypes';
 
+import { traceActive } from '@/addons/timing';
 import { hostOf, siteOf } from '@/addons/web-player';
 import { Txt, type IconName } from '@/components/ui';
 import { C, F, R, S } from '@/theme/tokens';
@@ -213,6 +214,7 @@ export function WebPlayer({
     l.t = m.c;
     l.d = m.d;
     setReach('video');
+    if (m.c > 0 && !m.p) traceActive('first-frame');
     setTime(m.c);
     if (m.d > 0) setDuration(m.d);
     // Resume where the episode was left, once the page knows the duration.
