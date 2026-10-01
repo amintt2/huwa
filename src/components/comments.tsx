@@ -1,12 +1,12 @@
 import Ionicons from '@expo/vector-icons/Ionicons';
 import * as Haptics from 'expo-haptics';
 import { router } from 'expo-router';
-import { useMemo, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import {
   ActionSheetIOS,
   ActivityIndicator,
   Alert,
-  KeyboardAvoidingView,
+  Keyboard,
   Platform,
   Pressable,
   ScrollView,
@@ -235,6 +235,25 @@ function CommentRow({
  * Full comment experience: sort, spoiler filter, threaded replies, composer.
  * For episodes, pass `getTime`/`onSeek` to get time-anchored comments.
  */
+/**
+ * iOS keyboard height. The panel always reaches the bottom of the screen (page sheet, player side
+ * panel), so padding by the full keyboard height is exact; KeyboardAvoidingView is not, because it
+ * measures itself relative to its parent and under-pads inside a sheet. Android resizes the window.
+ */
+function useKeyboardHeight() {
+  const [h, setH] = useState(0);
+  useEffect(() => {
+    if (Platform.OS !== 'ios') return;
+    const show = Keyboard.addListener('keyboardWillShow', (e) => setH(e.endCoordinates.height));
+    const hide = Keyboard.addListener('keyboardWillHide', () => setH(0));
+    return () => {
+      show.remove();
+      hide.remove();
+    };
+  }, []);
+  return h;
+}
+
 export function CommentsPanel({
   target,
   kind,
@@ -260,6 +279,7 @@ export function CommentsPanel({
   const [editing, setEditing] = useState<Row | null>(null);
   const [sending, setSending] = useState(false);
   const input = useRef<TextInput>(null);
+  const kb = useKeyboardHeight();
   // Proof of work is solved in the background while typing → sending feels instant.
   useWarmPow(target, text);
 
@@ -326,7 +346,7 @@ export function CommentsPanel({
   const pill = (on: boolean) => [styles.pill, on && { backgroundColor: C.text }];
 
   return (
-    <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+    <View style={{ flex: 1, paddingBottom: kb }}>
       <ScrollView contentContainerStyle={{ paddingBottom: S.xl }} keyboardShouldPersistTaps="handled">
         {header}
         <View style={{ paddingHorizontal: S.lg, gap: 18 }}>
@@ -372,7 +392,7 @@ export function CommentsPanel({
         </View>
       </ScrollView>
 
-      <View style={[styles.composer, { paddingBottom: Math.max(insets.bottom, S.md) }]}>
+      <View style={[styles.composer, { paddingBottom: kb > 0 ? S.sm : Math.max(insets.bottom, S.md) }]}>
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: S.sm, flexWrap: 'wrap' }}>
           {editing ? (
             <Pressable onPress={cancelEdit} style={[styles.replyTag, { backgroundColor: C.accentSoft }]} accessibilityLabel="Annuler la modification">
@@ -418,7 +438,7 @@ export function CommentsPanel({
           </Press>
         </View>
       </View>
-    </KeyboardAvoidingView>
+    </View>
   );
 }
 

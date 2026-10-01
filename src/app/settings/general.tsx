@@ -110,7 +110,7 @@ export default function Settings() {
       style={{ flex: 1, backgroundColor: C.bg }}
       keyboardShouldPersistTaps="handled"
       contentContainerStyle={{ paddingTop: insets.top + S.sm, paddingBottom: insets.bottom + S.xxl }}>
-      <ScreenHeader title={t('settings.title')} />
+      <ScreenHeader title={t('settings.general')} />
 
       <View style={{ paddingHorizontal: S.lg, gap: S.xl }}>
         <Group title={t('settings.general')}>
