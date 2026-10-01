@@ -39,6 +39,7 @@ export type MpvViewHandle = {
   /** mpv track id, -1 = none. */
   setAudioTrack(id: number): Promise<void>;
   setSubtitleTrack(id: number): Promise<void>;
+  setFill(fill: boolean): Promise<void>;
   stop(): Promise<void>;
 };
 

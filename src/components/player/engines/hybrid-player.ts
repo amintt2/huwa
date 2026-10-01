@@ -200,6 +200,7 @@ export class HybridPlayer implements EventEmitter<VideoPlayerEvents> {
   /** `onReady` of the native view: mounted (Fabric mounts after the ref is attached). */
   viewDidMount = () => {
     this.viewReady = true;
+    if (this.fill) this.view?.setFill(true).catch(() => {});
     this.flushWaiters();
   };
 
@@ -292,6 +293,13 @@ export class HybridPlayer implements EventEmitter<VideoPlayerEvents> {
     this.m.subtitleTrack = t;
     this.view?.setSubtitleTrack(mpvId(t)).catch(() => {});
     this.emit('subtitleTrackChange', { subtitleTrack: t, oldSubtitleTrack: old });
+  }
+
+  /** Zoom to fill (mpv: panscan). The native engine zooms through VideoView `contentFit`. */
+  private fill = false;
+  setFill(fill: boolean) {
+    this.fill = fill;
+    if (this.engine === 'mpv') this.view?.setFill(fill).catch(() => {});
   }
 
   play() {

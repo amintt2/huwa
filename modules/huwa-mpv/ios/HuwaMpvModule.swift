@@ -45,6 +45,10 @@ public class HuwaMpvModule: Module {
       AsyncFunction("setSubtitleTrack") { (view: HuwaMpvView, id: Int) in
         view.setString("sid", id < 0 ? "no" : String(id))
       }
+      /// Zoom to fill the screen (crops top/bottom or sides) or back to the whole picture.
+      AsyncFunction("setFill") { (view: HuwaMpvView, fill: Bool) in
+        view.setString("panscan", fill ? "1.0" : "0.0")
+      }
       AsyncFunction("stop") { (view: HuwaMpvView) in
         view.destroy()
       }

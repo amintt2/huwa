@@ -27,7 +27,11 @@ import { C, S } from '@/theme/tokens';
 
 import { Button, Chip, Cover, Txt } from './ui';
 
-const HERO_H = 560;
+/**
+ * Hero height: the full 2:3 poster at the screen width (AniList covers), so its top — usually
+ * the characters' faces and the logo — isn't cut under the status bar and the HUWA header.
+ */
+const heroHeight = (width: number) => Math.min(780, Math.max(560, Math.round(width * 1.5)));
 /** Time each featured series stays on screen before the next one slides in. */
 const AUTO_MS = 6000;
 const SLIDE_MS = 700;
@@ -244,7 +248,7 @@ export function HeroCarousel({ items }: { items: Series[] }) {
 
   return (
     <View
-      style={{ height: HERO_H }}
+      style={{ height: heroHeight(width) }}
       onTouchStart={() => rot.hold()}
       onTouchEnd={() => rot.release()}
       onTouchCancel={() => rot.release()}>
@@ -338,9 +342,9 @@ function Slide({
       accessible={false}
       importantForAccessibility={clone ? 'no-hide-descendants' : 'auto'}
       accessibilityElementsHidden={clone}
-      style={{ width, height: HERO_H, overflow: 'hidden' }}>
+      style={{ width, height: heroHeight(width), overflow: 'hidden' }}>
       <Animated.View style={[StyleSheet.absoluteFill, art]}>
-        <Cover palette={series.palette} image={series.image} width={width} height={HERO_H} radius={0} shade="strong" />
+        <Cover palette={series.palette} image={series.image} width={width} height={heroHeight(width)} radius={0} shade="strong" />
       </Animated.View>
       {/* Top scrim so the brand and status bar stay legible on busy key art. */}
       <LinearGradient pointerEvents="none" colors={['rgba(5,7,13,0.8)', 'rgba(5,7,13,0)']} style={styles.topScrim} />

@@ -2,6 +2,7 @@
 // - single tap: show / hide the controls
 // - double tap on the left / right half: -10 s / +10 s
 // - vertical drag (fullscreen only): left half = screen brightness, right half = volume
+// - pinch (fullscreen only): open = zoom to fill the screen, close = whole picture
 // Built on the JS responder system (PanResponder): it sits under the controls, so buttons and the
 // seek bar keep their own touches, and it doesn't need a gesture-handler root view.
 import * as Brightness from 'expo-brightness';
@@ -21,6 +22,8 @@ type Props = {
   getVolume: () => number;
   setVolume: (v: number) => void;
   onHud: (hud: Hud | null) => void;
+  /** Two-finger pinch: true = fill (zoom in), false = fit. */
+  onPinch?: (fill: boolean) => void;
 };
 
 const DOUBLE_TAP_MS = 260;
@@ -36,6 +39,7 @@ class Session {
   brightness: number | null = null;
   original: number | null = null;
   startX = 0;
+  pinch: { start: number; done: boolean } | null = null;
 
   setProps(p: Props) {
     this.props = p;
@@ -65,8 +69,22 @@ class Session {
     return !!this.props?.adjust && Math.abs(g.dy) > 12 && Math.abs(g.dy) > Math.abs(g.dx) * 1.5;
   }
 
+  pinchMove(e: GestureResponderEvent): boolean {
+    const t = e.nativeEvent.touches;
+    if (!this.props.onPinch || t.length < 2) return false;
+    const d = Math.hypot(t[0].pageX - t[1].pageX, t[0].pageY - t[1].pageY);
+    if (!this.pinch) this.pinch = { start: d, done: false };
+    else if (!this.pinch.done && (d / this.pinch.start > 1.15 || d / this.pinch.start < 0.87)) {
+      this.pinch.done = true;
+      this.props.onPinch(d > this.pinch.start);
+    }
+    if (this.drag) this.cancel();
+    return true;
+  }
+
   grant(e: GestureResponderEvent) {
     this.drag = null;
+    this.pinch = null;
     this.startX = e.nativeEvent.locationX;
     if (this.props.adjust) this.readBrightness();
   }
@@ -89,6 +107,10 @@ class Session {
 
   release(g: PanResponderGestureState) {
     const p = this.props;
+    if (this.pinch) {
+      this.pinch = null;
+      return;
+    }
     if (this.drag) {
       this.drag = null;
       p.onHud(null);
@@ -122,10 +144,12 @@ export function GestureLayer(props: Props) {
   const [responder] = useState(() =>
     PanResponder.create({
       onStartShouldSetPanResponder: () => true,
-      onMoveShouldSetPanResponder: (_e, g) => session.isDrag(g),
+      onMoveShouldSetPanResponder: (e, g) => e.nativeEvent.touches.length > 1 || session.isDrag(g),
       onPanResponderTerminationRequest: () => !session.drag,
       onPanResponderGrant: (e) => session.grant(e),
-      onPanResponderMove: (_e, g) => session.move(g),
+      onPanResponderMove: (e, g) => {
+        if (!session.pinchMove(e) && !session.pinch) session.move(g);
+      },
       onPanResponderRelease: (_e, g) => session.release(g),
       onPanResponderTerminate: () => session.cancel(),
     }),

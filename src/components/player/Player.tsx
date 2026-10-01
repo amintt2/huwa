@@ -193,6 +193,18 @@ export function Player({
   const [unlockHint, setUnlockHint] = useState(false);
   const [commentsOpen, setCommentsOpen] = useState(false);
   const [hud, setHud] = useState<Hud | null>(null);
+  // Pinch zoom (fullscreen): fill the screen, cropping the picture's edges, or show it whole.
+  const [fill, setFill] = useState(false);
+  const [zoomNote, setZoomNote] = useState<string | null>(null);
+  const onPinch = (next: boolean) => {
+    setFill(next);
+    setZoomNote(next ? 'Zoom : plein écran' : 'Image entière');
+  };
+  useEffect(() => {
+    if (!zoomNote) return;
+    const id = setTimeout(() => setZoomNote(null), 1200);
+    return () => clearTimeout(id);
+  }, [zoomNote]);
   const [flash, setFlash] = useState<{ side: 'left' | 'right'; n: number } | null>(null);
   const [skipped, setSkipped] = useState<string[]>([]);
   const [ended, setEnded] = useState(false);
@@ -203,6 +215,11 @@ export function Player({
 
   // ---------- fullscreen = landscape ----------
   const full = window.width > window.height;
+  // Zoom only applies in fullscreen; the inline 16:9 frame always shows the whole picture.
+  const zoomed = fill && full;
+  useEffect(() => {
+    player.setFill(zoomed);
+  }, [player, zoomed]);
   useEffect(() => {
     cb.current.onFullscreenChange?.(full);
   }, [full]);
@@ -447,6 +464,9 @@ export function Player({
         if (inSeg(g)) return { key: 'intro', label: 'Passer l’intro', to: g.end };
       } else if (t < INTRO_WINDOW) {
         const jump = Math.round(introGuess?.length ?? introSkip);
+        // A blind jump only once the target is already downloaded: jumping into what isn't
+        // loaded yet freezes the picture, for a skip that may not even land after the opening.
+        if (time.buffered < t + jump) return null;
         return { key: 'intro', label: `Avancer de ${Math.floor(jump / 60)}:${String(jump % 60).padStart(2, '0')}`, to: t + jump };
       }
     }
@@ -497,7 +517,7 @@ export function Player({
         player={player}
         style={StyleSheet.absoluteFill}
         nativeControls={false}
-        contentFit="contain"
+        contentFit={zoomed ? 'cover' : 'contain'}
         allowsPictureInPicture
         startsPictureInPictureAutomatically
         onPictureInPictureStart={() => setPip(true)}
@@ -514,6 +534,7 @@ export function Player({
         getVolume={() => player.volume}
         setVolume={(v) => setProp(player, 'volume', v)}
         onHud={setHud}
+        onPinch={full ? onPinch : undefined}
       />
 
       {!pip && (
@@ -571,7 +592,12 @@ export function Player({
         </View>
       )}
 
-      {!!notice && (
+      {!!zoomNote && (
+        <View pointerEvents="none" style={[styles.notice, { top: full ? S.lg : S.sm }]}>
+          <Txt v="small" color={C.white}>{zoomNote}</Txt>
+        </View>
+      )}
+      {!!notice && !zoomNote && (
         <View pointerEvents="none" style={[styles.notice, { top: full ? S.lg : S.sm }]}>
           <Txt v="small" color={C.white}>{notice}</Txt>
         </View>
