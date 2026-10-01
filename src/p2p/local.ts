@@ -23,6 +23,7 @@ import { commentPowPayload, powDifficulty, warmPow, type PowProof } from '@/soci
 import { rateWait } from '@/social/rate';
 
 import type {
+  CommentFlag,
   BackupState,
   Conversation,
   Device,
@@ -36,7 +37,7 @@ import type {
   Profile,
   PublicKey,
 } from './contract';
-import { DEMO_WELCOME, demoComments, demoJournal, demoKeyOf, demoLabels, demoMapping, demoProfile, demoReply, isDemoKey } from './demo';
+import { DEMO_WELCOME, demoComments, demoFlags, demoJournal, demoKeyOf, demoLabels, demoMapping, demoProfile, demoReply, isDemoKey } from './demo';
 import { randomBytes, secure } from './secure';
 
 const DB_KEY = 'huwa/p2p/local/v1';
@@ -74,11 +75,13 @@ type DB = {
   migrated: boolean;
   /** My episode ↔ chapter corrections, per manhwa room. */
   mapping: Record<string, (MappingProposal & { sig?: string })[]>;
+  /** My community reports, per work. */
+  flags: Record<string, CommentFlag[]>;
 };
 
 const empty = (): DB => ({
   v: 1, devices: [], phraseVerified: false, invites: [], comments: {}, likes: {}, labels: [], follows: [],
-  subscriptions: [], dms: {}, reads: {}, peerNames: {}, journal: [], migrated: false, mapping: {},
+  subscriptions: [], dms: {}, reads: {}, peerNames: {}, journal: [], migrated: false, mapping: {}, flags: {},
 });
 
 const hex = (n: number) => bytesToHex(randomBytes(n));
@@ -103,6 +106,7 @@ export function createLocalP2P(): P2P {
   const convL = new Set<(c: Conversation[]) => void>();
   const msgL = new Map<string, Set<(m: DirectMessage[]) => void>>();
   const mapL = new Map<string, Set<(all: MappingProposal[]) => void>>();
+  const flagL = new Map<string, Set<(all: CommentFlag[]) => void>>();
 
   let saveTimer: ReturnType<typeof setTimeout> | undefined;
   const persist = () => AsyncStorage.setItem(DB_KEY, JSON.stringify(db)).catch(() => {});
@@ -153,6 +157,14 @@ export function createLocalP2P(): P2P {
     const set = commentL.get(seriesId);
     if (!set?.size) return;
     const all = commentsOf(seriesId);
+    set.forEach((cb) => cb(all));
+  };
+
+  const flagsOf = (seriesId: string): CommentFlag[] => [...demoFlags(seriesId), ...(db.flags[seriesId] ?? [])];
+  const emitFlags = (seriesId: string) => {
+    const set = flagL.get(seriesId);
+    if (!set?.size) return;
+    const all = flagsOf(seriesId);
     set.forEach((cb) => cb(all));
   };
 
@@ -516,6 +528,25 @@ export function createLocalP2P(): P2P {
       delete db.likes[commentId];
       save();
       emitComments(seriesId);
+    },
+
+    watchFlags(seriesId, cb) {
+      const off = watch(flagL, seriesId, cb);
+      ready.then(() => {
+        if (flagL.get(seriesId)?.has(cb)) cb(flagsOf(seriesId));
+      });
+      return off;
+    },
+
+    async flagComment(seriesId, commentId, reason) {
+      await ready;
+      const { profile } = requireMe();
+      if (typeof commentId !== 'string' || !commentId || commentId.length > 120) throw new Error('Signalement invalide.');
+      if (reason !== null && !['spoiler', 'abuse', 'nsfw', 'spam', 'other'].includes(reason)) throw new Error('Signalement invalide.');
+      const list = (db.flags[seriesId] ?? []).filter((f) => !(f.comment === commentId && f.author === profile.key));
+      db.flags[seriesId] = reason ? [...list, { comment: commentId, author: profile.key, reason, ts: Date.now() }] : list;
+      save();
+      emitFlags(seriesId);
     },
 
     // ---------- moderation ----------

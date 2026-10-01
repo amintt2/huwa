@@ -7,6 +7,8 @@ import { AppState, type AppStateStatus } from 'react-native';
 import { migrateLegacy, type LegacyState } from '@/social/migrate';
 
 import type {
+  CommentFlag,
+  FlagReason,
   BackupState,
   Conversation,
   Device,
@@ -36,6 +38,7 @@ const TIMEOUTS: Record<string, number> = {
   acceptPairing: 130_000,
   postComment: 60_000,
   proposeMapping: 60_000,
+  flagComment: 60_000,
   sendMessage: 60_000,
   getProfile: 20_000,
   contributeStats: 90_000,
@@ -340,6 +343,12 @@ export class BareP2P implements P2P {
   }
   deleteComment(seriesId: string, commentId: string) {
     return this.call<void>('deleteComment', [seriesId, commentId]);
+  }
+  watchFlags(seriesId: string, cb: (all: CommentFlag[]) => void) {
+    return this.watch('flags', seriesId, cb);
+  }
+  async flagComment(seriesId: string, commentId: string, reason: FlagReason | null) {
+    await this.call<void>('flagComment', [seriesId, commentId, reason]);
   }
 
   follow(key: PublicKey) {

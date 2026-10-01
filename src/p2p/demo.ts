@@ -5,7 +5,7 @@ import { getSeries } from '@/data/catalog';
 import { demoKey, fingerprint } from '@/social/identity';
 import { seedComments } from '@/store/seed-comments';
 
-import type { JournalEntry, Label, MappingProposal, P2PComment, Profile } from './contract';
+import type { CommentFlag, JournalEntry, Label, MappingProposal, P2PComment, Profile } from './contract';
 
 const BIOS: Record<string, string> = {
   'mira.reads': 'Je lis tout en webtoon, je regarde tout en VOSTFR.',
@@ -26,7 +26,7 @@ export const DEMO_LABELERS = [
   { key: demoKey('labeler:communaute'), name: 'Modération communautaire', description: 'Harcèlement et spoilers non marqués.' },
 ];
 
-const byKey = new Map<string, string>([...DEMO_NAMES, SPAMMER].map((n) => [demoKey(n), n]));
+const byKey = new Map<string, string>([...DEMO_NAMES, SPAMMER, 'haters_only'].map((n) => [demoKey(n), n]));
 export const isDemoKey = (key: string) => byKey.has(key) || DEMO_LABELERS.some((l) => l.key === key);
 
 const BASE = Date.UTC(2025, 10, 1);
@@ -39,7 +39,7 @@ export function demoProfile(key: string): Profile | undefined {
   return {
     key,
     name,
-    bio: `${BIOS[name] ?? 'Compte promotionnel.'} · Profil de démonstration`,
+    bio: `${BIOS[name] ?? (name === SPAMMER ? 'Compte promotionnel.' : 'Compte de démonstration.')} · Profil de démonstration`,
     createdAt: BASE - (name.length * 17 % 90) * 86_400_000,
     fingerprint: fingerprint(key),
   };
@@ -107,8 +107,52 @@ export function demoComments(seriesId: string): Omit<P2PComment, 'likedByMe'>[] 
     for (const c of seedComments(target)) {
       out.push({ ...c, author: demoKey(c.author), authorName: c.author });
     }
+    out.push(...demoExtras(target));
   }
   seriesCache.set(seriesId, out);
+  return out;
+}
+
+/** A GIF that exists on GIPHY's CDN (demo only). */
+const DEMO_GIF = 'https://media.giphy.com/media/26ufdipQqU2lhNA4g/200.gif';
+const TROLL = 'haters_only';
+
+/**
+ * Comments that show what the thread can do: a time range, Markdown, a GIF, inline anchors, a page
+ * range — and one comment collapsed by community reports (see demoFlags).
+ */
+function demoExtras(target: string): Omit<P2PComment, 'likedByMe'>[] {
+  const at = BASE + 40 * 86_400_000;
+  const c = (i: number, author: string, text: string, extra: Partial<P2PComment> = {}): Omit<P2PComment, 'likedByMe'> => ({
+    id: `s-${target}-x${i}`, target, author: demoKey(author), authorName: author, text, createdAt: at + i * 3_600_000,
+    likes: [212, 87, 46, 9, 3][i] ?? 0, spoiler: false, ...extra,
+  });
+  if (target.startsWith('ep:')) {
+    return [
+      c(0, 'haru.exe', '12:47–13:05 Ce **plan-séquence** sous la pluie… *regardez les reflets dans les flaques*. ||Et le retour du maître à la fin !||', { timestamp: 767 }),
+      c(1, 'sunny', 'Ma réaction à 18:20 :\n' + DEMO_GIF),
+      c(2, 'nox', 'Mes moments préférés :\n- 3:12 l’ouverture\n- 8:40-9:15 le duel, ~~trop court~~ parfait\n> « On ne recule pas. »'),
+      c(3, TROLL, 'Cet anime est nul et ceux qui le regardent aussi.'),
+    ];
+  }
+  if (target.startsWith('ch:')) {
+    return [
+      c(0, 'lune', 'p. 12–14 La double page du combat est **incroyable**, et regardez le détail p. 3 en arrière-plan.'),
+      c(1, 'jin_ok', 'p. 21 ce cadrage 😮\n' + DEMO_GIF),
+      c(3, TROLL, 'Les lecteurs de ce manhwa sont tous des idiots.'),
+    ];
+  }
+  return [];
+}
+
+/** Three demo regulars reported the troll comment of each thread: collapsed for everyone. */
+export function demoFlags(seriesId: string): CommentFlag[] {
+  const out: CommentFlag[] = [];
+  for (const target of targetsOf(seriesId)) {
+    if (target.startsWith('series:')) continue;
+    const comment = `s-${target}-x3`;
+    ['mira.reads', 'kaito_92', 'aria'].forEach((n, i) => out.push({ comment, author: demoKey(n), reason: 'abuse', ts: BASE + 41 * 86_400_000 + i }));
+  }
   return out;
 }
 

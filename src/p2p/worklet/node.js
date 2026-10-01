@@ -18,7 +18,7 @@ const schema = require('./schema')
 const pow = require('./pow')
 const seal = require('./seal')
 const { makeAuth, verifyDeviceProof } = require('./auth')
-const { commentId, createRoomApply, createHomeApply, createDmApply, createMapApply, rateOk, mapKey, MAP_RATE } = require('./apply')
+const { commentId, createRoomApply, createHomeApply, createDmApply, createMapApply, createFlagApply, rateOk, mapKey, flagKey, MAP_RATE, FLAG_RATE } = require('./apply')
 const stats = require('./stats')
 
 const ROOM_IDLE_MS = 60_000
@@ -69,6 +69,11 @@ const statsBaseKey = (month) => crypto.keyPair(hash('huwa/stats/v' + stats.STATS
 const MAP_VERSION = 'v1'
 const mapBaseKey = (room) => crypto.keyPair(hash('huwa/map/' + MAP_VERSION + '/' + room)).publicKey
 const MAX_MAPPING = 5000
+// Flag rooms (community reports of comments) are new bases too: no PROTOCOL bump, older peers
+// never open them and keep seeing every comment.
+const FLAG_VERSION = 'v1'
+const flagBaseKey = (work) => crypto.keyPair(hash('huwa/flag/' + FLAG_VERSION + '/' + work)).publicKey
+const MAX_FLAGS = 5000
 /** The stats swarm and bases close after this long without use. */
 const STATS_IDLE_MS = 5 * 60_000
 const MAX_STATS_READ = 5000
@@ -116,6 +121,7 @@ class HuwaNode {
     this.meProfile = undefined
     this.rooms = new Map() // work -> { base, refs, timer, discovery }
     this.mapRooms = new Map() // manhwa room -> { base, refs, timer, discovery }
+    this.flagRooms = new Map() // work -> { base, refs, timer, discovery }
     this.homes = new Map() // identity -> { base, discovery } (other people's personal bases)
     this.dms = new Map() // peer -> { base, discovery }
     this.peers = new Map() // identity -> { home, box, name }
@@ -197,13 +203,13 @@ class HuwaNode {
     for (const sub of this.subs.values()) sub()
     this.subs.clear()
     if (this._statusTimer) clearTimeout(this._statusTimer)
-    for (const room of [...this.rooms.values(), ...this.mapRooms.values()]) if (room.timer) clearTimeout(room.timer)
+    for (const room of [...this.rooms.values(), ...this.mapRooms.values(), ...this.flagRooms.values()]) if (room.timer) clearTimeout(room.timer)
     for (const member of this.pairingMembers) await member.close().catch(noop)
     if (this.pairing) await this.pairing.close().catch(noop)
     if (this.swarm) await this.swarm.destroy().catch(noop)
     await this._closeStats().catch(noop)
     if (this.statsStore) await this.statsStore.close().catch(noop)
-    const bases = [...this.rooms.values(), ...this.mapRooms.values(), ...this.homes.values(), ...this.dms.values()].map((r) => r.base)
+    const bases = [...this.rooms.values(), ...this.mapRooms.values(), ...this.flagRooms.values(), ...this.homes.values(), ...this.dms.values()].map((r) => r.base)
     if (this.home) bases.push(this.home)
     await Promise.all(bases.map((b) => b.close().catch(noop)))
     await this.store.close()
@@ -1037,6 +1043,65 @@ class HuwaNode {
     }
   }
 
+  // ---- community reports of comments (flag rooms) ---------------------------------
+
+  async _flagRoom(work) {
+    if (!schema.WORK.test(work)) throw new Error('Œuvre invalide')
+    let room = this.flagRooms.get(work)
+    if (!room) {
+      const base = new Autobase(this.store.namespace('flag/' + FLAG_VERSION + '/' + work), flagBaseKey(work), {
+        optimistic: true,
+        valueEncoding: 'json',
+        wakeup: this.wakeup,
+        open: viewOf,
+        apply: createFlagApply(work)
+      })
+      room = { base, refs: 0, timer: null, discovery: null, ready: base.ready() }
+      this.flagRooms.set(work, room)
+      await room.ready
+      room.discovery = this._join(base.discoveryKey)
+      base.on('update', () => this._notify('flags:' + work))
+    }
+    await room.ready
+    return room
+  }
+
+  /** Every active flag of a work (see CommentFlag in src/p2p/contract.ts). */
+  async listFlags(work) {
+    const room = await this._flagRoom(work)
+    const out = []
+    for (const e of await rangeValues(room.base.view, 'f/', { limit: MAX_FLAGS })) {
+      const [, comment, author] = e.key.split('/')
+      out.push({ comment, author, reason: e.value.r, ts: e.value.ts })
+    }
+    return out
+  }
+
+  async flagComment(work, commentIdHex, reason) {
+    this._requireIdentity()
+    const on = reason !== null && reason !== undefined
+    const body = { id: String(commentIdHex), r: on ? reason : 'other', on }
+    if (!schema.flagBody(body)) throw new Error('Signalement invalide')
+    const room = await this._flagRoom(String(work))
+    const release = this._retain(room, work, this.flagRooms)
+    try {
+      const me = this.secret.identity
+      const key = flagKey(body.id, me)
+      const prev = await valueOf(room.base.view, key)
+      if (!on && !prev) return
+      if (on && prev && prev.r === reason) return
+      const stats = await valueOf(room.base.view, 'a/' + me)
+      if (!rateOk(stats, Date.now(), this.secret.device.publicKey, FLAG_RATE).ok) throw new Error('Patiente quelques secondes avant un nouveau signalement')
+      // Keep the previous reason when retracting (the body must name one).
+      if (!on && prev) body.r = prev.r
+      const value = await this._append(room.base, 'flag', 'flag:' + work, body, { nonceBits: pow.difficultyFor(stats) })
+      const stored = await valueOf(room.base.view, key)
+      if (on ? !stored || stored.ts !== value.ts : !!stored) throw new Error('Signalement refusé')
+    } finally {
+      release()
+    }
+  }
+
   async _flag(t, key, on) {
     this._requireIdentity()
     if (!isKey(key)) throw new Error('Clé invalide')
@@ -1402,6 +1467,13 @@ class HuwaNode {
         release = this._retain(room, arg, this.mapRooms)
         if (stopped) release()
       }, noop)
+    } else if (kind === 'flags') {
+      topic = 'flags:' + arg
+      load = () => this.listFlags(arg)
+      this._flagRoom(arg).then((room) => {
+        release = this._retain(room, arg, this.flagRooms)
+        if (stopped) release()
+      }, noop)
     } else if (kind === 'labels') {
       topic = 'labels'
       load = () => this.listLabels()
@@ -1462,4 +1534,4 @@ class HuwaNode {
   }
 }
 
-module.exports = { HuwaNode, workBaseKey, dmBaseKey, mapBaseKey, idTopic }
+module.exports = { HuwaNode, workBaseKey, dmBaseKey, mapBaseKey, flagBaseKey, idTopic }

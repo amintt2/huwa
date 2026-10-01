@@ -127,6 +127,24 @@ function mapNode(value, room) {
   return isNonce(value.nonce) && mapBody(value.body)
 }
 
+// ---- flag rooms: community reports of comments, one Autobase per work ---------
+// Separate bases (like mapping rooms): older peers never open them, comment rooms are untouched.
+
+/** Mirror of FlagReason in src/p2p/contract.ts. */
+const FLAG_REASONS = ['spoiler', 'abuse', 'nsfw', 'spam', 'other']
+const MAX_FLAG_NODE_BYTES = 2048
+
+/** `{ id: comment id, r: reason, on }` — `on: false` retracts my flag on that comment. */
+function flagBody(b) {
+  return isObj(b) && onlyKeys(b, ['id', 'r', 'on']) && isId(b.id) && FLAG_REASONS.includes(b.r) && isBool(b.on)
+}
+
+function flagNode(value, work) {
+  if (!envelope(value, ['flag'], MAX_FLAG_NODE_BYTES)) return false
+  if (!WORK.test(work) || value.room !== 'flag:' + work) return false
+  return isNonce(value.nonce) && flagBody(value.body)
+}
+
 /** A device of the writer's own identity, revoked in its personal base, now refused here too. */
 const revokeBody = (b) => onlyKeys(b, ['device']) && isKey(b.device)
 
@@ -258,6 +276,9 @@ module.exports = {
   mapNode,
   mapBody,
   MAP_LIMITS,
+  flagNode,
+  flagBody,
+  FLAG_REASONS,
   homeNode,
   dmNode,
   dmPlain,
