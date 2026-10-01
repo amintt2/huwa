@@ -162,6 +162,20 @@ final class MpvCore {
     }
   }
 
+  /// Makes mpv rebuild its video output at the layer's current size, without touching the
+  /// decoder: MPVKit's moltenvk context only reads `drawableSize` when the VO is reconfigured,
+  /// and a change of display aspect is the cheapest reconfigure. The override alternates
+  /// between ±0.001 % of the real aspect (invisible) so every call is a real change.
+  private var aspectNudge = false
+  func refreshOutputSize() {
+    queue.async { [self] in
+      guard let ctx = mpv, let w = getDouble(ctx, "video-params/dw"), let h = getDouble(ctx, "video-params/dh"), w > 0, h > 0 else { return }
+      aspectNudge.toggle()
+      let aspect = (w / h) * (aspectNudge ? 1.00001 : 0.99999)
+      mpv_set_property_string(ctx, "video-aspect-override", String(format: "%.6f", aspect))
+    }
+  }
+
   func command(_ args: [String]) {
     queue.async { [self] in
       guard let ctx = mpv else { return }

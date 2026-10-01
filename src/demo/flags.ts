@@ -30,3 +30,9 @@ export const demoLang: 'fr' | 'en' = (() => {
   const first = Array.isArray(langs) ? String(langs[0] ?? '') : typeof langs === 'string' ? langs.replace(/[()\s"]/g, '') : '';
   return first.startsWith('en') ? 'en' : 'fr';
 })();
+
+/** Playback engine forced for a demo / test run (`-HuwaEngine mpv`). */
+export const demoEngine: 'auto' | 'native' | 'mpv' | undefined = (() => {
+  const e = arg('HuwaEngine');
+  return isDemo && (e === 'auto' || e === 'native' || e === 'mpv') ? e : undefined;
+})();

@@ -3,11 +3,13 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useSyncExternalStore } from 'react';
 
+import { demoEngine } from '@/demo/flags';
+
 import type { Engine, EnginePref } from './policy';
 
 const KEY = 'huwa/player-engine/v1';
 
-let pref: EnginePref = 'auto';
+let pref: EnginePref = demoEngine ?? 'auto';
 const listeners = new Set<() => void>();
 const emit = () => listeners.forEach((l) => l());
 const subscribe = (l: () => void) => {
@@ -17,7 +19,7 @@ const subscribe = (l: () => void) => {
 
 AsyncStorage.getItem(KEY)
   .then((raw) => {
-    if (raw === 'auto' || raw === 'native' || raw === 'mpv') {
+    if (!demoEngine && (raw === 'auto' || raw === 'native' || raw === 'mpv')) {
       pref = raw;
       emit();
     }
