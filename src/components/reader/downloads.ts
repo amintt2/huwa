@@ -16,6 +16,7 @@ import { isDemo } from '@/demo/flags';
 
 import { bySeries, isActive, nextChapters, nextToStart, reduce, type DownloadEntry, type Downloads, type QueueEvent } from './download-queue';
 import { remotePages } from './pageSource';
+import { runPool } from './pool';
 
 export type { DownloadEntry, DownloadStatus, SeriesDownloads } from './download-queue';
 
@@ -39,6 +40,8 @@ let prefs: DownloadPrefs = { wifiOnly: false, autoNext: false, autoCount: 3 };
 let net: Pick<NetworkState, 'type' | 'isConnected'> = { type: NetworkStateType.UNKNOWN, isConnected: true };
 const listeners = new Set<() => void>();
 const controllers = new Map<string, AbortController>();
+/** Runs not settled yet (their page workers may still be unwinding): never two for one chapter. */
+const running = new Set<string>();
 let saveTimer: ReturnType<typeof setTimeout> | undefined;
 let version = 0;
 
@@ -155,9 +158,21 @@ function deleteFiles(chapterId: string) {
 
 // ---------- worker ----------
 
+/** Pages are written to `<name>.part` and renamed once complete: an interrupted page never looks done. */
+const PART = '.part';
+
+function removeFile(f: File) {
+  try {
+    if (f.exists) f.delete();
+  } catch {
+    // already gone
+  }
+}
+
 async function run(chapterId: string) {
   const ctrl = new AbortController();
   controllers.set(chapterId, ctrl);
+  running.add(chapterId);
   try {
     const { pages, headers, origin, error } = await remotePages(chapterId);
     // Placeholder pages (no source answered) are never stored as an offline chapter — except in
@@ -168,30 +183,41 @@ async function run(chapterId: string) {
     const files = pages.map((u, i) => `${String(i).padStart(4, '0')}.${extOf(u)}`);
     const dir = chapterDir(chapterId);
     dir.create({ intermediates: true, idempotent: true });
+    for (const name of files) removeFile(new File(dir, name + PART));
     dispatch({ type: 'pages', chapterId, files });
 
-    let next = 0;
     let saved = 0;
-    const worker = async () => {
-      while (next < pages.length) {
-        if (ctrl.signal.aborted) throw new Error('Annulé');
-        const i = next++;
+    await runPool(
+      pages.length,
+      PAGES_AT_ONCE,
+      async (i, signal) => {
         const target = new File(dir, files[i]);
-        // Resuming a paused chapter: pages already on disk are kept.
+        // Resuming a paused chapter: pages already on disk are kept (only complete ones get their final name).
         if (!(target.exists && (target.size ?? 0) > 0)) {
-          await File.downloadFileAsync(pages[i], target, { idempotent: true, headers, signal: ctrl.signal } as Parameters<typeof File.downloadFileAsync>[2]);
+          const part = new File(dir, files[i] + PART);
+          try {
+            await File.downloadFileAsync(pages[i], part, { idempotent: true, headers, signal });
+            if (signal.aborted) throw new Error('Annulé');
+            removeFile(target);
+            part.rename(files[i]);
+          } catch (e) {
+            removeFile(part);
+            throw e;
+          }
         }
         saved++;
         dispatch({ type: 'progress', chapterId, saved });
-      }
-    };
-    await Promise.all(Array.from({ length: Math.min(PAGES_AT_ONCE, pages.length) }, worker));
+      },
+      ctrl.signal,
+    );
     dispatch({ type: 'done', chapterId, bytes: dir.size ?? 0 });
   } catch (e) {
     // Paused / cancelled: the reducer ignores a failure of an entry that isn't downloading.
     if (!ctrl.signal.aborted) dispatch({ type: 'fail', chapterId, error: e instanceof Error ? e.message : String(e) });
   } finally {
+    // Every page worker has settled here (runPool waits for them): nothing writes any more.
     if (controllers.get(chapterId) === ctrl) controllers.delete(chapterId);
+    running.delete(chapterId);
     pump();
   }
 }
@@ -199,7 +225,7 @@ async function run(chapterId: string) {
 function pump() {
   if (!downloadsSupported || !hydrated) return;
   for (const id of nextToStart(state, { concurrency: CHAPTERS_AT_ONCE, allowed: !blockReason() })) {
-    if (controllers.has(id)) continue;
+    if (controllers.has(id) || running.has(id)) continue;
     dispatch({ type: 'start', chapterId: id });
     run(id);
   }
