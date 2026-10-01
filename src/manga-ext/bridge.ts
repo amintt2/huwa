@@ -121,7 +121,7 @@ export function onHostMessage(raw: string) {
     return;
   }
   if (m.t === 'pong') {
-    pong?.();
+    [...pongs].forEach((p) => p());
     return;
   }
   if (m.t !== 'from' || typeof m.key !== 'string' || typeof m.msg !== 'string') return;
@@ -181,14 +181,26 @@ function handleFrame(f: Frame, msg: SandboxToHost) {
 
 // ---------- loading and calling sources ----------
 
+class TimeoutError extends Error {}
+
 function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined;
   return Promise.race([
     p,
     new Promise<never>((_, reject) => {
-      timer = setTimeout(() => reject(new Error(label)), ms);
+      timer = setTimeout(() => reject(new TimeoutError(label)), ms);
     }),
   ]).finally(() => clearTimeout(timer));
+}
+
+/**
+ * After a timeout: a source stuck in a loop (while evaluating, in `initialise()` or in a call)
+ * blocks the whole WebView thread, so killing its frame cannot even be delivered. If the host no
+ * longer answers a ping, remount it; otherwise only this frame is dropped.
+ */
+async function recoverFrom(key: string, f: Frame, why: string) {
+  if (!(await hostAlive())) resetHost(why);
+  else if (frames.get(key) === f) killFrame(key);
 }
 
 function evict() {
@@ -218,7 +230,8 @@ async function ensureLoaded(key: string): Promise<Frame> {
     evict();
     return f;
   } catch (e) {
-    if (frames.get(key) === f) killFrame(key);
+    if (e instanceof TimeoutError) await recoverFrom(key, f, 'Source bloquée au chargement, moteur redémarré');
+    else if (frames.get(key) === f) killFrame(key);
     throw e;
   }
 }
@@ -234,27 +247,23 @@ export async function callSource(key: string, op: SourceOp, args: unknown[], tim
   try {
     return await withTimeout(d.promise, timeout, 'La source ne répond pas');
   } catch (e) {
-    if (f.calls.delete(cid) && e instanceof Error && e.message === 'La source ne répond pas') {
-      // A stuck source (e.g. an endless loop) blocks the whole WebView thread: start over.
-      if (!(await hostAlive())) resetHost('Source bloquée, moteur redémarré');
-      else killFrame(key);
-    }
+    if (f.calls.delete(cid) && e instanceof TimeoutError) await recoverFrom(key, f, 'Source bloquée, moteur redémarré');
     throw e;
   }
 }
 
-let pong: (() => void) | null = null;
+const pongs = new Set<() => void>();
 function hostAlive(): Promise<boolean> {
+  if (!inject) return Promise.resolve(false);
   return new Promise((resolve) => {
-    const timer = setTimeout(() => {
-      pong = null;
-      resolve(false);
-    }, 3_000);
-    pong = () => {
+    const done = (alive: boolean) => {
       clearTimeout(timer);
-      pong = null;
-      resolve(true);
+      pongs.delete(onPong);
+      resolve(alive);
     };
+    const onPong = () => done(true);
+    const timer = setTimeout(() => done(false), 3_000);
+    pongs.add(onPong);
     post({ t: 'ping' });
   });
 }
