@@ -25,7 +25,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Txt, type IconName } from '@/components/ui';
 import { C, F, R, S } from '@/theme/tokens';
 
-import { useSkipTimes, type Segment } from './aniskip';
+import { useIntroGuess, useSkipTimes, type Segment } from './aniskip';
 import { EngineView, useEnginePlayer, type EnginePlayer as VideoPlayer } from './engines';
 import { GestureLayer, type Hud } from './GestureLayer';
 import { AUTO_NEXT_SECONDS, NextCard, Pill } from './overlays';
@@ -257,6 +257,7 @@ export function Player({
   // ---------- AniSkip segments ----------
   const { segments, loaded: skipLoaded } = useSkipTimes(malId, episodeNumber, duration);
   const intro = segments.find((s) => s.kind === 'intro');
+  const introGuess = useIntroGuess(malId, episodeNumber, duration, skipLoaded && !intro);
   const outro = segments.find((s) => s.kind === 'outro');
   const segRef = useRef<{ outro?: Segment; countdownFired: boolean }>({ countdownFired: false });
   useEffect(() => {
@@ -394,12 +395,27 @@ export function Player({
     if (intro && inSeg(intro) && !skipped.includes('intro')) return { key: 'intro', label: 'Passer l’intro', to: intro.end };
     if (recap && inSeg(recap) && !skipped.includes('recap')) return { key: 'recap', label: 'Passer le récap', to: recap.end };
     if (outro && inSeg(outro) && !skipped.includes('outro') && outro.end < duration - 3) return { key: 'outro', label: 'Passer le générique', to: outro.end };
-    // Fallback while AniSkip has nothing: +85 s during the first 3 minutes.
-    if (skipLoaded && !intro && !skipped.includes('intro') && t >= 2 && t < INTRO_WINDOW && (duration === 0 || duration > introSkip + 60)) {
-      return { key: 'intro', label: 'Passer l’intro', to: t + introSkip };
+    // No AniSkip data for this episode: the season's other episodes tell where / how long the
+    // opening is. Without an agreed start, the button only says what it does ("Avancer de 1:30"),
+    // since it could land in a recap or a cold open.
+    if (skipLoaded && !intro && !skipped.includes('intro') && t >= 2 && (duration === 0 || duration > introSkip + 60)) {
+      if (introGuess?.start != null) {
+        const g = { kind: 'intro' as const, start: introGuess.start, end: introGuess.start + introGuess.length };
+        if (inSeg(g)) return { key: 'intro', label: 'Passer l’intro', to: g.end };
+      } else if (t < INTRO_WINDOW) {
+        const jump = Math.round(introGuess?.length ?? introSkip);
+        return { key: 'intro', label: `Avancer de ${Math.floor(jump / 60)}:${String(jump % 60).padStart(2, '0')}`, to: t + jump };
+      }
     }
     return null;
   })();
+  // A skip button shows on its own for 5 s, then only with the controls (it stays usable).
+  const skipId = skipBtn ? `${skipBtn.key}:${skipBtn.label}` : '';
+  const [skipSeen, setSkipSeen] = useState<{ id: string; at: number } | null>(null);
+  // New button, or the user seeked back before it first appeared: start the 5 s again
+  // (state adjusted during render, React's "derive from changing input" pattern).
+  if (skipId && (skipSeen?.id !== skipId || t < skipSeen.at - 1)) setSkipSeen({ id: skipId, at: t });
+  const skipVisible = !!skipBtn && (controls || (skipSeen?.id === skipId && t - skipSeen.at < 5));
   const showNext = !!next && !ended && countdown === null && duration > 60 && (outro ? t >= outro.start : duration - t <= NEXT_WINDOW);
   const markers = segments.filter((s) => s.kind !== 'recap');
 
@@ -585,9 +601,9 @@ export function Player({
         </View>
       ) : null}
 
-      {!locked && (skipBtn || showNext) && (
+      {!locked && (skipVisible || showNext) && (
         <View pointerEvents="box-none" style={[styles.pillWrap, { bottom: bottomOffset, right: sideInset }]}>
-          {skipBtn && (
+          {skipVisible && skipBtn && (
             <Pill icon="play-skip-forward" label={skipBtn.label}
               onPress={() => { seekTo(skipBtn.to); setSkipped((s) => [...s, skipBtn.key]); }} />
           )}

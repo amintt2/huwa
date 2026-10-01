@@ -67,3 +67,51 @@ export function useSkipTimes(malId: number | undefined | null, episode: number, 
   }, [key]);
   return { segments: state.key === key ? state.segments : [], loaded: !key || state.key === key };
 }
+
+/**
+ * Opening of the neighbouring episodes (same season, same cut), for episodes AniSkip has no data
+ * for yet (often right after airing). `length` is reliable within a season (same song);
+ * `start` only when the neighbours agree (no cold open shifting it), otherwise null.
+ */
+export type IntroGuess = { length: number; start: number | null };
+
+export function guessIntro(neighbours: Segment[][]): IntroGuess | null {
+  const intros = neighbours.map((segs) => segs.find((s) => s.kind === 'intro')).filter((s): s is Segment => !!s);
+  if (!intros.length) return null;
+  const lengths = intros.map((s) => s.end - s.start).sort((a, b) => a - b);
+  const length = lengths[Math.floor(lengths.length / 2)];
+  const starts = intros.map((s) => s.start);
+  const agree = intros.length >= 2 && Math.max(...starts) - Math.min(...starts) <= 4;
+  return { length, start: agree ? starts.reduce((a, b) => a + b, 0) / starts.length : null };
+}
+
+const NEIGHBOURS = [-1, 1, -2, 2];
+
+/** `guessIntro` over episodes ±1, ±2 (fetched only when this episode has no intro of its own). */
+export function useIntroGuess(malId: number | undefined | null, episode: number, duration: number, enabled: boolean) {
+  const ready = enabled && !!malId && duration > 30;
+  const key = ready ? `${malId}:${episode}:${Math.round(duration / 5)}` : '';
+  const [state, setState] = useState<{ key: string; guess: IntroGuess | null }>({ key: '', guess: null });
+  useEffect(() => {
+    if (!key) return;
+    let alive = true;
+    const eps = NEIGHBOURS.map((d) => episode + d).filter((e) => e >= 1);
+    Promise.all(
+      eps.map((e) => {
+        const k = `${malId}:${e}:${Math.round(duration / 5)}`;
+        let p = cache.get(k);
+        if (!p) {
+          p = fetchSkipTimes(malId!, e, duration);
+          p.catch(() => cache.delete(k));
+          cache.set(k, p);
+        }
+        return p.catch(() => [] as Segment[]);
+      }),
+    ).then((all) => alive && setState({ key, guess: guessIntro(all) }));
+    return () => {
+      alive = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [key]);
+  return state.key === key ? state.guess : null;
+}

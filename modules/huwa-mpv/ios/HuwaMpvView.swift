@@ -64,6 +64,13 @@ public final class HuwaMpvView: ExpoView {
     CATransaction.begin()
     CATransaction.setDisableActions(true)
     metalLayer.frame = bounds
+    // A CAMetalLayer that is a sublayer does not resize its drawable with its frame: without this,
+    // after a rotation mpv keeps rendering at the old (landscape) size and the picture looks zoomed.
+    let scale = metalLayer.contentsScale
+    let size = CGSize(width: bounds.width * scale, height: bounds.height * scale)
+    if size.width > 1 && size.height > 1 && metalLayer.drawableSize != size {
+      metalLayer.drawableSize = size
+    }
     CATransaction.commit()
   }
 
