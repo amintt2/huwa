@@ -45,10 +45,13 @@ export function useUnmetered(): boolean {
 }
 
 const NO_RACE: RaceBudget = { max: 0, concurrency: 0, bytes: 0, timeoutMs: 0 };
-/** Wi-Fi / Ethernet: 6 links × 256 KiB at most (≈1.5 MB per episode), 3 at a time. */
-const RACE_UNMETERED: RaceBudget = { max: 6, concurrency: 3, bytes: 256 * 1024, timeoutMs: 8000 };
-/** Cellular: half the probe size, 3 links, 2 at a time. */
-const RACE_METERED: RaceBudget = { max: 3, concurrency: 2, bytes: 128 * 1024, timeoutMs: 8000 };
+/**
+ * Wi-Fi / Ethernet: every candidate at once (up to 10, ≈1.6 MB per episode). Testing in small
+ * batches let dead links (often 5–8 s to fail) hold the slots, so good ones waited their turn.
+ */
+const RACE_UNMETERED: RaceBudget = { max: 10, concurrency: 10, bytes: 160 * 1024, timeoutMs: 5000 };
+/** Cellular: 4 links, all at once, smaller probes. */
+const RACE_METERED: RaceBudget = { max: 4, concurrency: 4, bytes: 96 * 1024, timeoutMs: 5000 };
 
 /**
  * How much the source race may measure on this connection: nothing when streaming is not
