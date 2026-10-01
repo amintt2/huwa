@@ -60,11 +60,24 @@ export type AddonPrefs = { preferredQuality: Quality | 'auto'; legalAccepted: bo
 
 type State = { addons: InstalledAddon[]; prefs: AddonPrefs };
 let state: State = { addons: [builtin], prefs: { preferredQuality: 1080, legalAccepted: false } };
+let hydrating: Promise<void> | undefined;
+/** The saved list is loaded: writing it now cannot overwrite what the user installed before. */
 let hydrated = false;
+let earlyPrefs: Partial<AddonPrefs> | null = null;
 const listeners = new Set<() => void>();
 const emit = () => listeners.forEach((l) => l());
 
-function commit(next: InstalledAddon[]) {
+/**
+ * Applies a change to the installed list. Before the saved list is loaded (e.g. a `/install`
+ * deep link on a cold start), the change waits for it: applied to the saved list, not to the
+ * defaults, so it never overwrites the user's addons.
+ */
+function commit(update: (addons: InstalledAddon[]) => InstalledAddon[]) {
+  if (!hydrated) {
+    void hydrateAddons().then(() => commit(update));
+    return;
+  }
+  const next = update(state.addons);
   state = { ...state, addons: next };
   emit();
   // The demo entry is stored only as a placeholder (position + enabled); its manifest is rebuilt at load.
@@ -74,7 +87,9 @@ function commit(next: InstalledAddon[]) {
 export function setPrefs(p: Partial<AddonPrefs>) {
   state = { ...state, prefs: { ...state.prefs, ...p } };
   emit();
-  AsyncStorage.setItem(PREFS_KEY, JSON.stringify(state.prefs)).catch(() => {});
+  // Too early: kept and applied over the saved prefs once they are loaded.
+  if (!hydrated) earlyPrefs = { ...earlyPrefs, ...p };
+  else AsyncStorage.setItem(PREFS_KEY, JSON.stringify(state.prefs)).catch(() => {});
 }
 
 const subscribe = (l: () => void) => {
@@ -89,9 +104,20 @@ export function useAddonPrefs() {
   return useSyncExternalStore(subscribe, () => state.prefs, () => state.prefs);
 }
 
-export async function hydrateAddons() {
-  if (hydrated) return;
-  hydrated = true;
+export function hydrateAddons(): Promise<void> {
+  hydrating ??= loadAddons().finally(() => {
+    hydrated = true;
+    if (earlyPrefs) {
+      state = { ...state, prefs: { ...state.prefs, ...earlyPrefs } };
+      earlyPrefs = null;
+      emit();
+      AsyncStorage.setItem(PREFS_KEY, JSON.stringify(state.prefs)).catch(() => {});
+    }
+  });
+  return hydrating;
+}
+
+async function loadAddons() {
   try {
     const [raw, rawPrefs] = await Promise.all([AsyncStorage.getItem(KEY), AsyncStorage.getItem(PREFS_KEY)]);
     let addons = state.addons;
@@ -123,35 +149,39 @@ export async function previewAddon(input: string) {
 export async function installAddon(input: string, preloaded?: Manifest) {
   const baseUrl = normalizeAddonUrl(input);
   const manifest = preloaded ?? (await fetchManifest(baseUrl));
-  const i = state.addons.findIndex((a) => a.manifest.id === manifest.id);
-  if (i >= 0) {
-    const next = [...state.addons];
+  await hydrateAddons();
+  commit((addons) => {
+    const i = addons.findIndex((a) => a.manifest.id === manifest.id);
+    if (i < 0) return [...addons, { baseUrl, manifest, enabled: true }];
+    const next = [...addons];
     next[i] = { ...next[i], baseUrl, manifest };
-    commit(next);
-  } else commit([...state.addons, { baseUrl, manifest, enabled: true }]);
+    return next;
+  });
   return manifest;
 }
 
 /** Re-reads the manifest of an installed addon (new catalogs, version…). */
 export async function refreshAddon(baseUrl: string) {
   const manifest = await fetchManifest(baseUrl);
-  commit(state.addons.map((a) => (a.baseUrl === baseUrl ? { ...a, manifest } : a)));
+  commit((addons) => addons.map((a) => (a.baseUrl === baseUrl ? { ...a, manifest } : a)));
   return manifest;
 }
 
 export const removeAddon = (baseUrl: string) =>
-  commit(state.addons.filter((a) => a.baseUrl !== baseUrl || a.baseUrl === builtin.baseUrl));
+  commit((addons) => addons.filter((a) => a.baseUrl !== baseUrl || a.baseUrl === builtin.baseUrl));
 export const toggleAddon = (baseUrl: string) =>
-  commit(state.addons.map((a) => (a.baseUrl === baseUrl ? { ...a, enabled: !a.enabled } : a)));
+  commit((addons) => addons.map((a) => (a.baseUrl === baseUrl ? { ...a, enabled: !a.enabled } : a)));
 
 /** Moves an addon up (-1) or down (+1) in the priority list. */
 export function moveAddon(baseUrl: string, dir: -1 | 1) {
-  const list = [...state.addons];
-  const i = list.findIndex((a) => a.baseUrl === baseUrl);
-  const j = i + dir;
-  if (i < 0 || j < 0 || j >= list.length) return;
-  [list[i], list[j]] = [list[j], list[i]];
-  commit(list);
+  commit((addons) => {
+    const list = [...addons];
+    const i = list.findIndex((a) => a.baseUrl === baseUrl);
+    const j = i + dir;
+    if (i < 0 || j < 0 || j >= list.length) return addons;
+    [list[i], list[j]] = [list[j], list[i]];
+    return list;
+  });
 }
 
 // ---------- id translation ----------

@@ -17,9 +17,12 @@ const subscribe = (l: () => void) => {
   return () => listeners.delete(l);
 };
 
+// Chosen before the saved value was read: the user's choice wins over the late load.
+let touched = false;
+
 AsyncStorage.getItem(KEY)
   .then((raw) => {
-    if (!demoEngine && (raw === 'auto' || raw === 'native' || raw === 'mpv')) {
+    if (!touched && !demoEngine && (raw === 'auto' || raw === 'native' || raw === 'mpv')) {
       pref = raw;
       emit();
     }
@@ -29,6 +32,7 @@ AsyncStorage.getItem(KEY)
 export const getEnginePref = () => pref;
 
 export function setEnginePref(next: EnginePref) {
+  touched = true;
   pref = next;
   emit();
   AsyncStorage.setItem(KEY, next).catch(() => {});
