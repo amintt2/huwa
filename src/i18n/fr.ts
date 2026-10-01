@@ -30,7 +30,7 @@ export const fr = {
   'error.title': 'Chargement impossible',
   'error.body': 'AniList ne répond pas pour le moment. Réessaie dans un instant.',
   'error.notFound': 'Introuvable',
-  'error.notFoundBody': 'Cette série n’est plus disponible.',
+  'error.notFoundBody': 'Cette page n’existe pas ou plus : le lien est peut-être incomplet ou ancien.',
   'error.home': 'Retour à l’accueil',
 
   // search

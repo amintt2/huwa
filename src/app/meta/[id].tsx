@@ -1,16 +1,40 @@
 // Generic detail page for an addon catalog item that has no AniList page in our catalog.
+import Ionicons from '@expo/vector-icons/Ionicons';
 import { router, useLocalSearchParams, type Href } from 'expo-router';
 import { useEffect, useState } from 'react';
-import { ActivityIndicator, FlatList, View } from 'react-native';
+import { ActivityIndicator, Alert, FlatList, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { fetchMeta, type MetaDetail } from '@/addons/protocol';
 import { getAddonByBase } from '@/addons/registry';
-import { Chip, Cover, IconButton, Txt } from '@/components/ui';
-import type { Palette } from '@/data/catalog';
+import { Button, Chip, Cover, IconButton, Press, Txt } from '@/components/ui';
+import { openMedia } from '@/data/anilist-api';
+import { getSeries, type Palette } from '@/data/catalog';
 import { C, S } from '@/theme/tokens';
 
 const NEUTRAL: Palette = ['#0C111C', '#141B2B', '#2F6BEB'];
+
+/**
+ * Episodes play from Huwa's series pages (sources, progress, comments). An addon item linked to
+ * AniList opens there (fetched and added to the catalog if needed), on the tapped episode when it
+ * exists; otherwise say why it can't be played instead of a row that does nothing.
+ */
+async function openEpisode(anilist: string | undefined, episode: number | undefined) {
+  if (!anilist) {
+    Alert.alert(
+      'Lecture indisponible',
+      'Cette fiche vient de l’addon et n’est reliée à aucune œuvre AniList : Huwa ne peut pas savoir quel épisode chercher. Cherche le titre dans Huwa pour le regarder.',
+    );
+    return;
+  }
+  try {
+    const href = await openMedia(Number(anilist), 'ANIME');
+    const ep = episode != null ? getSeries(`al${anilist}`)?.anime?.episodes.find((e) => e.number === episode) : undefined;
+    router.push(ep ? (`/watch/${ep.id}` as Href) : (href as Href));
+  } catch {
+    Alert.alert('Fiche introuvable', 'AniList ne répond pas ou ne connaît pas cette œuvre. Réessaie plus tard.');
+  }
+}
 
 export default function MetaScreen() {
   const insets = useSafeAreaInsets();
@@ -53,9 +77,7 @@ export default function MetaScreen() {
       {!loading && res.error && <Txt v="small">Fiche indisponible chez cet addon.</Txt>}
       {!!meta?.description && <Txt v="body">{meta.description}</Txt>}
       {!!anilist && (
-        <Txt v="small">
-          Cette œuvre n’est pas dans le catalogue tendance de Huwa ; la fiche complète (pont épisode ↔ chapitre, lecteur) n’est disponible que pour les titres du catalogue.
-        </Txt>
+        <Button variant="soft" icon="open-outline" label="Ouvrir la fiche Huwa" onPress={() => openEpisode(anilist, undefined)} />
       )}
       {videos.length > 0 && <Txt v="section">Épisodes ({videos.length})</Txt>}
     </View>
@@ -73,7 +95,12 @@ export default function MetaScreen() {
         ListHeaderComponent={header}
         contentContainerStyle={{ paddingBottom: S.xxl }}
         renderItem={({ item }) => (
-          <View style={{ flexDirection: 'row', gap: S.md, paddingHorizontal: S.lg, paddingVertical: S.sm, alignItems: 'center' }}>
+          <Press
+            // Later seasons are other AniList entries: open the series page rather than a wrong episode.
+            onPress={() => openEpisode(anilist || undefined, (item.season ?? 1) <= 1 ? (item.episode ?? undefined) : undefined)}
+            accessibilityRole="button"
+            accessibilityLabel={item.episode != null ? `Épisode ${item.episode}` : (item.title ?? item.name ?? item.id)}
+            style={{ flexDirection: 'row', gap: S.md, paddingHorizontal: S.lg, paddingVertical: S.sm, alignItems: 'center' }}>
             {item.thumbnail ? <Cover palette={NEUTRAL} image={item.thumbnail} width={96} height={54} radius={8} /> : null}
             <View style={{ flex: 1, gap: 2 }}>
               <Txt v="label" numberOfLines={1}>
@@ -81,7 +108,8 @@ export default function MetaScreen() {
               </Txt>
               {!!(item.title ?? item.name) && item.episode != null && <Txt v="small" numberOfLines={1}>{item.title ?? item.name}</Txt>}
             </View>
-          </View>
+            <Ionicons name={anilist ? 'play-circle-outline' : 'information-circle-outline'} size={22} color={C.text2} />
+          </Press>
         )}
       />
     </View>

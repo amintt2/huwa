@@ -35,14 +35,20 @@ export function animeReleases(): Release[] {
     return airing.slice(0, 12).map((s) => {
       const { episode, airingAt } = s.nextAiring!;
       const latest = s.anime!.episodes[s.anime!.episodes.length - 1];
-      return {
-        key: `${s.id}-next`,
-        kind: 'anime',
-        series: s,
-        href: latest ? `/watch/${latest.id}` : `/anime/${s.id}`,
-        label: `Épisode ${episode}`,
-        ...airingLabel(airingAt),
-      };
+      const airing = airingLabel(airingAt);
+      // The card plays the latest aired episode: say so, and date the upcoming one separately
+      // (it used to read « Épisode 13 » and open episode 12).
+      return latest
+        ? {
+            key: `${s.id}-next`,
+            kind: 'anime',
+            series: s,
+            href: `/watch/${latest.id}`,
+            label: `Ép. ${latest.number} dispo`,
+            when: `Ép. ${episode} · ${airing.when}`,
+            tag: airing.tag,
+          }
+        : { key: `${s.id}-next`, kind: 'anime', series: s, href: `/anime/${s.id}`, label: `Épisode ${episode}`, ...airing };
     });
   }
   return [...list].sort(byTrend).slice(0, 12).map((s, i) => {

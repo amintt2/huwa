@@ -28,7 +28,7 @@ export const en: Record<Key, string> = {
   'error.title': 'Couldn’t load',
   'error.body': 'AniList isn’t responding right now. Try again in a moment.',
   'error.notFound': 'Not found',
-  'error.notFoundBody': 'This series is no longer available.',
+  'error.notFoundBody': 'This page doesn’t exist (anymore): the link may be incomplete or outdated.',
   'error.home': 'Back to home',
 
   'search.title': 'Search',

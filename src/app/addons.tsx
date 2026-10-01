@@ -55,17 +55,18 @@ export default function Extensions() {
 
       {/* ---------- Vidéo ---------- */}
       <View style={{ gap: S.md }}>
-        <SectionTitle icon="play-circle-outline" title="Vidéo" subtitle="Addons Stremio : flux, sous-titres, catalogues" count={mine.length} action={mine.length ? 'Ajouter' : undefined} onAction={() => openAdd('video')} />
-
-        {!mine.length && (
-          <EmptyCard icon="film-outline" text="Aucun addon vidéo pour l’instant. Ajoute un addon compatible Stremio pour trouver des sources." action="Ajouter un addon" onAction={() => openAdd('video')} />
-        )}
+        {/* The count matches the list below, demo included. */}
+        <SectionTitle icon="play-circle-outline" title="Vidéo" subtitle="Addons Stremio : flux, sous-titres, catalogues" count={addons.length} action={mine.length ? 'Ajouter' : undefined} onAction={() => openAdd('video')} />
 
         <Card>
           {addons.map((a, i) => (
             <AddonRow key={a.baseUrl} a={a} index={i} count={addons.length} reorder={reorder} last={i === addons.length - 1} />
           ))}
         </Card>
+
+        {!mine.length && (
+          <EmptyCard icon="film-outline" text="Seule la démo est installée : elle lit des vidéos de test libres de droits. Ajoute un addon compatible Stremio pour trouver de vrais épisodes." action="Ajouter un addon" onAction={() => openAdd('video')} />
+        )}
         {addons.length > 1 && (
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: S.md, paddingHorizontal: S.xs }}>
             <Txt v="small" style={{ flex: 1, lineHeight: 18 }}>L’ordre fixe la priorité : à qualité égale, les sources du premier passent devant.</Txt>
