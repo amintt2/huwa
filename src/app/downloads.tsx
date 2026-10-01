@@ -1,11 +1,14 @@
-// « Téléchargements » : torrents en cache (moteur natif, PLAN 7c), espace utilisé, réglages.
+// « Téléchargements » : épisodes hors ligne (file, séries → épisodes, espace, réglages,
+// compression intelligente), puis le cache du moteur torrent.
 import { router } from 'expo-router';
 import { useEffect, useState } from 'react';
 import { Alert, ScrollView, StyleSheet, Switch, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
+import { EpisodeDownloads } from '@/components/downloads/downloads-screen';
 import { Button, IconButton, Press, Progress, Txt } from '@/components/ui';
 import { C, F, R, S } from '@/theme/tokens';
+
 import {
   clearCache,
   ensureEngine,
@@ -26,6 +29,31 @@ import {
   type TorrentStatus,
 } from '@/torrent';
 
+export default function Downloads() {
+  const insets = useSafeAreaInsets();
+  return (
+    <ScrollView
+      style={{ flex: 1, backgroundColor: C.bg }}
+      contentContainerStyle={{ paddingTop: insets.top + S.sm, paddingHorizontal: S.lg, gap: S.xl, paddingBottom: S.xxl }}>
+      <View style={{ flexDirection: 'row', alignItems: 'center', gap: S.md }}>
+        <IconButton icon="chevron-back" label="Retour" onPress={() => router.back()} />
+        <Txt v="display" style={{ fontSize: 28 }}>Téléchargements</Txt>
+      </View>
+      <EpisodeDownloads />
+      <Press onPress={() => router.push('/offline')} style={styles.card} accessibilityRole="button">
+        <View style={styles.rowBetween}>
+          <View style={{ flex: 1, gap: 2 }}>
+            <Txt v="label">Chapitres manhwa hors ligne</Txt>
+            <Txt v="small">Les chapitres téléchargés depuis le lecteur.</Txt>
+          </View>
+          <Txt v="label" color={C.text2}>›</Txt>
+        </View>
+      </Press>
+      <TorrentCacheSection />
+    </ScrollView>
+  );
+}
+
 const STATE_LABEL: Record<TorrentStatus['state'], string> = {
   resolving: 'Recherche des métadonnées…',
   initializing: 'Vérification…',
@@ -35,8 +63,8 @@ const STATE_LABEL: Record<TorrentStatus['state'], string> = {
   error: 'Erreur',
 };
 
-export default function Downloads() {
-  const insets = useSafeAreaInsets();
+/** Torrent cache of the on-device engine (PLAN 7c): space used, settings, torrents. */
+function TorrentCacheSection() {
   const available = isAvailable();
   const settings = useTorrentSettings();
   const torrents = useTorrentList();
@@ -74,14 +102,8 @@ export default function Downloads() {
     ]);
 
   return (
-    <ScrollView
-      style={{ flex: 1, backgroundColor: C.bg }}
-      contentContainerStyle={{ paddingTop: insets.top + S.sm, paddingHorizontal: S.lg, gap: S.xl, paddingBottom: S.xxl }}>
-      <View style={{ flexDirection: 'row', alignItems: 'center', gap: S.md }}>
-        <IconButton icon="chevron-back" label="Retour" onPress={() => router.back()} />
-        <Txt v="display" style={{ fontSize: 28 }}>Téléchargements</Txt>
-      </View>
-
+    <View style={{ gap: S.xl }}>
+      <Txt v="section">Cache torrent</Txt>
       {!available ? (
         <View style={styles.card}>
           <Txt v="label">Moteur torrent absent de ce build</Txt>
@@ -117,7 +139,7 @@ export default function Downloads() {
 
           <View style={{ gap: S.sm }}>
             <View style={styles.rowBetween}>
-              <Txt v="section">Espace</Txt>
+              <Txt v="label">Espace du cache</Txt>
               <Txt v="small">{formatBytes(used)} / {formatBytes(settings.quotaBytes)}</Txt>
             </View>
             <Progress value={settings.quotaBytes ? used / settings.quotaBytes : 0} height={6} />
@@ -141,7 +163,7 @@ export default function Downloads() {
           </View>
 
           <View style={{ gap: S.md }}>
-            <Txt v="section">En cache ({torrents.length})</Txt>
+            <Txt v="label">En cache ({torrents.length})</Txt>
             {!!engineError && <Txt v="small" color="#FF6B6B">{engineError}</Txt>}
             {torrents.length === 0 && (
               <Txt v="small">
@@ -161,7 +183,7 @@ export default function Downloads() {
           </Txt>
         </>
       )}
-    </ScrollView>
+    </View>
   );
 }
 

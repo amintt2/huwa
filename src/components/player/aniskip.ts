@@ -3,6 +3,7 @@
 //       &types[]=recap&episodeLength={seconds}
 //   → { found, results: [{ interval: { startTime, endTime }, skipType, episodeLength }] } (404 when none)
 // Passing the real episode length lets the API return the submissions made on the same cut.
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useEffect, useState } from 'react';
 
 export type SegmentKind = 'intro' | 'outro' | 'recap';
@@ -17,7 +18,7 @@ const cache = new Map<string, Promise<Segment[]>>();
 const kindOf = (t: string): SegmentKind | null =>
   t === 'op' || t === 'mixed-op' ? 'intro' : t === 'ed' || t === 'mixed-ed' ? 'outro' : t === 'recap' ? 'recap' : null;
 
-export async function fetchSkipTimes(malId: number, episode: number, duration: number): Promise<Segment[]> {
+async function fetchSkipTimesNet(malId: number, episode: number, duration: number): Promise<Segment[]> {
   const qs = TYPES.map((t) => `types[]=${t}`).join('&');
   const res = await fetch(`${BASE}/${malId}/${episode}?${qs}&episodeLength=${Math.round(duration)}`, {
     headers: { Accept: 'application/json' },
@@ -42,6 +43,23 @@ export async function fetchSkipTimes(malId: number, episode: number, duration: n
     if (!prev || (exact && !prev.exact)) best.set(kind, { seg, exact });
   }
   return [...best.values()].map((b) => b.seg).sort((a, b) => a.start - b.start);
+}
+
+/**
+ * AniSkip answer, kept on disk per episode so downloaded episodes still get their skip buttons
+ * offline (the last answer is used when the network fails).
+ */
+export async function fetchSkipTimes(malId: number, episode: number, duration: number): Promise<Segment[]> {
+  const diskKey = `huwa/aniskip/v1/${malId}:${episode}:${Math.round(duration / 5)}`;
+  try {
+    const segs = await fetchSkipTimesNet(malId, episode, duration);
+    AsyncStorage.setItem(diskKey, JSON.stringify(segs)).catch(() => {});
+    return segs;
+  } catch (e) {
+    const raw = await AsyncStorage.getItem(diskKey).catch(() => null);
+    if (raw) return JSON.parse(raw) as Segment[];
+    throw e;
+  }
 }
 
 /** Segments for the episode once the duration is known; `[]` when AniSkip has nothing. */

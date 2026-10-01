@@ -1,0 +1,7 @@
+{
+  "name": "huwa-hls",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Offline HLS episodes with AVAssetDownloadURLSession (background, .movpkg)",
+  "main": "index.ts"
+}

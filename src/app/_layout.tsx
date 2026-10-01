@@ -11,6 +11,7 @@ import { cloudBackup } from '@/p2p/cloud-backup';
 import { registerNativeTorrentEngine } from '@/torrent/register';
 import { Onboarding } from '@/components/onboarding';
 import { PresearchHost } from '@/components/presearch';
+import { DownloadsHost } from '@/downloads/host';
 import { OfflineBanner } from '@/components/states';
 import { loadCatalog } from '@/data/anilist';
 import { installMappingOverlay } from '@/data/mapping-overlay';
@@ -136,6 +137,7 @@ export default function RootLayout() {
           <Stack.Screen name="discover" />
           <Stack.Screen name="meta/[id]" />
           <Stack.Screen name="downloads" />
+          <Stack.Screen name="browse" />
           <Stack.Screen name="offline" />
           <Stack.Screen name="source-section" />
           <Stack.Screen name="search" />
@@ -156,6 +158,7 @@ export default function RootLayout() {
       <OfflineBanner />
       <PaperbackHost />
       {me ? <PresearchHost /> : null}
+      {me ? <DownloadsHost /> : null}
     </ThemeProvider>
   );
 }
