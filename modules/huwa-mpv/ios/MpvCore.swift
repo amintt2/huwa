@@ -69,6 +69,9 @@ final class MpvCore {
       // Subtitles: ASS drawn by libass with its own styling; selection is driven from JS.
       ("sub-ass", "yes"),
       ("embeddedfonts", "yes"),
+      // Zoom to fill (panscan): keep subtitles on the visible screen, not on the cropped edges.
+      ("sub-use-margins", "yes"),
+      ("sub-ass-force-margins", "yes"),
       ("sid", "no"),
       ("input-default-bindings", "no"),
       ("input-vo-keyboard", "no"),

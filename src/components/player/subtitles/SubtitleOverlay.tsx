@@ -206,6 +206,11 @@ export type SubtitleOverlayProps = {
   offset?: number;
   /** Video width / height (defaults to 16:9). */
   aspect?: number;
+  /**
+   * Picture zoomed to fill the screen (cropped): lay subtitles out on the visible screen, not on
+   * the whole picture whose edges are off-screen.
+   */
+  fill?: boolean;
   /** Space to keep free at the bottom / top (player controls visible). */
   reserveBottom?: number;
   reserveTop?: number;
@@ -217,7 +222,7 @@ export type SubtitleOverlayProps = {
 
 const COL = ['flex-start', 'center', 'flex-end'] as const;
 
-export function SubtitleOverlay({ doc, time, playing, rate = 1, offset = 0, aspect, reserveBottom = 0, reserveTop = 0, insets = NO_INSETS, prefs: prefsProp }: SubtitleOverlayProps) {
+export function SubtitleOverlay({ doc, time, playing, rate = 1, offset = 0, aspect, fill = false, reserveBottom = 0, reserveTop = 0, insets = NO_INSETS, prefs: prefsProp }: SubtitleOverlayProps) {
   const saved = useSubtitlePrefs();
   const prefs = prefsProp ?? saved;
   const [size, setSize] = useState({ w: 0, h: 0 });
@@ -233,7 +238,7 @@ export function SubtitleOverlay({ doc, time, playing, rate = 1, offset = 0, aspe
 
   if (!doc || !visible.length || !size.w) return <View pointerEvents="none" style={StyleSheet.absoluteFill} onLayout={onLayout} />;
 
-  const video = videoRect(size.w, size.h, aspect);
+  const video = fill ? { x: 0, y: 0, width: size.w, height: size.h } : videoRect(size.w, size.h, aspect);
   const blocks = visible.map((e) => renderEvent(e, doc, { prefs, video, t }, Platform.OS));
   const band = bandColor(prefs);
 
