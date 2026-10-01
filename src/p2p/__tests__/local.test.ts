@@ -170,3 +170,36 @@ test('pairing: loopback invite adds a device, garbage is rejected, revocation', 
   await p.revokeDevice(other.key);
   assert.equal((await p.backupState()).devices, 1);
 });
+
+test('mapping corrections: one active proposal per field, validated, paced, demo peers', async (t) => {
+  const p = createLocalP2P();
+  await assert.rejects(p.proposeMapping({ room: 'm1', season: 'al1', field: 'end', to: 30 }), /identité/);
+  const { profile } = await p.createIdentity('lectrice');
+  t.mock.timers.enable({ apis: ['Date'], now: 1_900_000_000_000 });
+  try {
+    await p.proposeMapping({ room: 'm1', season: 'al1', field: 'end', to: 30 });
+    await assert.rejects(p.proposeMapping({ room: 'm1', season: 'al1', field: 'end', to: 31 }), /Patiente/);
+    t.mock.timers.tick(5000);
+    await p.proposeMapping({ room: 'm1', season: 'al1', field: 'end', to: 31 });
+    t.mock.timers.tick(5000);
+    await p.proposeMapping({ room: 'm1', season: 'al1', field: 'ep', ep: 2, from: 3, to: 5 });
+    t.mock.timers.tick(5000);
+    await assert.rejects(p.proposeMapping({ room: 'm1', season: 'al1', field: 'ep', ep: 2, from: 3, to: 30 }), /invalide/);
+    await assert.rejects(p.proposeMapping({ room: 'm 1', season: 'al1', field: 'end', to: 3 }), /invalide/);
+  } finally {
+    t.mock.timers.reset();
+  }
+  const all = await first<import('../contract').MappingProposal[]>((cb) => p.watchMapping('m1', cb));
+  assert.deepEqual(
+    all.map((x) => [x.field, x.ep, x.from, x.to, x.author === profile.key]),
+    [['end', undefined, undefined, 31, true], ['ep', 2, 3, 5, true]],
+  );
+  // Survives a restart.
+  await new Promise((r) => setTimeout(r, 400)); // debounced save
+  const again = createLocalP2P();
+  assert.equal((await first<import('../contract').MappingProposal[]>((cb) => again.watchMapping('m1', cb))).length, 2);
+  // Demo peers back the demo season 2.
+  const demo = await first<import('../contract').MappingProposal[]>((cb) => p.watchMapping('void', cb));
+  assert.equal(demo.filter((x) => x.season === 'void2' && x.to === 88).length, 2);
+  assert.ok(demo.every((x) => x.author === demoKey('mira.reads') || x.author === demoKey('kaito_92')));
+});

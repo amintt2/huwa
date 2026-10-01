@@ -29,13 +29,14 @@ import type {
   DirectMessage,
   JournalEntry,
   Label,
+  MappingProposal,
   P2P,
   P2PComment,
   P2PStatus,
   Profile,
   PublicKey,
 } from './contract';
-import { DEMO_WELCOME, demoComments, demoJournal, demoKeyOf, demoLabels, demoProfile, demoReply, isDemoKey } from './demo';
+import { DEMO_WELCOME, demoComments, demoJournal, demoKeyOf, demoLabels, demoMapping, demoProfile, demoReply, isDemoKey } from './demo';
 import { randomBytes, secure } from './secure';
 
 const DB_KEY = 'huwa/p2p/local/v1';
@@ -46,6 +47,9 @@ const K_DEVICE = 'huwa.device.seed';
 
 const MAX_COMMENT = 2000;
 const MAX_DM = 4000;
+/** Same bounds as the worklet's mapping rooms (src/p2p/worklet/schema.js). */
+const MAP_LIMITS = { chapter: 20000, episode: 2000, perEpisode: 12, minIntervalMs: 3000 };
+const MAP_ID = /^[A-Za-z0-9_.-]{1,64}$/;
 
 type StoredComment = Omit<P2PComment, 'likedByMe'> & { pow?: PowProof; sig?: string };
 type SignedEntry = { e: JournalEntry; prev: string; hash: string; sig: string };
@@ -66,11 +70,13 @@ type DB = {
   peerNames: Record<string, string>;
   journal: SignedEntry[];
   migrated: boolean;
+  /** My episode ↔ chapter corrections, per manhwa room. */
+  mapping: Record<string, (MappingProposal & { sig?: string })[]>;
 };
 
 const empty = (): DB => ({
   v: 1, devices: [], phraseVerified: false, invites: [], comments: {}, likes: {}, labels: [], follows: [],
-  subscriptions: [], dms: {}, reads: {}, peerNames: {}, journal: [], migrated: false,
+  subscriptions: [], dms: {}, reads: {}, peerNames: {}, journal: [], migrated: false, mapping: {},
 });
 
 const hex = (n: number) => bytesToHex(randomBytes(n));
@@ -94,6 +100,7 @@ export function createLocalP2P(): P2P {
   const labelL = new Set<(l: Label[]) => void>();
   const convL = new Set<(c: Conversation[]) => void>();
   const msgL = new Map<string, Set<(m: DirectMessage[]) => void>>();
+  const mapL = new Map<string, Set<(all: MappingProposal[]) => void>>();
 
   let saveTimer: ReturnType<typeof setTimeout> | undefined;
   const persist = () => AsyncStorage.setItem(DB_KEY, JSON.stringify(db)).catch(() => {});
@@ -145,6 +152,15 @@ export function createLocalP2P(): P2P {
     if (!set?.size) return;
     const all = commentsOf(seriesId);
     set.forEach((cb) => cb(all));
+  };
+
+  const mappingOf = (room: string): MappingProposal[] => [
+    ...demoMapping(room),
+    ...(db.mapping[room] ?? []).map(({ sig: _s, ...p }) => p),
+  ];
+  const emitMapping = (room: string) => {
+    const all = mappingOf(room);
+    mapL.get(room)?.forEach((cb) => cb(all));
   };
 
   const labelsView = () => [...db.labels, ...db.subscriptions.flatMap(demoLabels)];
@@ -599,6 +615,42 @@ export function createLocalP2P(): P2P {
       await ready;
       if (!key || key === db.profile?.key) return db.journal.map((x) => x.e);
       return demoJournal(key);
+    },
+
+    // ---------- episode ↔ chapter corrections ----------
+
+    watchMapping(room, cb) {
+      const off = watch(mapL, room, cb);
+      ready.then(() => {
+        if (mapL.get(room)?.has(cb)) cb(mappingOf(room));
+      });
+      return off;
+    },
+
+    async proposeMapping(p) {
+      await ready;
+      const { profile, secret: sk } = requireMe();
+      const count = (v: unknown, max: number) => Number.isInteger(v) && (v as number) >= 1 && (v as number) <= max;
+      const ok =
+        MAP_ID.test(p.room) &&
+        MAP_ID.test(p.season) &&
+        count(p.to, MAP_LIMITS.chapter) &&
+        (p.field === 'end' ||
+          (p.field === 'ep' && count(p.ep, MAP_LIMITS.episode) && count(p.from, MAP_LIMITS.chapter) && p.from <= p.to && p.to - p.from < MAP_LIMITS.perEpisode));
+      if (!ok) throw new Error('Correction invalide.');
+      const list = db.mapping[p.room] ?? [];
+      const last = list.reduce((t, x) => Math.max(t, x.ts), 0);
+      const now = Date.now();
+      if (now - last < MAP_LIMITS.minIntervalMs) throw new Error('Patiente quelques secondes avant une nouvelle correction.');
+      const prop: MappingProposal =
+        p.field === 'end'
+          ? { season: p.season, field: 'end', to: p.to, author: profile.key, ts: now }
+          : { season: p.season, field: 'ep', ep: p.ep, from: p.from, to: p.to, author: profile.key, ts: now };
+      // One active proposal per field: the new one replaces mine.
+      const same = (x: MappingProposal) => x.season === prop.season && x.field === prop.field && x.ep === prop.ep;
+      db.mapping[p.room] = [...list.filter((x) => !same(x)), { ...prop, sig: sign(hashHex(JSON.stringify(prop)), sk) }];
+      save();
+      emitMapping(p.room);
     },
 
     // Single device, no network: nothing to compare with.

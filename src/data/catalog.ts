@@ -15,6 +15,11 @@ export type Episode = {
   /** Manhwa chapters adapted by this episode (inclusive). This powers the bridge. */
   chapters: readonly [number, number];
   videoUrl: string;
+  /**
+   * The range is approximate (spread between known season bounds). Undefined: same as the
+   * series (`Series.estimated`).
+   */
+  estimated?: boolean;
 };
 
 export type Chapter = {
@@ -52,6 +57,29 @@ export type Series = {
   trendRank?: number;
   /** Episode ↔ chapter mapping is an estimate (no public source has exact data). */
   estimated?: boolean;
+  /** AniList id of the manhwa paired with this series (the corrections room is keyed by it). */
+  manhwaId?: number;
+  /** The manhwa's chapter count is real (AniList count or a linked source), not a placeholder. */
+  chaptersKnown?: boolean;
+  /** Where the bridge numbers come from, filled by data/mapping-overlay.ts. */
+  mapping?: MappingInfo;
+};
+
+export type MappingInfo = {
+  source: 'estimate' | 'source' | 'verified';
+  /** 0 = first season of the franchise. */
+  season: number;
+  /** Chapters covered by the previous seasons, and the last chapter this season adapts. */
+  after: number;
+  end: number;
+  /** `after` only comes from exact or verified numbers. */
+  afterReliable: boolean;
+  /** Episodes of the previous seasons. */
+  priorEpisodes: number;
+  /** Chapter count of the manhwa when it is real (not a placeholder list). */
+  knownTotal?: number;
+  /** P2P room where corrections for this manhwa are published. */
+  room: string;
 };
 
 // Placeholder streams: Blender Foundation open movies (CC-BY) and Apple's HLS test stream.
@@ -208,16 +236,35 @@ const chapterOverlays = new Map<string, Chapter[]>();
 
 function withOverlay(s: Series): Series {
   const chapters = chapterOverlays.get(s.id);
-  return chapters ? { ...s, manhwa: { chapters } } : s;
+  return chapters ? { ...s, manhwa: { chapters }, chaptersKnown: true } : s;
 }
+
+/**
+ * Last step of every lookup (see data/mapping-overlay.ts: franchise-wide chapter ranges and
+ * community corrections). `base` resolves other series before the transform.
+ */
+export type SeriesTransform = (s: Series, base: (id: string) => Series | undefined) => Series;
+let transform: SeriesTransform | null = null;
 
 let currentView: Series[] = current;
 
 function rebuildIndex() {
-  currentView = chapterOverlays.size ? current.map(withOverlay) : current;
-  byId = new Map([...extras.values(), ...current].map((s) => [s.id, withOverlay(s)]));
+  const base = new Map([...extras.values(), ...current].map((s) => [s.id, withOverlay(s)]));
+  const view = (s: Series) => (transform ? transform(s, (id) => base.get(id)) : s);
+  byId = new Map([...base].map(([id, s]) => [id, view(s)]));
+  currentView = current.map((s) => byId.get(s.id) ?? s);
   version++;
   listeners.forEach((l) => l());
+}
+
+export function setSeriesTransform(fn: SeriesTransform | null) {
+  transform = fn;
+  rebuildIndex();
+}
+
+/** Recompute every series (the inputs of the transform changed). */
+export function refreshCatalog() {
+  rebuildIndex();
 }
 
 export function setChapterOverlay(seriesId: string, chapters: Chapter[] | undefined) {

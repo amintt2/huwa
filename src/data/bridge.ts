@@ -1,10 +1,17 @@
 // Anime ↔ manhwa mapping: the heart of the "continue in the other format" feature.
+// Ranges are franchise-aware (a season starts after its prequels) and community-corrected:
+// see data/mapping-overlay.ts, which rewrites them before any screen reads a series.
 import type { Chapter, Episode, Series } from './catalog';
 
 /** Last manhwa chapter covered by the anime (0 when there is no anime). */
 export function animeEndChapter(s: Series) {
   const eps = s.anime?.episodes;
   return eps?.length ? eps[eps.length - 1].chapters[1] : 0;
+}
+
+/** First manhwa chapter adapted by this season (1 for a first season). */
+export function animeStartChapter(s: Series) {
+  return s.anime?.episodes[0]?.chapters[0] ?? 1;
 }
 
 /** Episode that adapts a given chapter, if any. */
@@ -43,3 +50,6 @@ export function resumeEpisode(s: Series, watched: Watched): Episode | undefined 
 
 /** Prefix for chapter numbers that are estimated rather than sourced. */
 export const approx = (s: Series) => (s.estimated ? '≈ ' : '');
+
+/** Same for one episode: a verified season end still leaves its episodes spread evenly. */
+export const approxEp = (s: Series, e: Episode) => ((e.estimated ?? s.estimated) ? '≈ ' : '');
