@@ -56,14 +56,18 @@ function serve(stream, createNode, { log = () => {} } = {}) {
   }
   const node = createNode(sendEvent)
   const started = Date.now()
+  // A failed start stays a rejection: `hello` (and every call) fails with it, so the app side
+  // does not count the boot as successful and SwitchingP2P falls back to the local backend.
   const ready = node.ready().then(
     () => log('ready in', Date.now() - started, 'ms'),
     (err) => {
       node.state = 'error'
       log('ready failed', err && err.stack)
       sendEvent({ ev: 'status', data: { state: 'error', peers: 0, error: String(err && err.message) } })
+      throw err
     }
   )
+  ready.catch(() => {})
   const watches = new Map()
 
   async function call(m, a) {
