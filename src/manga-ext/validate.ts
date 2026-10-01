@@ -38,7 +38,7 @@ export type ExtChapter = {
   raw?: Record<string, unknown>;
 };
 
-export type ExtSearchItem = { mangaId: string; title: string; subtitle?: string; image?: string };
+export type ExtSearchItem = { mangaId: string; title: string; subtitle?: string; image?: string; /** Home "latest updates" rows. */ chapterId?: string };
 export type ExtSearchPage = { items: ExtSearchItem[]; next?: unknown };
 export type ExtPages = { pages: string[] };
 
@@ -208,24 +208,99 @@ export function normalizePages(format: PaperbackFormat, raw: unknown): ExtPages 
   return { pages };
 }
 
+/** One manga card (search result, home section item). `null` when unusable. */
+function normalizeItem(r: unknown): ExtSearchItem | null {
+  if (!isObj(r)) return null;
+  const mangaId = id(r.mangaId ?? r.id);
+  const titleRaw = isObj(r.title) ? r.title.text : r.title;
+  const title = text(titleRaw, 200);
+  if (!mangaId || !title) return null;
+  const subRaw = r.subtitle ?? (isObj(r.subtitleText) ? r.subtitleText.text : undefined) ?? r.supertitle;
+  const item: ExtSearchItem = { mangaId, title: decodeEntities(title), subtitle: text(subRaw, 120) || undefined, image: httpUrl(r.imageUrl ?? r.image) };
+  const chapterId = id(r.chapterId);
+  if (chapterId) item.chapterId = chapterId;
+  return item;
+}
+
+function normalizeItems(list: unknown[]): ExtSearchItem[] {
+  const items: ExtSearchItem[] = [];
+  const seen = new Set<string>();
+  for (const r of list.slice(0, 200)) {
+    const item = normalizeItem(r);
+    if (!item || seen.has(item.mangaId)) continue;
+    seen.add(item.mangaId);
+    items.push(item);
+  }
+  return items;
+}
+
+const nextOf = (metadata: unknown) => (metadata == null ? undefined : boundedJson({ m: metadata }, 16 * 1024)?.m);
+
 export function normalizeSearch(format: PaperbackFormat, raw: unknown): ExtSearchPage {
   if (!isObj(raw)) throw new Error('Résultats invalides');
   const list = format === '0.9' ? raw.items : (raw.results ?? raw.items);
   if (!Array.isArray(list)) throw new Error('Résultats invalides');
-  const items: ExtSearchItem[] = [];
+  return { items: normalizeItems(list), next: nextOf(raw.metadata) };
+}
+
+// ---------- home sections (discover) ----------
+
+export type DiscoverKind = 'featured' | 'carousel' | 'large' | 'updates' | 'genres';
+
+export type ExtSection = {
+  id: string;
+  title: string;
+  subtitle?: string;
+  kind: DiscoverKind;
+  /** 0.8: first items come with the section. 0.9: fetched with `discoverItems`. */
+  items?: ExtSearchItem[];
+  /** "Voir tout" is possible (0.8 `containsMoreItems`; always true on 0.9). */
+  more: boolean;
+  /** 0.9: the section handed back to `getDiscoverSectionItems` (bounded JSON). */
+  raw?: Record<string, unknown>;
+};
+
+const KIND_09: Record<string, DiscoverKind> = {
+  '0': 'featured', featured: 'featured',
+  '1': 'carousel', simpleCarousel: 'carousel', simple_carousel: 'carousel',
+  '2': 'large', prominentCarousel: 'large', prominent_carousel: 'large',
+  '3': 'updates', chapterUpdates: 'updates', chapter_updates: 'updates',
+  '4': 'genres', genres: 'genres',
+};
+const KIND_08: Record<string, DiscoverKind> = { featured: 'featured', singleRowNormal: 'carousel', singleRowLarge: 'large', doubleRow: 'carousel' };
+
+export function normalizeSections(format: PaperbackFormat, raw: unknown): ExtSection[] {
+  const list = isObj(raw) ? raw.sections : raw;
+  if (!Array.isArray(list)) throw new Error('Sections invalides');
+  const out: ExtSection[] = [];
   const seen = new Set<string>();
-  for (const r of list.slice(0, 200)) {
-    if (!isObj(r)) continue;
-    const mangaId = id(r.mangaId ?? r.id);
-    const titleRaw = isObj(r.title) ? r.title.text : r.title;
-    const title = text(titleRaw, 200);
-    if (!mangaId || !title || seen.has(mangaId)) continue;
-    seen.add(mangaId);
-    const subRaw = r.subtitle ?? (isObj(r.subtitleText) ? r.subtitleText.text : undefined);
-    items.push({ mangaId, title: decodeEntities(title), subtitle: text(subRaw, 120) || undefined, image: httpUrl(r.imageUrl ?? r.image) });
+  for (const s of list.slice(0, 40)) {
+    if (!isObj(s)) continue;
+    const sid = id(s.id);
+    const title = decodeEntities(text(s.title, 120));
+    if (!sid || !title || seen.has(sid)) continue;
+    seen.add(sid);
+    const kind = (format === '0.9' ? KIND_09 : KIND_08)[text(s.type, 40)] ?? 'carousel';
+    const section: ExtSection = { id: sid, title, subtitle: text(s.subtitle, 160) || undefined, kind, more: true };
+    if (format === '0.9') {
+      const { items: _drop, ...rest } = s;
+      const sectionRaw = boundedJson(rest, 8 * 1024);
+      if (!sectionRaw) continue;
+      section.raw = sectionRaw;
+    } else {
+      section.items = Array.isArray(s.items) ? normalizeItems(s.items) : [];
+      section.more = s.containsMoreItems === true;
+    }
+    out.push(section);
   }
-  const next = raw.metadata == null ? undefined : boundedJson({ m: raw.metadata }, 16 * 1024)?.m;
-  return { items, next };
+  return out;
+}
+
+export function normalizeSectionItems(format: PaperbackFormat, raw: unknown): ExtSearchPage {
+  if (!isObj(raw)) throw new Error('Section invalide');
+  const list = format === '0.9' ? (raw.items ?? raw.results) : (raw.results ?? raw.items);
+  if (!Array.isArray(list)) throw new Error('Section invalide');
+  return { items: normalizeItems(list), next: nextOf(raw.metadata) };
 }
 
 export function normalizeImageHeaders(raw: unknown): Record<string, string> | undefined {

@@ -15,13 +15,14 @@ import {
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { cancelDownload, downloadChapter, downloadsSupported, useDownload } from '@/components/reader/downloads';
+import { autoDownloadAfter, downloadChapter, downloadsSupported, pauseDownload, resumeDownload, useDownload } from '@/components/reader/downloads';
 import { prefetchChapterStart, prefetchPages, usePages } from '@/components/reader/pages';
-import { getPosition, readerReady, savePosition, setReaderMode, useReaderMode } from '@/components/reader/position';
+import { getAspects, getPosition, readerReady, saveAspects, savePosition, setReaderMode, useReaderMode } from '@/components/reader/position';
 import { ZoomLayer } from '@/components/reader/ZoomLayer';
 import { Button, Press, Progress, Txt } from '@/components/ui';
 import { animeEndChapter, episodeForChapter } from '@/data/bridge';
 import { chapterLabel, getChapter, PAGE_ASPECT } from '@/data/catalog';
+import { isDemo } from '@/demo/flags';
 import { useThread } from '@/store/derived';
 import { getState, saveChapterProgress } from '@/store/store';
 import { C, R, S } from '@/theme/tokens';
@@ -36,6 +37,12 @@ export default function Read() {
       <Reader key={id} id={id} />
     </GestureHandlerRootView>
   );
+}
+
+function flushPosition(id: string, p: { page: number; offset: number; ratio: number } | null) {
+  if (!p) return;
+  savePosition(id, { page: p.page, offset: p.offset });
+  saveChapterProgress(id, p.ratio);
 }
 
 /** Index of the last offset <= y. */
@@ -70,6 +77,17 @@ function Reader({ id }: { id: string }) {
   const count = useThread(`ch:${id}`).length;
 
   const [aspects, setAspects] = useState<Record<string, number>>({});
+  // Page ratios measured on a previous visit (by index), so resuming lands on the right page.
+  const [seed, setSeed] = useState<{ ready: boolean; aspects?: number[] }>({ ready: false });
+  useEffect(() => {
+    let alive = true;
+    readerReady.then(() => alive && setSeed({ ready: true, aspects: getAspects(id) }));
+    return () => {
+      alive = false;
+    };
+  }, [id]);
+  /** Last position seen, saved when leaving (the scroll handler only saves every 600 ms). */
+  const lastPos = useRef<{ page: number; offset: number; ratio: number } | null>(null);
   const [page, setPage] = useState(0);
   const [bars, setBars] = useState(true);
   const [zoomed, setZoomed] = useState(false);
@@ -84,7 +102,11 @@ function Reader({ id }: { id: string }) {
 
   // Layout of the vertical strip: real image ratios once known, the catalog ratio before.
   const { heights, offsets, total } = useMemo(() => {
-    const h = pages.map((u) => width / (aspects[u] ?? PAGE_ASPECT));
+    const seeded = seed.aspects?.length === pages.length ? seed.aspects : undefined;
+    const h = pages.map((u, i) => {
+      const known = seeded?.[i];
+      return width / (aspects[u] ?? (known && known > 0 ? known : PAGE_ASPECT));
+    });
     const o: number[] = [];
     let acc = 0;
     for (const x of h) {
@@ -92,16 +114,16 @@ function Reader({ id }: { id: string }) {
       acc += x;
     }
     return { heights: h, offsets: o, total: acc };
-  }, [pages, aspects, width]);
+  }, [pages, aspects, width, seed]);
 
   const headerSig = JSON.stringify(headers ?? {});
   const imageSource = (uri: string) => (headers && /^https?:/i.test(uri) ? { uri, headers } : { uri });
 
   // ---------- resume at the exact page ----------
   useEffect(() => {
-    if (!pages.length || restored.current) return;
+    if (!pages.length || restored.current || !seed.ready) return;
     let alive = true;
-    readerReady.then(() => {
+    Promise.resolve().then(() => {
       if (!alive || restored.current) return;
       restored.current = true;
       let pos = getPosition(id);
@@ -122,7 +144,7 @@ function Reader({ id }: { id: string }) {
     };
     // Layout values are read once, at restore time.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pages.length, id]);
+  }, [pages.length, id, seed.ready]);
 
   // ---------- preload the next pages / next chapter ----------
   useEffect(() => {
@@ -134,7 +156,15 @@ function Reader({ id }: { id: string }) {
     }
   }, [page, pages, headerSig, next]);
 
+  const flush = () => flushPosition(id, lastPos.current);
+  // Leaving the reader (Back, swipe, another chapter): keep the very last position.
+  useEffect(() => {
+    const pos = lastPos;
+    return () => flushPosition(id, pos.current);
+  }, [id]);
+
   const record = (p: number, offset: number, ratio: number) => {
+    lastPos.current = { page: p, offset, ratio };
     if (p !== page) setPage(p);
     if (Date.now() - lastSave.current < 600) return;
     lastSave.current = Date.now();
@@ -188,6 +218,19 @@ function Reader({ id }: { id: string }) {
     const r = w / h;
     if (Math.abs((aspects[uri] ?? PAGE_ASPECT) - r) > 0.01) setAspects((a) => ({ ...a, [uri]: r }));
   };
+  // Remember the measured ratios for the next visit.
+  useEffect(() => {
+    if (!pages.length || !Object.keys(aspects).length) return;
+    const t = setTimeout(() => {
+      const prev = getAspects(id);
+      saveAspects(id, pages.map((u, i) => aspects[u] ?? (prev?.length === pages.length ? prev[i] : 0) ?? 0));
+    }, 1000);
+    return () => clearTimeout(t);
+  }, [aspects, pages, id]);
+  const goChapter = (target: string) => {
+    flush();
+    router.replace(`/read/${target}`);
+  };
 
   const footer = (
     <View style={[styles.footer, paged ? { width, height, justifyContent: 'center', paddingTop: insets.top + 60 } : { minHeight: height * 0.8, paddingBottom: insets.bottom + 140 }]}>
@@ -212,18 +255,34 @@ function Reader({ id }: { id: string }) {
     </View>
   );
 
-  const dlIcon = !download ? 'arrow-down-circle-outline' : download.status === 'done' ? 'checkmark-circle' : download.status === 'error' ? 'alert-circle-outline' : null;
+  // Opt-in: fetch the next chapters in the background (Wi-Fi only) — real source pages only.
+  useEffect(() => {
+    if (origin === 'addon' || (isDemo && origin === 'placeholder' && !loading)) autoDownloadAfter(id);
+  }, [id, origin, loading]);
+
+  const dlIcon = !download
+    ? 'arrow-down-circle-outline'
+    : download.status === 'done'
+      ? 'checkmark-circle'
+      : download.status === 'error'
+        ? 'alert-circle-outline'
+        : download.status === 'paused'
+          ? 'pause-circle-outline'
+          : null;
   const dlLabel = !download
     ? 'Télécharger le chapitre'
     : download.status === 'done'
       ? 'Chapitre téléchargé, gérer les téléchargements'
       : download.status === 'error'
         ? 'Échec du téléchargement, réessayer'
-        : `Téléchargement ${download.saved}/${download.total}, annuler`;
+        : download.status === 'paused'
+          ? 'Téléchargement en pause, reprendre'
+          : `Téléchargement ${download.saved}/${download.total}, mettre en pause`;
   const onDownload = () => {
-    if (!download || download.status === 'error') downloadChapter(id, series.id);
+    if (!download) downloadChapter(id, series.id);
+    else if (download.status === 'error' || download.status === 'paused') resumeDownload(id);
     else if (download.status === 'done') router.push('/offline');
-    else cancelDownload(id);
+    else pauseDownload(id);
   };
 
   const shownProgress = pages.length ? (page + 1) / pages.length : 0;
@@ -344,10 +403,10 @@ function Reader({ id }: { id: string }) {
             </View>
             <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
               <Button small variant="soft" label={prev ? `Ch. ${prev.number}` : 'Début'} icon="chevron-back"
-                onPress={() => prev && router.replace(`/read/${prev.id}`)} />
+                onPress={() => prev && goChapter(prev.id)} />
               <Button small variant="soft" icon="chatbubble-outline" label={`${count}`} onPress={openComments} />
               {next ? (
-                <Button small label={`Ch. ${next.number}`} icon="chevron-forward" iconRight onPress={() => router.replace(`/read/${next.id}`)} />
+                <Button small label={`Ch. ${next.number}`} icon="chevron-forward" iconRight onPress={() => goChapter(next.id)} />
               ) : (
                 <View style={{ width: 80 }} />
               )}

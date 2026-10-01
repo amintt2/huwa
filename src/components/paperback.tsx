@@ -4,13 +4,15 @@ import Ionicons from '@expo/vector-icons/Ionicons';
 import { Image } from 'expo-image';
 import { router, type Href } from 'expo-router';
 import { useEffect, useState } from 'react';
-import { ActivityIndicator, Alert, ScrollView, StyleSheet, View } from 'react-native';
+import { ActivityIndicator, Alert, Pressable, ScrollView, StyleSheet, TextInput, View } from 'react-native';
 
 import { Button, Cover, Press, Txt } from '@/components/ui';
 import { palette } from '@/data/anilist';
 import type { Series } from '@/data/catalog';
 import { useSourceSearch, type SourceResults } from '@/manga-ext/hooks';
-import { openSourceManga, refreshLinked, setLinkLang, unlink, useSourceLink } from '@/manga-ext/link';
+import { autoLink, linkManually, rejectLink, useAutoLink } from '@/manga-ext/autolink';
+import { openSourceManga, refreshLinked, setLinkLang, useSourceLink } from '@/manga-ext/link';
+import type { RankedCandidate } from '@/manga-ext/match';
 import { getInstalled, useMangaExt, type InstalledSource } from '@/manga-ext/registry';
 import type { ExtSearchItem } from '@/manga-ext/validate';
 import { C, F, R, S } from '@/theme/tokens';
@@ -37,6 +39,24 @@ const langLabel = (l: string) => (l === 'unknown' ? '?' : l.toUpperCase());
 async function openResult(source: InstalledSource, item: ExtSearchItem, seriesId?: string) {
   const id = await openSourceManga(source.key, item.mangaId, { seriesId });
   router.push(`/manhwa/${id}` as Href);
+}
+
+/** Opening a source title takes a few seconds (details, AniList match, chapters): one at a time, with a busy tile. */
+export function useOpenSourceItem() {
+  const [opening, setOpening] = useState<string | null>(null);
+  const open = async (sourceKey: string, item: Pick<ExtSearchItem, 'mangaId' | 'title'>) => {
+    if (opening) return;
+    setOpening(`${sourceKey}|${item.mangaId}`);
+    try {
+      const id = await openSourceManga(sourceKey, item.mangaId);
+      router.push(`/manhwa/${id}` as Href);
+    } catch (e) {
+      Alert.alert(item.title, e instanceof Error ? e.message : 'Impossible d’ouvrir ce titre');
+    } finally {
+      setOpening(null);
+    }
+  };
+  return { open, isOpening: (sourceKey: string, mangaId: string) => opening === `${sourceKey}|${mangaId}` };
 }
 
 function ResultCard({ source, item, width, busy, onPress, headers }: { source: InstalledSource; item: ExtSearchItem; width: number; busy: boolean; onPress: () => void; headers?: Record<string, string> }) {
@@ -97,14 +117,16 @@ export function SourceResultsRail({ query, cardWidth }: { query: string; cardWid
   );
 }
 
-/** Source panel of a manhwa page: linked source (refresh, language, unlink) or "find in my sources". */
+/** Source panel of a manhwa page: linked source (refresh, language, change, unlink) or automatic search. */
 export function SourcePanel({ series }: { series: Series }) {
   const link = useSourceLink(series.id);
   const { installed } = useMangaExt();
+  const auto = useAutoLink(series.id);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
-  const [searching, setSearching] = useState(false);
+  const [picking, setPicking] = useState(false);
   const source = link ? getInstalled(link.key) : undefined;
+  const hasSources = installed.some((s) => s.enabled);
 
   const refresh = async () => {
     if (busy || !link) return;
@@ -128,15 +150,32 @@ export function SourcePanel({ series }: { series: Series }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [series.id, updatedAt]);
 
+  // Not linked yet: look for the series in the installed sources.
+  const linked = !!link;
+  useEffect(() => {
+    if (linked || !hasSources) return;
+    const t = setTimeout(() => autoLink(series.id).catch(() => {}), 300);
+    return () => clearTimeout(t);
+  }, [series.id, linked, hasSources]);
+
+  if (picking) {
+    return (
+      <View style={styles.panel}>
+        <LinkPicker series={series} candidates={auto.match?.candidates ?? []} current={link ? `${link.key}|${link.mangaId}` : undefined} onClose={() => setPicking(false)} />
+      </View>
+    );
+  }
+
   if (link) {
+    const count = series.manhwa?.chapters.length ?? 0;
     return (
       <View style={styles.panel}>
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: S.md }}>
           <SourceIcon source={source} size={34} />
           <View style={{ flex: 1, gap: 2 }}>
-            <Txt v="label" numberOfLines={1}>{source?.name ?? 'Source supprimée'}</Txt>
+            <Txt v="label" numberOfLines={1}>{source ? `Lié à ${source.name}` : 'Source supprimée'}</Txt>
             <Txt v="small" numberOfLines={1} style={{ fontSize: 12 }}>
-              {series.manhwa?.chapters.length ?? 0} chapitres · {langLabel(link.lang)}
+              {count} ch. · {langLabel(link.lang)}
               {link.title !== series.title ? ` · « ${link.title} »` : ''}
             </Txt>
           </View>
@@ -149,14 +188,14 @@ export function SourcePanel({ series }: { series: Series }) {
           )}
           <Press
             onPress={() =>
-              Alert.alert('Délier la source ?', 'Les chapitres de la source ne seront plus affichés sur cette page.', [
+              Alert.alert('Délier la source ?', 'Les chapitres de la source ne seront plus affichés sur cette page, et ce titre ne sera plus proposé automatiquement.', [
                 { text: 'Annuler', style: 'cancel' },
-                { text: 'Délier', style: 'destructive', onPress: () => unlink(series.id) },
+                { text: 'Délier', style: 'destructive', onPress: () => rejectLink(series.id) },
               ])
             }
             style={styles.round}
             accessibilityLabel="Délier la source">
-            <Ionicons name="link-outline" size={18} color={C.text} />
+            <Ionicons name="unlink-outline" size={18} color={C.text} />
           </Press>
         </View>
         {link.langs.length > 1 && (
@@ -172,12 +211,15 @@ export function SourcePanel({ series }: { series: Series }) {
             })}
           </ScrollView>
         )}
+        <Pressable onPress={() => setPicking(true)} hitSlop={8} accessibilityRole="button" style={{ alignSelf: 'flex-start', minHeight: 28, justifyContent: 'center' }}>
+          <Txt v="small" color={C.accentText} style={{ fontSize: 12, ...F.semibold }}>Ce n’est pas le bon ?</Txt>
+        </Pressable>
         {!!error && <Txt v="small" color="#FF8A8A" style={{ fontSize: 12 }}>{error}</Txt>}
       </View>
     );
   }
 
-  if (!installed.some((s) => s.enabled)) {
+  if (!hasSources) {
     return (
       <Press onPress={() => router.push('/manga-sources' as Href)} style={[styles.panel, { flexDirection: 'row', alignItems: 'center', gap: S.md }]}
         accessibilityRole="button" accessibilityLabel="Ajouter des extensions manhwa">
@@ -191,31 +233,57 @@ export function SourcePanel({ series }: { series: Series }) {
     );
   }
 
+  const searching = auto.status === 'searching';
+  const proposals = (auto.match?.candidates ?? []).filter((c) => !auto.match?.rejected.includes(`${c.sourceKey}|${c.mangaId}`));
   return (
-    <View style={styles.panel}>
-      {!searching ? (
-        <Button small variant="soft" icon="search" label="Trouver dans mes sources" onPress={() => setSearching(true)} />
-      ) : (
-        <LinkPicker series={series} onClose={() => setSearching(false)} />
-      )}
+    <View style={[styles.panel, { flexDirection: 'row', alignItems: 'center', gap: S.md }]}>
+      {searching ? <ActivityIndicator color={C.text2} /> : <Ionicons name="search" size={18} color={C.text2} />}
+      <View style={{ flex: 1, gap: 2 }}>
+        <Txt v="label" style={{ fontSize: 14 }}>{searching ? 'Recherche dans tes sources…' : 'Pas encore lié à une source'}</Txt>
+        {!searching && (
+          <Txt v="small" style={{ fontSize: 12 }}>
+            {proposals.length ? `${proposals.length} titre${proposals.length > 1 ? 's' : ''} proche${proposals.length > 1 ? 's' : ''} trouvé${proposals.length > 1 ? 's' : ''}` : 'Aucune correspondance sûre'}
+          </Txt>
+        )}
+      </View>
+      {!searching && <Button small variant="soft" label="Choisir" onPress={() => setPicking(true)} />}
     </View>
   );
 }
 
-function LinkPicker({ series, onClose }: { series: Series; onClose: () => void }) {
-  const rows = useSourceSearch(series.title, true, 0);
+/** Pick the right title: ranked candidates first, then a live search in every source. */
+function LinkPicker({ series, candidates, current, onClose }: { series: Series; candidates: RankedCandidate[]; current?: string; onClose: () => void }) {
+  const [query, setQuery] = useState(series.title);
+  const rows = useSourceSearch(query, true, 400);
   const [opening, setOpening] = useState<string | null>(null);
-  const pick = async (r: SourceResults, item: ExtSearchItem) => {
+  const pick = async (sourceKey: string, item: { mangaId: string; title: string }) => {
     if (opening) return;
-    setOpening(`${r.source.key}|${item.mangaId}`);
+    setOpening(`${sourceKey}|${item.mangaId}`);
     try {
-      await openSourceManga(r.source.key, item.mangaId, { seriesId: series.id });
+      await linkManually(series.id, { sourceKey, mangaId: item.mangaId });
       onClose();
     } catch (e) {
       Alert.alert(item.title, e instanceof Error ? e.message : 'Impossible de lier ce titre');
     } finally {
       setOpening(null);
     }
+  };
+  const row = (sourceKey: string, item: { mangaId: string; title: string; subtitle?: string; image?: string }, headers?: Record<string, string>, score?: number) => {
+    const id = `${sourceKey}|${item.mangaId}`;
+    const busy = opening === id;
+    const isCurrent = id === current;
+    return (
+      <Press key={id} onPress={() => !isCurrent && pick(sourceKey, item)} style={styles.pickRow} accessibilityRole="button" accessibilityLabel={`Lier ${item.title}`}>
+        <Cover palette={PLACEHOLDER} image={item.image} imageHeaders={headers} width={40} height={56} radius={8} />
+        <View style={{ flex: 1, gap: 2 }}>
+          <Txt v="label" numberOfLines={2} style={{ fontSize: 14 }}>{item.title}</Txt>
+          <Txt v="small" numberOfLines={1} style={{ fontSize: 12 }}>
+            {[getInstalled(sourceKey)?.name, item.subtitle, score !== undefined ? `${Math.round(score * 100)} %` : ''].filter(Boolean).join(' · ')}
+          </Txt>
+        </View>
+        {busy ? <ActivityIndicator color={C.text2} /> : isCurrent ? <Ionicons name="checkmark-circle" size={18} color={C.success} /> : <Ionicons name="link" size={16} color={C.accentText} />}
+      </Press>
+    );
   };
   return (
     <View style={{ gap: S.md }}>
@@ -225,6 +293,21 @@ function LinkPicker({ series, onClose }: { series: Series; onClose: () => void }
           <Ionicons name="close" size={18} color={C.text2} />
         </Press>
       </View>
+      {candidates.length > 0 && (
+        <View style={{ gap: S.sm }}>
+          <Txt v="small" style={{ ...F.semibold, fontSize: 13 }}>Meilleures correspondances</Txt>
+          {candidates.slice(0, 5).map((c) => row(c.sourceKey, c, undefined, c.score))}
+        </View>
+      )}
+      <TextInput
+        value={query}
+        onChangeText={setQuery}
+        placeholder="Rechercher un autre titre"
+        placeholderTextColor={C.text2}
+        style={styles.input}
+        autoCorrect={false}
+        accessibilityLabel="Rechercher dans mes sources"
+      />
       {rows.map((r) => (
         <View key={r.source.key} style={{ gap: S.sm }}>
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: S.sm }}>
@@ -234,19 +317,7 @@ function LinkPicker({ series, onClose }: { series: Series; onClose: () => void }
           </View>
           {r.state === 'error' && <Txt v="small" style={{ fontSize: 12 }}>{r.error}</Txt>}
           {r.state === 'ok' && !r.items.length && <Txt v="small" style={{ fontSize: 12 }}>Aucun résultat</Txt>}
-          {r.items.slice(0, 5).map((item) => {
-            const busy = opening === `${r.source.key}|${item.mangaId}`;
-            return (
-              <Press key={item.mangaId} onPress={() => pick(r, item)} style={styles.pickRow} accessibilityRole="button" accessibilityLabel={`Lier ${item.title}`}>
-                <Cover palette={PLACEHOLDER} image={item.image} imageHeaders={r.imageHeaders} width={40} height={56} radius={8} />
-                <View style={{ flex: 1, gap: 2 }}>
-                  <Txt v="label" numberOfLines={2} style={{ fontSize: 14 }}>{item.title}</Txt>
-                  {!!item.subtitle && <Txt v="small" numberOfLines={1} style={{ fontSize: 12 }}>{item.subtitle}</Txt>}
-                </View>
-                {busy ? <ActivityIndicator color={C.text2} /> : <Ionicons name="link" size={16} color={C.accentText} />}
-              </Press>
-            );
-          })}
+          {r.items.slice(0, 5).map((item) => row(r.source.key, item, r.imageHeaders))}
         </View>
       ))}
     </View>
@@ -260,4 +331,8 @@ const styles = StyleSheet.create({
   round: { width: 36, height: 36, borderRadius: 18, backgroundColor: C.elevated, alignItems: 'center', justifyContent: 'center' },
   lang: { minHeight: 30, minWidth: 44, paddingHorizontal: S.md, alignItems: 'center', justifyContent: 'center', borderRadius: R.control, borderWidth: 1, borderColor: C.border, backgroundColor: C.elevated },
   pickRow: { flexDirection: 'row', alignItems: 'center', gap: S.md, paddingVertical: 4 },
+  input: {
+    minHeight: 40, paddingHorizontal: S.md, borderRadius: R.control, borderCurve: 'continuous', backgroundColor: C.elevated,
+    borderWidth: 1, borderColor: C.border, color: C.text, ...F.regular, fontSize: 14,
+  },
 });
