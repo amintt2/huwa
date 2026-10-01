@@ -62,6 +62,17 @@ export function webPlayerUrl(s: StreamItem, probed?: Record<string, MediaGuess>)
   return null;
 }
 
+/**
+ * Hosted player auto mode may open without asking: a `url` that turned out to be a page, or an
+ * `externalUrl` shaped like an embed player. Other external links (a project page, a donation
+ * link…) are only listed, never auto-played.
+ */
+export function autoWebPlayerUrl(s: StreamItem, probed?: Record<string, MediaGuess>): string | null {
+  const u = webPlayerUrl(s, probed);
+  if (!u) return null;
+  return isHttp(s.url) || EMBED_PATH.test(pathOf(u)) ? u : null;
+}
+
 /** `url` whose nature is not settled by its shape (needs `probeUrl`). */
 export const needsProbe = (s: StreamItem) =>
   isHttp(s.url) && guessFromUrl(s.url, s.behaviorHints?.filename) === 'unknown' && !s.behaviorHints?.videoSize && !s.behaviorHints?.videoHash;

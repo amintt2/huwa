@@ -147,6 +147,14 @@ export async function ensureLegalAccepted(): Promise<boolean> {
   });
 }
 
+/** Turns the built-in engine on from anywhere (sources menu, player), after the one-time notice. */
+export async function enableTorrentEngine(): Promise<boolean> {
+  if (!isAvailable()) return false;
+  if (!(await ensureLegalAccepted())) return false;
+  setTorrentSettings({ enabled: true });
+  return true;
+}
+
 export type TorrentStreamLike = {
   infoHash?: string;
   fileIdx?: number | null;

@@ -12,6 +12,7 @@ import {
   fetchManifest,
   fetchStreams,
   fetchSubtitles,
+  isInfoStream,
   type Manifest,
   type ManifestCatalog,
   type MetaPreview,
@@ -159,9 +160,11 @@ export type AddonRequest = { type: string; id: string };
 /**
  * Picks the id format and type an addon accepts for this episode, in this order:
  * anilist:, kitsu:, mal:, tt (IMDb `tt…:season:episode`). Addons without idPrefixes get IMDb
- * first (the Stremio default), then kitsu. Returns null when nothing matches.
+ * first (the Stremio default), then kitsu. Every accepted format, best first (`requestFor`: the
+ * first one, or null). Aggregators like AIOStreams accept all of them but only find videos for
+ * IMDb ids, hence the fallback in `useAggregate`.
  */
-export function requestFor(m: Manifest, resource: Resource, seriesId: string, episode: number, ids: AnimeIds | null): AddonRequest | null {
+export function requestsFor(m: Manifest, resource: Resource, seriesId: string, episode: number, ids: AnimeIds | null): AddonRequest[] {
   const al = anilistNumber(seriesId);
   const movie = ids?.media === 'MOVIE';
   const ep = (base: string) => (movie ? base : `${base}:${episode}`);
@@ -174,8 +177,16 @@ export function requestFor(m: Manifest, resource: Resource, seriesId: string, ep
   if (prefixesFor(m, resource).length) cands.push(...[anilistId, kitsu, mal, imdb].filter((x): x is string => !!x));
   else cands.push(...[imdb, kitsu, anilistId].filter((x): x is string => !!x));
   const types = movie ? ['movie', 'anime'] : ['series', 'anime'];
-  for (const id of cands) for (const type of types) if (supports(m, resource, type, id)) return { type, id };
-  return null;
+  const out: AddonRequest[] = [];
+  for (const id of cands) {
+    const type = types.find((t) => supports(m, resource, t, id));
+    if (type) out.push({ type, id });
+  }
+  return out;
+}
+
+export function requestFor(m: Manifest, resource: Resource, seriesId: string, episode: number, ids: AnimeIds | null): AddonRequest | null {
+  return requestsFor(m, resource, seriesId, episode, ids)[0] ?? null;
 }
 
 // ---------- aggregation hook ----------
@@ -201,6 +212,8 @@ function useAggregate<T>(
   episode: number,
   load: (a: InstalledAddon, req: AddonRequest) => Promise<T[]>,
   enabled = true,
+  /** An answer with none of these tries the addon's next id format. */
+  useful?: (item: T) => boolean,
 ) {
   const list = useAddons();
   const ids = useAnimeIds(seriesId);
@@ -208,8 +221,11 @@ function useAggregate<T>(
   const jobs = idsReady && enabled
     ? list
         .filter((a) => a.enabled)
-        .map((a) => ({ a, req: a.baseUrl === builtin.baseUrl ? { type: 'series', id: videoId(seriesId, episode) } : requestFor(a.manifest, resource, seriesId, episode, ids ?? null) }))
-        .filter((j): j is { a: InstalledAddon; req: AddonRequest } => !!j.req && (j.a.baseUrl !== builtin.baseUrl || resource === 'stream'))
+        .map((a) => {
+          const reqs = a.baseUrl === builtin.baseUrl ? [{ type: 'series', id: videoId(seriesId, episode) }] : requestsFor(a.manifest, resource, seriesId, episode, ids ?? null);
+          return { a, req: reqs[0], reqs };
+        })
+        .filter((j): j is { a: InstalledAddon; req: AddonRequest; reqs: AddonRequest[] } => !!j.req && (j.a.baseUrl !== builtin.baseUrl || resource === 'stream'))
     : [];
   const key = `${resource}|${seriesId}|${episode}|${idsReady}|${jobs.map((j) => `${j.a.baseUrl}>${j.req.type}/${j.req.id}`).join('|')}`;
   // Results are tagged with the request key, so stale answers are ignored without resetting state in an effect.
@@ -227,8 +243,21 @@ function useAggregate<T>(
         aggCache.set(key, { agg: next as Agg<unknown>, at: Date.now() });
         return next;
       });
-    for (const { a, req } of jobs) {
-      load(a, req)
+    // Next id format when an addon has nothing usable for the first one (see `requestsFor`).
+    const loadWithFallback = async (a: InstalledAddon, reqs: AddonRequest[]): Promise<T[]> => {
+      let first: T[] | undefined;
+      for (const req of reqs) {
+        const items = await load(a, req).catch((e) => {
+          if (first === undefined && req === reqs[reqs.length - 1]) throw e;
+          return [] as T[];
+        });
+        first ??= items;
+        if (!useful || items.some(useful)) return items;
+      }
+      return first ?? [];
+    };
+    for (const { a, reqs } of jobs) {
+      loadWithFallback(a, reqs)
         .then((items) => {
           if (!cancelled) update((base) => ({ ...base, items: [...base.items, ...items], done: base.done + 1 }));
         })
@@ -251,8 +280,11 @@ export function useStreams(seriesId: string, episode: number, enabled = true) {
   const r = useAggregate<AddonStream>('stream', seriesId, episode, async (a, req) => {
     const items: StreamItem[] = a.baseUrl === builtin.baseUrl ? DEMO_STREAMS : await fetchStreams(a.baseUrl, req.type, req.id);
     return items.map((s) => ({ ...s, addonId: a.manifest.id, addonName: a.manifest.name }));
-  }, enabled);
-  return { streams: r.items, pending: r.pending, failed: r.failed };
+  }, enabled, (s) => !isInfoStream(s) && !!(s.url || s.infoHash || s.ytId));
+  // Status rows (scrape summaries, errors, donation banners) are kept apart for the "Infos" section.
+  const streams = r.items.filter((s) => !isInfoStream(s));
+  const infos = r.items.filter(isInfoStream);
+  return { streams, infos, pending: r.pending, failed: r.failed };
 }
 
 export type Subtitle = { url: string; lang: string; addonName: string; id?: string };

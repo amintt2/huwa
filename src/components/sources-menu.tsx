@@ -7,7 +7,9 @@ import { detectLangs } from '@/addons/audio';
 import { isTorrent, type AddonStream } from '@/addons/protocol';
 import { detectQuality, QUALITIES, streamKey, type Quality } from '@/addons/quality';
 import { qualityLabel, type useSource } from '@/addons/use-source';
+import { enableTorrentEngine, isAvailable as torrentEngineAvailable } from '@/torrent';
 import { hostOf } from '@/addons/web-player';
+import { AddonInfos } from '@/components/addon-infos';
 import { EngineBadge } from '@/components/player/engines';
 import { Button, Chip, IconButton, InfoPill, Press, Txt } from '@/components/ui';
 import { YouTubePlayer } from '@/components/youtube-player';
@@ -49,9 +51,18 @@ export function SourcesMenu({ src, visible, onClose }: { src: Source; visible: b
   const { ranked, auto, pending, failed, resolverLabel, currentKey } = src;
   const [yt, setYt] = useState<{ id: string; title?: string } | null>(null);
 
-  const choose = (s: AddonStream) => {
+  const engineOff = !resolverLabel && torrentEngineAvailable();
+  const choose = async (s: AddonStream) => {
     const st = src.stateOf(s);
     if (st === 'needs-debrid') {
+      if (engineOff) {
+        // The engine registers itself synchronously as a resolver once enabled.
+        if (await enableTorrentEngine()) {
+          src.pick(s);
+          onClose();
+        }
+        return;
+      }
       onClose();
       router.push('/debrid' as Href);
     } else if (st === 'youtube') setYt({ id: s.ytId!, title: s.title ?? s.name });
@@ -95,9 +106,16 @@ export function SourcesMenu({ src, visible, onClose }: { src: Source; visible: b
           {pending > 0 && <Txt v="small">Recherche en cours… ({pending} addon{pending > 1 ? 's' : ''})</Txt>}
           {pending === 0 && ranked.length === 0 && <Txt v="small">Aucune source. Active ou installe un addon dans Profil → Extensions.</Txt>}
           {failed.length > 0 && <Txt v="small">Injoignable : {failed.join(', ')}</Txt>}
+          <AddonInfos infos={src.infos} />
           {!resolverLabel && ranked.some(isTorrent) && (
-            <Button small variant="soft" icon="flash-outline" label="Lire les torrents via un service débrid"
-              onPress={() => { onClose(); router.push('/debrid' as Href); }} />
+            <View style={{ gap: S.sm }}>
+              {engineOff && (
+                <Button small icon="flash-outline" label="Lire les torrents avec le moteur intégré"
+                  onPress={() => { enableTorrentEngine().catch(() => {}); }} />
+              )}
+              <Button small variant="soft" icon="cloud-outline" label={engineOff ? 'Ou via un service débrid (plus rapide)' : 'Lire les torrents via un service débrid'}
+                onPress={() => { onClose(); router.push('/debrid' as Href); }} />
+            </View>
           )}
         </ScrollView>
       </View>
@@ -114,14 +132,14 @@ function SourceRow({ s, src, active, onPress }: { s: AddonStream; src: Source; a
   const detail = [
     s.addonName,
     web && hostOf(web),
-    torrent && (src.resolverLabel ? `torrent via ${src.resolverLabel}` : 'torrent · service débrid requis'),
+    torrent && (src.resolverLabel ? `torrent via ${src.resolverLabel}` : torrentEngineAvailable() ? 'torrent · touche pour activer le moteur intégré' : 'torrent · service débrid requis'),
     cached === true && 'en cache',
     cached === false && 'pas en cache',
     st === 'youtube' && 'YouTube',
     st === 'external' && 'ouvre le navigateur',
     st === 'failed' && `échec${src.errorOf(s) ? ` : ${src.errorOf(s)}` : ''}`,
   ].filter(Boolean).join(' · ');
-  const dim = st === 'failed' || st === 'unusable' || st === 'needs-debrid';
+  const dim = st === 'failed' || st === 'unusable' || (st === 'needs-debrid' && !torrentEngineAvailable());
   const langLabel = detectLangs(s).label;
   return (
     <Press onPress={onPress} disabled={st === 'unusable'} style={[styles.row, active && styles.active, dim && { opacity: 0.5 }]}>

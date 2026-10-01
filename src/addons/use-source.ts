@@ -14,7 +14,7 @@ import { langScore } from './audio';
 import { isExternal, isPlayable, isTorrent, isYouTube, type AddonStream } from './protocol';
 import { detectQuality, rankStreams, streamKey, type Quality } from './quality';
 import { useAddonPrefs, useAddons, useStreams } from './registry';
-import { hostOf, needsProbe, useProbedUrls, webPlayerUrl } from './web-player';
+import { autoWebPlayerUrl, hostOf, needsProbe, useProbedUrls, webPlayerUrl } from './web-player';
 
 type Resolution = { url?: string; via?: string; error?: string };
 
@@ -27,7 +27,7 @@ const NO_SUBS: NonNullable<AddonStream['subtitles']> = [];
 
 /** `enabled: false` = idle (used to prefetch the next episode only once armed). */
 export function useSource(seriesId: string, episode: number, { enabled = true }: { enabled?: boolean } = {}) {
-  const { streams, pending, failed } = useStreams(seriesId, episode, enabled);
+  const { streams, infos, pending, failed } = useStreams(seriesId, episode, enabled);
   const prefs = useAddonPrefs();
   const { watchMode, subLangs, dubLangs } = useSettings();
   const langPrefs = useMemo(() => ({ watchMode, subLangs, dubLangs }), [watchMode, subLangs, dubLangs]);
@@ -68,13 +68,20 @@ export function useSource(seriesId: string, episode: number, { enabled = true }:
     const pref = prefs.preferredQuality;
     // Language fit first (VF / VOSTFR… per the user's preferences), then quality.
     const score = (s: AddonStream) => {
-      const q = detectQuality(s) ?? 0;
+      let q = detectQuality(s) ?? 0;
+      // Uncached torrent played by the on-device engine: speed depends on peers, not resolution.
+      // 1080p is enough on a phone; the seeder count (Torrentio "👤 N") breaks ties.
+      if (isTorrent(s) && cachedOf(s) !== true) {
+        const seeds = Number(/👤\s*(\d+)/.exec(`${s.title ?? ''} ${s.description ?? ''}`)?.[1] ?? 0);
+        q = Math.min(q, 1080) + Math.min(seeds, 500) / 1000;
+        if (seeds && seeds < 3) q -= 400;
+      }
       return -langScore(s, langPrefs) * 10_000 + (pref !== 'auto' && q > pref ? pref - (q - pref) / 10 : q);
     };
     const ok = (s: AddonStream) => !bad.includes(streamKey(s)) && !probing(s);
     const candidates = ranked.filter((s) => usable(s) && ok(s));
     // Only hosted players: the best of them (quality, then addon priority).
-    const web = candidates.length ? [] : ranked.filter((s) => !!webOf(s) && ok(s));
+    const web = candidates.length ? [] : ranked.filter((s) => !!autoWebPlayerUrl(s, probed) && ok(s));
     const pool = candidates.some(safe) ? candidates.filter(safe) : candidates.length ? candidates : web;
     const binge = lastBinge.get(seriesId);
     const same = binge ? pool.find((s) => s.behaviorHints?.bingeGroup === binge) : undefined;
@@ -150,6 +157,8 @@ export function useSource(seriesId: string, episode: number, { enabled = true }:
     auto: !manual,
     pending,
     failed,
+    /** Addon status rows (not videos), see `infoKind`. */
+    infos,
     resolverLabel,
     cachedOf,
     errorOf: (s: AddonStream) => resolved[streamKey(s)]?.error,

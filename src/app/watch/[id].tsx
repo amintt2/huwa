@@ -5,6 +5,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { useAnimeIds } from '@/addons/ids';
 import { useSubtitles } from '@/addons/registry';
+import { isTorrent } from '@/addons/protocol';
 import { qualityLabel, useSource } from '@/addons/use-source';
 import { EpisodeBridgeStrip } from '@/components/bridge';
 import { CommentsPanel } from '@/components/comments';
@@ -205,7 +206,13 @@ function WatchScreen({ id }: { id: string }) {
             malId={ids?.mal}
             episodeNumber={episode.number}
             notice={notice}
-            emptyText={src.pending > 0 ? 'Recherche de sources…' : 'Aucune source lisible. Ouvre le menu des sources.'}
+            emptyText={
+              src.pending > 0
+                ? 'Recherche de sources…'
+                : !src.resolverLabel && src.ranked.some(isTorrent)
+                  ? 'Ces sources sont des torrents. Ouvre le menu des sources pour les lire avec le moteur intégré ou un service débrid.'
+                  : 'Aucune source lisible. Ouvre le menu des sources.'
+            }
             startAt={startAt}
             onProgress={onProgress}
             onEnd={() => markEpisodeDone(id)}

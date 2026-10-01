@@ -284,6 +284,28 @@ export const catalogSupports = (c: ManifestCatalog, name: 'search' | 'genre' | '
 export const catalogGenres = (c: ManifestCatalog) =>
   c.extra?.find((e) => e.name === 'genre')?.options ?? (catalogSupports(c, 'genre') ? c.genres ?? [] : []);
 
+export type InfoKind = 'error' | 'warning' | 'statistic' | 'promo';
+
+const PROMO = /(donat|support|patreon|ko-fi|kofi|buymeacoffee|sponsor)/i;
+
+/**
+ * Rows that are not videos, shown apart in the sources menu ("Infos"): status rows some
+ * aggregators append (AIOStreams `streamData.type` "statistic" / "error": scrape summaries,
+ * removal reasons, "no debrid service"…) and support/donation banners. null = a real source.
+ */
+export function infoKind(s: StreamItem): InfoKind | null {
+  const t = (s as { streamData?: { type?: string } }).streamData?.type;
+  const name = s.name ?? '';
+  if (t === 'error' || /^\s*(❌|🔴|\[❌\])/u.test(name)) return 'error';
+  if (t === 'statistic') return /^\s*(🟠|🟡|⚠️)/u.test(name) ? 'warning' : 'statistic';
+  if (!s.url && !s.infoHash && !s.ytId && s.externalUrl) {
+    const text = `${name} ${s.title ?? ''} ${s.description ?? ''} ${s.behaviorHints?.filename ?? ''} ${s.externalUrl}`;
+    if (PROMO.test(text)) return 'promo';
+  }
+  return null;
+}
+export const isInfoStream = (s: StreamItem) => infoKind(s) !== null;
+
 export const isPlayable = (s: StreamItem) => !!s.url && /^https?:\/\//i.test(s.url);
 export const isTorrent = (s: StreamItem) => !s.url && !!s.infoHash;
 export const isYouTube = (s: StreamItem) => !s.url && !s.infoHash && !!s.ytId;
