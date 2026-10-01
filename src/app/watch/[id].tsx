@@ -14,7 +14,7 @@ import { qualityLabel, useSource } from '@/addons/use-source';
 import { EpisodeBridgeStrip } from '@/components/bridge';
 import { CommentsPanel } from '@/components/comments';
 import { DownloadSheet, statusLine, type PlayingSource } from '@/components/downloads/episode-download';
-import { useOfflineEpisode, useDownloadItem } from '@/downloads';
+import { hlsAvailable, useOfflineEpisode, useDownloadItem } from '@/downloads';
 import { downloadability, pickForDownload, pickSubtitles } from '@/downloads/pick';
 import { getDebrid } from '@/debrid/store';
 import { Player, type ExternalSubtitle, type PlayerHandle } from '@/components/player/Player';
@@ -173,7 +173,7 @@ function WatchScreen({ id }: { id: string }) {
   // What "Télécharger" would take from this screen: the source playing now.
   const playingForDownload: PlayingSource | null = (() => {
     if (!src.current) return null;
-    const ctx = { debrid: !!getDebrid(), engine: torrentEngineLinked() && getTorrentSettings().enabled };
+    const ctx = { debrid: !!getDebrid(), engine: torrentEngineLinked() && getTorrentSettings().enabled, hls: hlsAvailable() };
     const d = downloadability(src.current, ctx);
     return {
       stream: src.current,

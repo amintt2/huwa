@@ -16,6 +16,8 @@ export type DlContext = {
   /** The on-device torrent engine is linked and switched on (whole file through its HTTP server). */
   engine: boolean;
   probed?: Record<string, MediaGuess>;
+  /** HLS offline download exists here (native module, real device). Default true. */
+  hls?: boolean;
 };
 
 export type Downloadability = { ok: true; kind: DlKind } | { ok: false; reason: string };
@@ -25,12 +27,17 @@ export const REASONS = {
   youtube: 'YouTube : lecture en ligne uniquement.',
   external: 'Lien externe : s’ouvre hors de Huwa.',
   torrent: 'Torrent : configure un service débrid ou active le moteur torrent pour le télécharger.',
+  hls: 'HLS : le téléchargement hors ligne demande un iPhone (pas le simulateur) et la dernière version de l’app.',
   none: 'Aucune source téléchargeable pour cet épisode.',
 } as const;
 
 export function downloadability(s: AddonStream, ctx: DlContext): Downloadability {
   if (webPlayerUrl(s, ctx.probed)) return { ok: false, reason: REASONS.web };
-  if (isPlayable(s)) return { ok: true, kind: containerFromUrl(s.url!) === 'hls' ? 'hls' : 'file' };
+  if (isPlayable(s)) {
+    const hls = containerFromUrl(s.url!) === 'hls';
+    if (hls && ctx.hls === false) return { ok: false, reason: REASONS.hls };
+    return { ok: true, kind: hls ? 'hls' : 'file' };
+  }
   if (isTorrent(s)) {
     // Debrid turns it into a plain HTTPS file; the engine serves it over loopback HTTP.
     if (ctx.debrid) return { ok: true, kind: 'file' };
@@ -76,7 +83,7 @@ export function pickForDownload(ranked: AddonStream[], quality: DlQuality, ctx: 
 /** Why nothing can be downloaded (the most telling reason among the listed streams). */
 export function whyNotDownloadable(ranked: AddonStream[], ctx: DlContext): string {
   const reasons = ranked.map((s) => downloadability(s, ctx)).filter((d): d is { ok: false; reason: string } => !d.ok).map((d) => d.reason);
-  for (const r of [REASONS.torrent, REASONS.web, REASONS.youtube, REASONS.external]) if (reasons.includes(r)) return r;
+  for (const r of [REASONS.torrent, REASONS.hls, REASONS.web, REASONS.youtube, REASONS.external]) if (reasons.includes(r)) return r;
   return REASONS.none;
 }
 

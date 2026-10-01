@@ -21,6 +21,9 @@ const tor = st('1080p torrent', { infoHash: 'ABC', fileIdx: 1 });
 test('downloadability per kind of stream', () => {
   assert.deepEqual(downloadability(f1080, ctx), { ok: true, kind: 'file' });
   assert.deepEqual(downloadability(h1080, ctx), { ok: true, kind: 'hls' });
+  // No HLS download here (simulator / Android): a direct file is taken instead.
+  assert.deepEqual(downloadability(h1080, { ...ctx, hls: false }), { ok: false, reason: REASONS.hls });
+  assert.equal(pickForDownload([h1080, f720], 'auto', { ...ctx, hls: false })?.stream, f720);
   assert.deepEqual(downloadability(web, ctx), { ok: false, reason: REASONS.web });
   assert.deepEqual(downloadability(yt, ctx), { ok: false, reason: REASONS.youtube });
   assert.deepEqual(downloadability(tor, ctx), { ok: false, reason: REASONS.torrent });

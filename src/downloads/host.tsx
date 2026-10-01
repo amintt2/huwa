@@ -7,7 +7,7 @@
 import { NetworkStateType, useNetworkState } from 'expo-network';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { AppState } from 'react-native';
-import { File } from 'expo-file-system';
+import { Directory, File } from 'expo-file-system';
 
 import { langScore } from '@/addons/audio';
 import { isTorrent } from '@/addons/protocol';
@@ -19,13 +19,14 @@ import { resolveTorrent, useCachedHashes, useTorrentResolver } from '@/debrid/re
 import { getDebrid } from '@/debrid/store';
 import { useSettings } from '@/settings/settings';
 import { getState as getWatchState, useStore } from '@/store/store';
+import { isDemo } from '@/demo/flags';
 import { getTorrentSettings, isAvailable as torrentLinked } from '@/torrent';
 
 import { enqueueEpisodes } from './index';
 import { pickForDownload, pickSubtitles, sourceOf, whyNotDownloadable } from './pick';
 import { autoNextEpisodes, isActive, nextRetryIn, startable, watchedDownloads } from './queue';
-import { attachHls, compressNext, isRunning, removeDownload, runTransfer } from './runner';
-import { dispatch, episodeDir, getItems, hydrateDownloads, useDlSettings, useDownloadItems } from './store';
+import { attachHls, compressNext, hlsAvailable, isRunning, removeDownload, runTransfer } from './runner';
+import { dispatch, episodeDir, getItems, hydrateDownloads, rootDir, useDlSettings, useDownloadItems } from './store';
 import type { DownloadItem, NetworkKind } from './types';
 
 /** Longest wait for slow addons before choosing among the answers already there. */
@@ -50,6 +51,7 @@ export function DownloadsHost() {
     hydrateDownloads().then(() => {
       attachHls();
       restoreOfflineSeries();
+      if (!isDemo) removeOrphans();
       setReady(true);
     });
   }, []);
@@ -139,6 +141,22 @@ export function DownloadsHost() {
   );
 }
 
+/** Episode folders no download refers to (storage cleared, crash mid-delete): freed. */
+function removeOrphans() {
+  try {
+    const root = rootDir();
+    if (!root.exists) return;
+    const known = getItems();
+    for (const s of root.list()) {
+      if (!(s instanceof Directory)) continue;
+      for (const e of s.list()) if (!known[e.name]) e.delete();
+      if (!s.list().length) s.delete();
+    }
+  } catch {
+    // best effort
+  }
+}
+
 /** Series of downloaded episodes missing from the catalog (offline launch): from meta.json. */
 function restoreOfflineSeries() {
   const missing: Series[] = [];
@@ -182,7 +200,7 @@ function Resolver({ item }: { item: DownloadItem }) {
   const [elapsed, setElapsed] = useState(0);
   const decided = useRef(false);
 
-  const ctx = { debrid: !!getDebrid(), engine: torrentLinked() && getTorrentSettings().enabled, probed };
+  const ctx = { debrid: !!getDebrid(), engine: torrentLinked() && getTorrentSettings().enabled, probed, hls: hlsAvailable() };
   const pick = pickForDownload(ranked, item.quality, ctx, item.preferredKey);
   const settled = pending === 0 || (elapsed > RESOLVE_PATIENCE_MS && !!pick) || elapsed > RESOLVE_TIMEOUT_MS;
 
