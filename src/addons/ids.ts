@@ -5,9 +5,11 @@
 // Fallback for Kitsu only: Kitsu's own mappings API
 //   GET https://kitsu.app/api/edge/mappings?filter[externalSite]=anilist/anime&filter[externalId]=21
 // Results are cached in AsyncStorage (hits 30 days, misses 1 day).
+// Episode offsets of split-cour shows (TheTVDB / TMDB numbering) come from ./episode-map.ts.
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useEffect, useState } from 'react';
 
+import { episodeMapping } from './episode-map';
 import { getJson } from './protocol';
 
 export type AnimeIds = {
@@ -17,11 +19,20 @@ export type AnimeIds = {
   imdb?: string;
   /** Season number of this entry on TheTVDB/IMDb (split-cour shows), when known. */
   season?: number;
+  anidb?: number;
+  /**
+   * Added to our episode number for IMDb/TheTVDB numbering inside `season` (split-cour shows:
+   * "Part 2" ep. 1 = S1E13). Filled by `idsForAnilist` from the Fribb mapping, not cached here.
+   */
+  epOffset?: number;
+  /** Second IMDb numbering to try (TMDB's, often absolute): season + offset. */
+  alt?: { season: number; offset: number };
   /** "TV", "MOVIE", "OVA"… */
   media?: string;
 };
 
 type ArmEntry = {
+  anidb?: number | null;
   anilist?: number | null;
   kitsu?: number | null;
   myanimelist?: number | null;
@@ -33,7 +44,7 @@ type ArmEntry = {
 
 const ARM = 'https://arm.haglund.dev/api/v2';
 const KITSU = 'https://kitsu.app/api/edge';
-const CACHE_KEY = 'huwa/ids/v1';
+const CACHE_KEY = 'huwa/ids/v2';
 const HIT_TTL = 30 * 86400e3;
 const MISS_TTL = 86400e3;
 
@@ -67,6 +78,7 @@ const fromArm = (e: ArmEntry | null | undefined): AnimeIds | null =>
         mal: e.myanimelist ?? undefined,
         imdb: e.imdb && /^tt\d+$/.test(e.imdb) ? e.imdb : undefined,
         season: e['thetvdb-season'] ?? e['themoviedb-season'] ?? undefined,
+        anidb: e.anidb ?? undefined,
         media: e.media ?? undefined,
       }
     : null;
@@ -98,8 +110,26 @@ async function cached(key: string, load: () => Promise<AnimeIds | null>): Promis
   return job;
 }
 
-/** External ids for an AniList anime id. */
-export function idsForAnilist(anilist: number): Promise<AnimeIds | null> {
+/** Adds the episode offsets of split-cour shows (see ./episode-map.ts). */
+export async function withEpisodeMapping(ids: AnimeIds | null): Promise<AnimeIds | null> {
+  if (!ids?.anidb || ids.media === 'MOVIE') return ids;
+  const m = await episodeMapping(ids.anidb).catch(() => null);
+  if (!m) return ids;
+  const season = m.tvdbSeason ?? ids.season;
+  const out: AnimeIds = { ...ids, season, epOffset: m.tvdbOffset };
+  // TMDB numbering differing from TheTVDB's (e.g. Re:Zero S4 = TMDB S1 + 66): second guess.
+  if (m.tmdbSeason && (m.tmdbSeason !== (season ?? 1) || (m.tmdbOffset ?? 0) !== (m.tvdbOffset ?? 0))) {
+    out.alt = { season: m.tmdbSeason, offset: m.tmdbOffset ?? 0 };
+  }
+  return out;
+}
+
+/** External ids for an AniList anime id, with episode offsets. */
+export async function idsForAnilist(anilist: number): Promise<AnimeIds | null> {
+  return withEpisodeMapping(await armIdsForAnilist(anilist));
+}
+
+function armIdsForAnilist(anilist: number): Promise<AnimeIds | null> {
   return cached(`anilist:${anilist}`, async () => {
     try {
       const ids = fromArm(await getJson<ArmEntry>(`${ARM}/ids?source=anilist&id=${anilist}`));

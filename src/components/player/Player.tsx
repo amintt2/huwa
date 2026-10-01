@@ -22,6 +22,7 @@ import { ActivityIndicator, BackHandler, Platform, Pressable, StyleSheet, Text, 
 import Animated, { FadeIn, FadeOut, SlideInLeft, SlideInRight, SlideOutLeft, SlideOutRight } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
+import { traceMark } from '@/addons/timing';
 import { Txt, type IconName } from '@/components/ui';
 import { C, F, R, S } from '@/theme/tokens';
 
@@ -35,6 +36,7 @@ import { useSeamlessUpgrade, type UpgradeRequest } from './seamless-upgrade';
 import { getPrefs, setPrefs, usePrefs } from './prefs';
 import { formatTime, SeekBar } from './SeekBar';
 import { SubtitleOverlay, SubtitleSheet, useSubtitleController, type ExternalSubtitle } from './subtitles';
+import { takeWarm } from './warm-pool';
 
 export type { ExternalSubtitle } from './subtitles';
 
@@ -74,6 +76,10 @@ export type PlayerProps = {
   introSkip?: number;
   /** Text shown when there is no source yet. */
   emptyText?: string;
+  /** Bold line above `emptyText` (why nothing plays). */
+  emptyTitle?: string;
+  /** One-tap fix under `emptyText` ("Activer le moteur torrent", "Réessayer"…). */
+  emptyAction?: { label: string; onPress: () => void } | null;
   /**
    * Where the source search stands before anything plays (drives the loading bar): `search` =
    * addons still answering (`answered` 0..1), `race` = links being tested / torrent resolved,
@@ -150,6 +156,8 @@ export function Player({
   episodeNumber = 1,
   introSkip = 85,
   emptyText = 'Choisis une source pour lancer la lecture.',
+  emptyTitle,
+  emptyAction,
   sourceSearch,
   notice,
   onFullscreenChange,
@@ -263,12 +271,24 @@ export function Player({
     let alive = true;
     // Switching source mid-episode (quality upgrade, fallback, manual pick) keeps the position.
     const keep = loadedOnce.current ? player.currentTime : undefined;
-    player
-      .replaceAsync({ uri: source.uri, headers: source.headers, metadata: { title, artist: subtitle, artwork } })
+    const src = { uri: source.uri, headers: source.headers, metadata: { title, artist: subtitle, artwork } };
+    // Opened ahead by the pre-search / next-episode prefetch: take that player over (no reload).
+    const warm = takeWarm(source.uri, source.headers);
+    let tookWarm = false;
+    if (warm) {
+      tookWarm = player.adoptWarm(warm, src);
+      if (!tookWarm) setTimeout(() => warm.release(), 0);
+    }
+    if (mediaKey) traceMark(mediaKey, 'url', tookWarm ? 'lecteur préchauffé' : undefined);
+    (tookWarm ? Promise.resolve() : player.replaceAsync(src))
       .then(() => {
         if (!alive) return;
         const at = keep != null && keep > 1 ? keep : cb.current.startAt?.();
-        if (at && at > 1) setProp(player, 'currentTime', at);
+        if (tookWarm) {
+          // A warm player already waits at the resume position (else: where it should be).
+          const want = at && at > 1 ? at : 0;
+          if (Math.abs(player.currentTime - want) > 2) setProp(player, 'currentTime', want);
+        } else if (at && at > 1) setProp(player, 'currentTime', at);
         loadedOnce.current = true;
         setEnded(false);
         setCountdown(null);
@@ -520,6 +540,7 @@ export function Player({
         contentFit={zoomed ? 'cover' : 'contain'}
         allowsPictureInPicture
         startsPictureInPictureAutomatically
+        onFirstFrameRender={() => mediaKey && traceMark(mediaKey, 'first-frame')}
         onPictureInPictureStart={() => setPip(true)}
         onPictureInPictureStop={() => setPip(false)}
       />
@@ -556,9 +577,19 @@ export function Player({
         <SourceLoadingBar phase={barPhase} answered={sourceSearch?.answered} onGone={() => setBarGone(true)} />
       )}
       {!source?.uri && !barShown && (
-        <View pointerEvents="none" style={styles.center}>
-          <Ionicons name="play-circle-outline" size={36} color={C.text2} />
+        <View pointerEvents="box-none" style={styles.center}>
+          <Ionicons name={emptyTitle ? 'alert-circle-outline' : 'play-circle-outline'} size={36} color={C.text2} />
+          {!!emptyTitle && <Txt v="label">{emptyTitle}</Txt>}
           <Txt v="small" style={{ textAlign: 'center', paddingHorizontal: S.xl }}>{emptyText}</Txt>
+          {!!emptyAction && (
+            <Pressable
+              onPress={emptyAction.onPress}
+              accessibilityRole="button"
+              hitSlop={hitSlop}
+              style={({ pressed }) => [styles.emptyAction, pressed && { opacity: 0.7 }]}>
+              <Text style={styles.emptyActionText}>{emptyAction.label}</Text>
+            </Pressable>
+          )}
         </View>
       )}
       {status === 'error' && (
@@ -754,6 +785,8 @@ const styles = StyleSheet.create({
   inline: { width: '100%', aspectRatio: 16 / 9, backgroundColor: C.black, overflow: 'hidden' },
   full: { flex: 1, backgroundColor: C.black, overflow: 'hidden' },
   center: { ...StyleSheet.absoluteFill, alignItems: 'center', justifyContent: 'center', gap: S.sm },
+  emptyAction: { marginTop: S.xs, paddingHorizontal: S.lg, paddingVertical: 9, borderRadius: 999, backgroundColor: C.accent },
+  emptyActionText: { color: C.onAccent, fontSize: 14, ...F.heavy },
   topRow: { position: 'absolute', top: 0, left: 0, right: 0, flexDirection: 'row', alignItems: 'center', gap: S.xs, padding: S.xs },
   airplay: { width: 40, height: 40, alignItems: 'center', justifyContent: 'center' },
   middle: { ...StyleSheet.absoluteFill, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 36 },

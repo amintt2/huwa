@@ -12,7 +12,7 @@ import HuwaMpv, { getMpvNativeView, type MpvLoadedEvent, type MpvProgressEvent, 
 
 import { decideEngine, type DeviceCaps, type Engine } from './policy';
 import { getEnginePref, setActiveEngine } from './prefs';
-import { probeSource } from './probe';
+import { cachedProbe, probeSource } from './probe';
 
 type Listener = (...args: any[]) => void;
 type Subscription = { remove(): void };
@@ -353,6 +353,79 @@ export class HybridPlayer implements EventEmitter<VideoPlayerEvents> {
     if (this.ownsNative) releaseLater(this.native);
     this.view?.stop().catch(() => {});
     setActiveEngine(this, null);
+  }
+
+  // ---------- warm player handover (pre-search / next-episode prefetch) ----------
+
+  /**
+   * Plays `src` with a player that already opened it hidden (./warm-pool.ts) instead of loading
+   * it again: buffer, connection and redirects are kept. False when the source would not play on
+   * the native engine (the caller then loads it normally and releases the warm player).
+   */
+  adoptWarm(next: VideoPlayer, src: Src): boolean {
+    const pref = getEnginePref();
+    const c = deviceCaps();
+    const probe = pref === 'auto' && c.mpvAvailable ? cachedProbe(src.uri) ?? null : null;
+    // Unknown container with mpv around: let replaceAsync probe it.
+    if (pref === 'auto' && c.mpvAvailable && !probe) return false;
+    const d = decideEngine(pref, c, probe);
+    if (d.engine !== 'native' || next.status === 'error') return false;
+    const token = ++this.token;
+    this.abortStage();
+    this.settlePending();
+    this.clearWatchdog();
+    const wasMpv = this.engine === 'mpv';
+    const old = this.native;
+    const oldOwned = this.ownsNative;
+    const oldStatus = this.status;
+    try {
+      next.playbackRate = this.rate;
+      next.volume = this.vol;
+      next.timeUpdateEventInterval = old.timeUpdateEventInterval;
+      next.muted = old.muted;
+      next.allowsExternalPlayback = true;
+      next.showNowPlayingNotification = true;
+      next.bufferOptions = old.bufferOptions;
+    } catch {
+      // a property less is fine
+    }
+    this.nativeSubs.forEach((s) => s.remove());
+    this.nativeSubs = [];
+    try {
+      old.pause();
+    } catch {
+      // released
+    }
+    if (wasMpv) this.view?.stop().catch(() => {});
+    this.native = next;
+    this.ownsNative = true;
+    this.src = src;
+    this.fallbackTried = null;
+    this.forward(next);
+    this.views = [next];
+    this.setEngine('native', d.reason);
+    this.notifyViews();
+    this.armWatchdog(token);
+    if (next.status === 'readyToPlay') this.clearWatchdog();
+    // The events of a source load (already loaded while warm), after the caller's listeners are
+    // in place (the handover happens during the first effects of the watch screen).
+    queueMicrotask(() => {
+      if (token !== this.token || this.native !== next) return;
+      if (next.status === 'readyToPlay') {
+        this.emit('sourceLoad', {
+          videoSource: src as VideoSource,
+          duration: next.duration,
+          availableVideoTracks: next.availableVideoTracks,
+          availableSubtitleTracks: next.availableSubtitleTracks,
+          availableAudioTracks: next.availableAudioTracks,
+        });
+        if (next.videoTrack) this.emit('videoTrackChange', { videoTrack: next.videoTrack, oldVideoTrack: null });
+      }
+      this.emit('statusChange', { status: next.status, oldStatus });
+    });
+    if (oldOwned) releaseLater(old);
+    else setTimeout(() => old.replaceAsync(null).catch(() => {}), RELEASE_DELAY_MS);
+    return true;
   }
 
   // ---------- seamless source upgrade (native engine only) ----------

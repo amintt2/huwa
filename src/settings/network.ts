@@ -33,6 +33,17 @@ export function useStreamPolicy(): StreamPolicy {
   return { allowed: true };
 }
 
+/**
+ * Wi-Fi / Ethernet (or a platform that cannot tell): pre-buffering a video before the user
+ * presses Play is allowed only there.
+ */
+export function useUnmetered(): boolean {
+  const policy = useStreamPolicy();
+  const net = useNetworkState();
+  if (!policy.allowed) return false;
+  return net.type !== NetworkStateType.CELLULAR;
+}
+
 const NO_RACE: RaceBudget = { max: 0, concurrency: 0, bytes: 0, timeoutMs: 0 };
 /** Wi-Fi / Ethernet: 6 links × 256 KiB at most (≈1.5 MB per episode), 3 at a time. */
 const RACE_UNMETERED: RaceBudget = { max: 6, concurrency: 3, bytes: 256 * 1024, timeoutMs: 8000 };

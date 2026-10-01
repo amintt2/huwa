@@ -1,9 +1,11 @@
 // Installed addons (persisted, in priority order) + aggregation of stream / subtitles / catalog
 // resources across all of them, with AniList ids translated to what each addon accepts.
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { useEffect, useState, useSyncExternalStore } from 'react';
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 
-import { anilistNumber, useAnimeIds, type AnimeIds } from './ids';
+import { firstUseful, withRetry } from './fetch-policy';
+import { requestsFor, type AddonRequest } from './id-candidates';
+import { useAnimeIds, type AnimeIds } from './ids';
 import {
   type AddonStream,
   browsableCatalogs,
@@ -17,13 +19,12 @@ import {
   type ManifestCatalog,
   type MetaPreview,
   normalizeAddonUrl,
-  prefixesFor,
   type Resource,
   searchableCatalogs,
   type StreamItem,
-  supports,
 } from './protocol';
 import type { Quality } from './quality';
+import { dropAnswer, freshness, readAnswer, writeAnswer } from './stream-cache';
 
 export type InstalledAddon = { baseUrl: string; manifest: Manifest; enabled: boolean };
 
@@ -155,145 +156,310 @@ export function videoId(seriesId: string, episode: number) {
   return `anilist:${seriesId.replace(/^al/, '')}:${episode}`;
 }
 
-export type AddonRequest = { type: string; id: string };
-
-/**
- * Picks the id format and type an addon accepts for this episode, in this order:
- * anilist:, kitsu:, mal:, tt (IMDb `tt…:season:episode`). Addons without idPrefixes get IMDb
- * first (the Stremio default), then kitsu. Every accepted format, best first (`requestFor`: the
- * first one, or null). Aggregators like AIOStreams accept all of them but only find videos for
- * IMDb ids, hence the fallback in `useAggregate`.
- */
-export function requestsFor(m: Manifest, resource: Resource, seriesId: string, episode: number, ids: AnimeIds | null): AddonRequest[] {
-  const al = anilistNumber(seriesId);
-  const movie = ids?.media === 'MOVIE';
-  const ep = (base: string) => (movie ? base : `${base}:${episode}`);
-  const cands: string[] = [];
-  const anilistId = al != null ? ep(`anilist:${al}`) : null;
-  const kitsu = ids?.kitsu ? ep(`kitsu:${ids.kitsu}`) : null;
-  const mal = ids?.mal ? ep(`mal:${ids.mal}`) : null;
-  // IMDb numbering is approximate for split-cour shows: TheTVDB season from ARM, episode as-is.
-  const imdb = ids?.imdb ? (movie ? ids.imdb : `${ids.imdb}:${ids.season ?? 1}:${episode}`) : null;
-  if (prefixesFor(m, resource).length) cands.push(...[anilistId, kitsu, mal, imdb].filter((x): x is string => !!x));
-  else cands.push(...[imdb, kitsu, anilistId].filter((x): x is string => !!x));
-  const types = movie ? ['movie', 'anime'] : ['series', 'anime'];
-  const out: AddonRequest[] = [];
-  for (const id of cands) {
-    const type = types.find((t) => supports(m, resource, t, id));
-    if (type) out.push({ type, id });
-  }
-  return out;
-}
+export { requestsFor, type AddonRequest } from './id-candidates';
 
 export function requestFor(m: Manifest, resource: Resource, seriesId: string, episode: number, ids: AnimeIds | null): AddonRequest | null {
   return requestsFor(m, resource, seriesId, episode, ids)[0] ?? null;
 }
 
-// ---------- aggregation hook ----------
+// ---------- aggregation ----------
+// One shared job per (resource, episode, addons, ids): the pre-search of a detail page, the next
+// episode prefetch and the watch screen all read the same job, so opening an episode whose
+// sources are already being searched never starts over. Per addon:
+// 1. an answer stored on disk (./stream-cache.ts) is shown at once; refreshed in the background
+//    when older than a few minutes;
+// 2. otherwise its id formats are asked two at a time (./fetch-policy.ts `firstUseful`), each
+//    request retried once on a transient failure; results appear as each addon answers.
+// A job keeps running while a screen uses it, plus a short grace period (screen handover); then
+// no new request starts (requests in flight still land in the caches).
 
-type Agg<T> = { key: string; items: T[]; done: number; failed: string[] };
-
-/**
- * Queries every enabled addon serving `resource` in parallel; results appear as each answers.
- * Waits for the id mapping first (AniList → Kitsu / MAL / IMDb).
- */
-// Answers shared across screens: a prefetch of the next episode (see `useSource` with
-// `enabled`) fills this cache, so opening that episode shows its sources immediately.
-const aggCache = new Map<string, { agg: Agg<unknown>; at: number }>();
-const AGG_TTL = 20 * 60e3;
-const cachedAgg = <T,>(key: string) => {
-  const hit = aggCache.get(key);
-  return hit && Date.now() - hit.at < AGG_TTL ? (hit.agg as Agg<T>) : undefined;
+type Agg<T> = {
+  key: string;
+  items: T[];
+  done: number;
+  failed: string[];
+  /** Addons whose answer currently comes from the disk cache. */
+  fromCache: number;
+  /** Forced refreshes completed (see `refresh`). */
+  refreshed: number;
 };
 
+type Slot<T> = { items: T[]; done: boolean; failed: boolean; running: boolean; cachedAt?: number; reqKey?: string };
+type JobSpec = { a: InstalledAddon; reqs: AddonRequest[] };
+type Loader<T> = (a: InstalledAddon, req: AddonRequest) => Promise<T[]>;
+type JobOptions<T> = {
+  useful?: (item: T) => boolean;
+  /** Keep answers on disk (streams). */
+  persist?: boolean;
+  /** Marks an item served from the disk cache. */
+  tag?: (item: T, cachedAt: number) => T;
+  /** Two items of one addon are the same (merging answers of several id formats). */
+  same?: (a: T, b: T) => boolean;
+};
+
+const AGG_TTL = 20 * 60e3;
+const RELEASE_GRACE_MS = 4000;
+const PER_ADDON_CONCURRENCY = 2;
+const reqKeyOf = (a: InstalledAddon, resource: Resource, req: AddonRequest) => `${resource}|${a.baseUrl}|${req.type}/${req.id}`;
+
+class AggJob<T> {
+  slots = new Map<string, Slot<T>>();
+  snapshot: Agg<T>;
+  at = Date.now();
+  refs = 0;
+  ctrl = new AbortController();
+  load!: Loader<T>;
+  private listeners = new Set<() => void>();
+  private stopTimer: ReturnType<typeof setTimeout> | undefined;
+  private refreshed = 0;
+
+  constructor(
+    readonly key: string,
+    readonly resource: Resource,
+    readonly specs: JobSpec[],
+    readonly opts: JobOptions<T>,
+  ) {
+    for (const s of specs) this.slots.set(s.a.baseUrl, { items: [], done: false, failed: false, running: false });
+    this.snapshot = { key, items: [], done: 0, failed: [], fromCache: 0, refreshed: 0 };
+  }
+
+  subscribe = (l: () => void) => {
+    this.listeners.add(l);
+    return () => {
+      this.listeners.delete(l);
+    };
+  };
+  getSnapshot = () => this.snapshot;
+
+  get complete() {
+    return [...this.slots.values()].every((s) => s.done);
+  }
+
+  private emit() {
+    const slots = this.specs.map((s) => this.slots.get(s.a.baseUrl)!);
+    this.snapshot = {
+      key: this.key,
+      items: slots.flatMap((s) => s.items),
+      done: slots.filter((s) => s.done).length,
+      failed: this.specs.filter((s) => this.slots.get(s.a.baseUrl)!.failed).map((s) => s.a.manifest.name),
+      fromCache: slots.filter((s) => s.cachedAt != null).length,
+      refreshed: this.refreshed,
+    };
+    this.at = Date.now();
+    this.listeners.forEach((l) => l());
+  }
+
+  retain(load: Loader<T>) {
+    this.load = load;
+    this.refs++;
+    clearTimeout(this.stopTimer);
+    if (this.ctrl.signal.aborted) this.ctrl = new AbortController();
+    for (const spec of this.specs) {
+      const slot = this.slots.get(spec.a.baseUrl)!;
+      if (!slot.done && !slot.running) void this.run(spec);
+    }
+    return () => {
+      this.refs--;
+      if (this.refs > 0) return;
+      clearTimeout(this.stopTimer);
+      this.stopTimer = setTimeout(() => {
+        if (this.refs === 0) this.ctrl.abort();
+      }, RELEASE_GRACE_MS);
+    };
+  }
+
+  private async run(spec: JobSpec) {
+    const slot = this.slots.get(spec.a.baseUrl)!;
+    slot.running = true;
+    try {
+      if (this.opts.persist && !spec.a.baseUrl.startsWith('builtin:')) {
+        for (const req of spec.reqs) {
+          const key = reqKeyOf(spec.a, this.resource, req);
+          const hit = await readAnswer<T>(key);
+          if (!hit || (this.opts.useful && !hit.items.some(this.opts.useful))) continue;
+          const tag = this.opts.tag;
+          Object.assign(slot, { items: tag ? hit.items.map((x) => tag(x, hit.at)) : hit.items, done: true, cachedAt: hit.at, reqKey: key });
+          this.emit();
+          // Shown at once; refreshed when older than a few minutes (stale-while-revalidate).
+          if (freshness(hit.at) === 'stale') await this.network(spec, slot);
+          return;
+        }
+      }
+      await this.network(spec, slot);
+    } finally {
+      slot.running = false;
+    }
+  }
+
+  /** Asks the addon (all its id formats, two at a time), replacing what the slot shows. */
+  private async network(spec: JobSpec, slot: Slot<T>) {
+    const signal = this.ctrl.signal;
+    if (signal.aborted) return;
+    const { useful, same } = this.opts;
+    const merge = (items: T[]) => {
+      const fresh = same ? items.filter((x) => !slot.items.some((y) => same(x, y))) : items;
+      if (!fresh.length) return;
+      slot.items = [...slot.items, ...fresh];
+      this.emit();
+    };
+    try {
+      const { items, index } = await firstUseful(
+        spec.reqs,
+        (req) => withRetry(() => this.load(spec.a, req), { signal }),
+        useful,
+        { concurrency: PER_ADDON_CONCURRENCY, signal, onExtra: merge },
+      );
+      const isUseful = !useful || items.some(useful);
+      // Background refresh that found nothing better: keep the cached answer.
+      if (slot.cachedAt != null && !isUseful) return;
+      // Stopped before every id format was tried: not an answer yet (runs again when retained).
+      if (!isUseful && signal.aborted) return;
+      Object.assign(slot, { items, done: true, failed: false, cachedAt: undefined });
+      if (isUseful && this.opts.persist && index >= 0 && !spec.a.baseUrl.startsWith('builtin:')) {
+        slot.reqKey = reqKeyOf(spec.a, this.resource, spec.reqs[index]);
+        void writeAnswer(slot.reqKey, items);
+      }
+      this.emit();
+    } catch {
+      if (slot.cachedAt != null) return;
+      // Cancelled before any request could start: not a failure, it may run again.
+      if (signal.aborted && !slot.items.length) return;
+      Object.assign(slot, { done: true, failed: true });
+      this.emit();
+    }
+  }
+
+  /**
+   * Fetches again every addon answer that came from the disk cache (a cached link failed:
+   * debrid / proxy URLs expire), or every addon with `all` ("Réessayer"). `refreshed`
+   * increments when done.
+   */
+  async refresh(all = false) {
+    if (this.ctrl.signal.aborted) this.ctrl = new AbortController();
+    const todo = this.specs.filter((s) => {
+      const slot = this.slots.get(s.a.baseUrl)!;
+      return !slot.running && (all || slot.cachedAt != null);
+    });
+    await Promise.all(
+      todo.map(async (spec) => {
+        const slot = this.slots.get(spec.a.baseUrl)!;
+        if (slot.reqKey) void dropAnswer(slot.reqKey);
+        // Shown again as "searching" only when it had nothing to show.
+        if (all && !slot.items.length) {
+          Object.assign(slot, { done: false, failed: false });
+          this.emit();
+        }
+        slot.running = true;
+        try {
+          await this.network(spec, slot);
+        } finally {
+          slot.running = false;
+        }
+      }),
+    );
+    this.refreshed++;
+    this.emit();
+  }
+}
+
+const jobs = new Map<string, AggJob<unknown>>();
+
+function obtainJob<T>(key: string, resource: Resource, specs: JobSpec[], opts: JobOptions<T>): AggJob<T> {
+  const now = Date.now();
+  for (const [k, j] of jobs) if (j.refs === 0 && now - j.at > AGG_TTL) jobs.delete(k);
+  let job = jobs.get(key) as AggJob<T> | undefined;
+  if (!job) {
+    job = new AggJob<T>(key, resource, specs, opts);
+    jobs.set(key, job as AggJob<unknown>);
+  }
+  return job;
+}
+
+const EMPTY_AGG: Agg<never> = { key: '', items: [], done: 0, failed: [], fromCache: 0, refreshed: 0 };
+const noSub = () => () => {};
+const emptySnap = () => EMPTY_AGG;
+
+/**
+ * Queries every enabled addon serving `resource` (see the job above); results appear as each
+ * answers. Waits for the id mapping first (AniList → Kitsu / MAL / IMDb + episode offsets).
+ */
 function useAggregate<T>(
   resource: Resource,
   seriesId: string,
   episode: number,
-  load: (a: InstalledAddon, req: AddonRequest) => Promise<T[]>,
+  load: Loader<T>,
   enabled = true,
-  /** An answer with none of these tries the addon's next id format. */
-  useful?: (item: T) => boolean,
+  opts: JobOptions<T> = {},
 ) {
   const list = useAddons();
   const ids = useAnimeIds(seriesId);
   const idsReady = ids !== undefined;
-  const jobs = idsReady && enabled
+  const specs: JobSpec[] = idsReady && enabled
     ? list
-        .filter((a) => a.enabled)
-        .map((a) => {
-          const reqs = a.baseUrl === builtin.baseUrl ? [{ type: 'series', id: videoId(seriesId, episode) }] : requestsFor(a.manifest, resource, seriesId, episode, ids ?? null);
-          return { a, req: reqs[0], reqs };
-        })
-        .filter((j): j is { a: InstalledAddon; req: AddonRequest; reqs: AddonRequest[] } => !!j.req && (j.a.baseUrl !== builtin.baseUrl || resource === 'stream'))
+        .filter((a) => a.enabled && (a.baseUrl !== builtin.baseUrl || resource === 'stream'))
+        .map((a) => ({
+          a,
+          reqs: a.baseUrl === builtin.baseUrl ? [{ type: 'series', id: videoId(seriesId, episode) }] : requestsFor(a.manifest, resource, seriesId, episode, ids ?? null),
+        }))
+        .filter((j) => j.reqs.length > 0)
     : [];
-  const key = `${resource}|${seriesId}|${episode}|${idsReady}|${jobs.map((j) => `${j.a.baseUrl}>${j.req.type}/${j.req.id}`).join('|')}`;
-  // Results are tagged with the request key, so stale answers are ignored without resetting state in an effect.
-  const [res, setRes] = useState<Agg<T>>({ key: '', items: [], done: 0, failed: [] });
-
+  const key = idsReady && enabled
+    ? `${resource}|${seriesId}|${episode}|${specs.map((j) => `${j.a.baseUrl}>${j.reqs.map((r) => `${r.type}/${r.id}`).join(',')}`).join('|')}`
+    : '';
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const job = useMemo(() => (key ? obtainJob<T>(key, resource, specs, opts) : null), [key]);
+  const loadRef = useRef(load);
   useEffect(() => {
-    let cancelled = false;
-    // Complete fresh answer already fetched (e.g. prefetched while watching the previous episode).
-    const hit = cachedAgg<T>(key);
-    if (hit && hit.done >= jobs.length) return;
-    const update = (fn: (base: Agg<T>) => Agg<T>) =>
-      setRes((p) => {
-        const base = p.key === key ? p : { key, items: [], done: 0, failed: [] };
-        const next = fn(base);
-        aggCache.set(key, { agg: next as Agg<unknown>, at: Date.now() });
-        return next;
-      });
-    // Next id format when an addon has nothing usable for the first one (see `requestsFor`).
-    const loadWithFallback = async (a: InstalledAddon, reqs: AddonRequest[]): Promise<T[]> => {
-      let first: T[] | undefined;
-      for (const req of reqs) {
-        const items = await load(a, req).catch((e) => {
-          if (first === undefined && req === reqs[reqs.length - 1]) throw e;
-          return [] as T[];
-        });
-        first ??= items;
-        if (!useful || items.some(useful)) return items;
-      }
-      return first ?? [];
-    };
-    for (const { a, reqs } of jobs) {
-      loadWithFallback(a, reqs)
-        .then((items) => {
-          if (!cancelled) update((base) => ({ ...base, items: [...base.items, ...items], done: base.done + 1 }));
-        })
-        .catch(() => {
-          if (!cancelled) update((base) => ({ ...base, done: base.done + 1, failed: [...base.failed, a.manifest.name] }));
-        });
-    }
-    return () => {
-      cancelled = true;
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [key]);
-
-  const cur = (res.key === key ? res : cachedAgg<T>(key)) ?? { items: [] as T[], done: 0, failed: [] as string[] };
-  return { items: cur.items, pending: idsReady ? Math.max(0, jobs.length - cur.done) : enabled ? 1 : 0, failed: cur.failed };
+    loadRef.current = load;
+  });
+  useEffect(() => {
+    if (!job) return;
+    return job.retain((a, req) => loadRef.current(a, req));
+  }, [job]);
+  const snap = useSyncExternalStore(job?.subscribe ?? noSub, job?.getSnapshot ?? emptySnap, job?.getSnapshot ?? emptySnap) as Agg<T>;
+  return {
+    items: snap.items,
+    pending: idsReady ? Math.max(0, specs.length - snap.done) : enabled ? 1 : 0,
+    failed: snap.failed,
+    /** Addons asked for this episode. */
+    asked: specs.length,
+    fromCache: snap.fromCache,
+    refreshed: snap.refreshed,
+    refresh: (all?: boolean) => job?.refresh(all),
+  };
 }
+
+const sameStream = (a: AddonStream, b: AddonStream) =>
+  (!!a.url && a.url === b.url) || (!!a.infoHash && a.infoHash === b.infoHash && a.fileIdx === b.fileIdx && !a.url && !b.url);
+
+const streamOpts: JobOptions<AddonStream> = {
+  useful: (s) => !isInfoStream(s) && !!(s.url || s.infoHash || s.ytId),
+  persist: true,
+  tag: (s, at) => ({ ...s, cachedAt: at }),
+  same: sameStream,
+};
 
 /** Streams for an episode, unsorted (see `rankStreams`). */
 export function useStreams(seriesId: string, episode: number, enabled = true) {
   const r = useAggregate<AddonStream>('stream', seriesId, episode, async (a, req) => {
     const items: StreamItem[] = a.baseUrl === builtin.baseUrl ? DEMO_STREAMS : await fetchStreams(a.baseUrl, req.type, req.id);
     return items.map((s) => ({ ...s, addonId: a.manifest.id, addonName: a.manifest.name }));
-  }, enabled, (s) => !isInfoStream(s) && !!(s.url || s.infoHash || s.ytId));
+  }, enabled, streamOpts);
   // Status rows (scrape summaries, errors, donation banners) are kept apart for the "Infos" section.
-  const streams = r.items.filter((s) => !isInfoStream(s));
-  const infos = r.items.filter(isInfoStream);
-  return { streams, infos, pending: r.pending, failed: r.failed };
+  const streams = useMemo(() => r.items.filter((s) => !isInfoStream(s)), [r.items]);
+  const infos = useMemo(() => r.items.filter(isInfoStream), [r.items]);
+  return { streams, infos, pending: r.pending, failed: r.failed, asked: r.asked, fromCache: r.fromCache, refreshed: r.refreshed, refresh: r.refresh };
 }
 
 export type Subtitle = { url: string; lang: string; addonName: string; id?: string };
+
+const subtitleOpts: JobOptions<Subtitle> = { same: (a, b) => a.url === b.url };
 
 /** Subtitles from every installed addon with the `subtitles` resource (e.g. OpenSubtitles v3). */
 export function useSubtitles(seriesId: string, episode: number, enabled = true): Subtitle[] {
   return useAggregate<Subtitle>('subtitles', seriesId, episode, async (a, req) =>
     (await fetchSubtitles(a.baseUrl, req.type, req.id)).map((s) => ({ url: s.url, lang: s.lang, id: s.id, addonName: a.manifest.name })),
-  enabled).items;
+  enabled, subtitleOpts).items;
 }
 
 // ---------- catalogs (Découvrir) ----------

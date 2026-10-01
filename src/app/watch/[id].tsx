@@ -4,8 +4,10 @@ import { StyleSheet, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { useAnimeIds } from '@/addons/ids';
+import type { NoSourceAction } from '@/addons/no-source';
 import { useSubtitles } from '@/addons/registry';
 import { isTorrent } from '@/addons/protocol';
+import { traceMark } from '@/addons/timing';
 import { qualityLabel, useSource } from '@/addons/use-source';
 import { EpisodeBridgeStrip } from '@/components/bridge';
 import { CommentsPanel } from '@/components/comments';
@@ -19,6 +21,7 @@ import { chapterAfterEpisode } from '@/data/bridge';
 import { episodeLabel, getEpisode } from '@/data/catalog';
 import { useThread } from '@/store/derived';
 import { getState, markEpisodeDone, saveEpisodeProgress, toggleMyList, useStore } from '@/store/store';
+import { enableTorrentEngine, isAvailable as torrentEngineLinked, useTorrentSettings } from '@/torrent';
 import { C, S } from '@/theme/tokens';
 
 export default function Watch() {
@@ -50,7 +53,18 @@ function WatchScreen({ id }: { id: string }) {
   const addonSubs = useSubtitles(series.id, episode.number);
 
   // ---- Source: auto (first that works, then better quality) or manual via the menu ----
-  const src = useSource(series.id, episode.number);
+  const torrentSettings = useTorrentSettings();
+  const src = useSource(series.id, episode.number, { engineAvailable: torrentEngineLinked() && !torrentSettings.enabled });
+  // Dev timings (tap → sources → choice → first frame), see addons/timing.ts.
+  useEffect(() => traceMark(id, 'screen'), [id]);
+  const hasSources = src.ranked.length > 0;
+  useEffect(() => {
+    if (hasSources) traceMark(id, 'sources', src.ranked.some((s) => s.cachedAt != null) ? 'cache disque' : undefined);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hasSources, id]);
+  useEffect(() => {
+    if (src.currentKey) traceMark(id, 'decision');
+  }, [src.currentKey, id]);
   // Subtitles attached to the playing stream first, then the subtitles addons (e.g. OpenSubtitles).
   const { streamSubtitles } = src;
   const streamAddon = src.current?.addonName ?? 'Flux';
@@ -106,6 +120,14 @@ function WatchScreen({ id }: { id: string }) {
   };
   const onPlayerError = (message: string) => {
     if (currentRef.current) src.markBad(currentRef.current, message);
+  };
+  const noSource = src.noSource;
+  const onNoSourceAction = (kind: NoSourceAction) => {
+    if (kind === 'addons') router.push('/addons');
+    else if (kind === 'debrid') router.push('/debrid');
+    else if (kind === 'sources') setMenuOpen(true);
+    else if (kind === 'enable-engine') void enableTorrentEngine();
+    else src.retryAll();
   };
   const nextProp = next ? { label: episodeLabel(next), onPlay: () => router.replace(`/watch/${next.id}`) } : null;
   const sourceLabel = (() => {
@@ -214,15 +236,19 @@ function WatchScreen({ id }: { id: string }) {
             episodeNumber={episode.number}
             notice={notice}
             sourceSearch={sourceSearch}
+            emptyTitle={noSource?.title}
             emptyText={
-              src.racing
-                ? 'Test de la vitesse des sources…'
-                : src.pending > 0
-                ? 'Recherche de sources…'
-                : !src.resolverLabel && src.ranked.some(isTorrent)
-                  ? 'Ces sources sont des torrents. Ouvre le menu des sources pour les lire avec le moteur intégré ou un service débrid.'
-                  : 'Aucune source lisible. Ouvre le menu des sources.'
+              noSource
+                ? noSource.message
+                : src.racing
+                  ? 'Test de la vitesse des sources…'
+                  : src.pending > 0
+                    ? 'Recherche de sources…'
+                    : !src.resolverLabel && src.ranked.some(isTorrent)
+                      ? 'Ces sources sont des torrents. Ouvre le menu des sources pour les lire avec le moteur intégré ou un service débrid.'
+                      : 'Aucune source lisible. Ouvre le menu des sources.'
             }
+            emptyAction={noSource?.action ? { label: noSource.action.label, onPress: () => onNoSourceAction(noSource.action!.kind) } : null}
             startAt={startAt}
             onProgress={onProgress}
             onEnd={() => markEpisodeDone(id)}

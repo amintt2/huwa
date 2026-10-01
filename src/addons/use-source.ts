@@ -9,7 +9,11 @@
 // Manual mode: the user picked a source in the menu; a failure drops back to auto.
 // Hosted player pages ("lecteurs web", see web-player.ts) are used by auto mode only when no
 // native source exists; the page is then shown in the web player instead of the native one.
-import { useEffect, useMemo, useState } from 'react';
+// Answers served from the disk cache (registry.ts) may carry expired links: a failure on one of
+// them refetches the addons once and gives that source another chance before dropping it.
+// `preview` (pre-search from a detail page / the home screen): same search and race, but a
+// torrent is only resolved through a debrid service (never the on-device engine).
+import { useEffect, useMemo, useRef, useState } from 'react';
 
 import { useSettings } from '@/settings/settings';
 import { useRaceBudget } from '@/settings/network';
@@ -20,6 +24,7 @@ import { isExternal, isPlayable, isTorrent, isYouTube, type AddonStream } from '
 import { decideStart, estimateBitrateMbps, pickUpgrade, speedLabel, speedVerdict, type RaceCandidate, type Speed, type UpgradeSide } from './race';
 import { raceClock, useRace, type RaceEntry } from './race-runner';
 import { detectQuality, rankStreams, streamKey, type Quality } from './quality';
+import { classifyNoSource } from './no-source';
 import { useAddonPrefs, useAddons, useStreams } from './registry';
 import { autoWebPlayerUrl, hostOf, needsProbe, useProbedUrls, webPlayerUrl } from './web-player';
 
@@ -39,9 +44,17 @@ const RACE_TORRENTS = 2;
 
 const isLoopback = (u: string) => /^https?:\/\/(127\.|localhost[:/]|\[::1\])/i.test(u);
 
-/** `enabled: false` = idle (used to prefetch the next episode only once armed). */
-export function useSource(seriesId: string, episode: number, { enabled = true }: { enabled?: boolean } = {}) {
-  const { streams, infos, pending, failed } = useStreams(seriesId, episode, enabled);
+export type SourceOptions = {
+  /** false = idle (used to prefetch the next episode only once armed). */
+  enabled?: boolean;
+  /** Pre-search: no on-device torrent engine, nothing remembered as "played". */
+  preview?: boolean;
+  /** The on-device torrent engine exists but is switched off (for the "no source" reason). */
+  engineAvailable?: boolean;
+};
+
+export function useSource(seriesId: string, episode: number, { enabled = true, preview = false, engineAvailable = false }: SourceOptions = {}) {
+  const { streams, infos, pending, failed, asked, refreshed, refresh } = useStreams(seriesId, episode, enabled);
   const prefs = useAddonPrefs();
   const { watchMode, subLangs, dubLangs } = useSettings();
   const langPrefs = useMemo(() => ({ watchMode, subLangs, dubLangs }), [watchMode, subLangs, dubLangs]);
@@ -70,6 +83,12 @@ export function useSource(seriesId: string, episode: number, { enabled = true }:
   const [locked, setLocked] = useState<string | undefined>();
   /** Upgrades tried and abandoned (stalled, other engine…): not offered again. */
   const [skipUpgrade, setSkipUpgrade] = useState<string[]>([]);
+  /** Cached links that failed, waiting for the addons' fresh answer (refresh generation). */
+  const [suspended, setSuspended] = useState<{ keys: string[]; gen: number }>({ keys: [], gen: -1 });
+  /** Cached links already given their second chance. */
+  const retried = useRef(new Set<string>());
+  // The fresh answer arrived: suspended links compete again (same link = retried once).
+  const suspendedKeys = suspended.gen >= 0 && refreshed > suspended.gen ? [] : suspended.keys;
 
   /** Hosted player page of this stream, or null. */
   const webOf = (s: AddonStream) => webPlayerUrl(s, probed);
@@ -107,11 +126,11 @@ export function useSource(seriesId: string, episode: number, { enabled = true }:
 
   // ---- candidates: usable, not failed, not still being classified (preference order) ----
   const candidates = useMemo(() => {
-    const list = ranked.filter((s) => usable(s) && !bad.includes(streamKey(s)) && !probing(s));
+    const list = ranked.filter((s) => usable(s) && !bad.includes(streamKey(s)) && !suspendedKeys.includes(streamKey(s)) && !probing(s));
     // Language, then quality, then the ranking (stable sort).
     return list.sort((a, b) => langOf(a) - langOf(b) || qualityOf(b) - qualityOf(a));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [ranked, bad, resolverLabel, cached, probed, prefs.preferredQuality, langPrefs]);
+  }, [ranked, bad, suspendedKeys, resolverLabel, cached, probed, prefs.preferredQuality, langPrefs]);
 
   // ---- cached torrents at the top: resolved ahead (debrid only) to be measured too ----
   const torrentKeys = enabled
@@ -155,6 +174,16 @@ export function useSource(seriesId: string, episode: number, { enabled = true }:
     [candidates, race.results, resolved],
   );
 
+  // A link from the disk cache proved dead in the race: the addons are asked again (once).
+  const cachedDead = enabled && candidates.some((s) => s.cachedAt != null && deadKeys.has(streamKey(s)));
+  const refreshedForDead = useRef(false);
+  useEffect(() => {
+    if (!cachedDead || refreshedForDead.current) return;
+    refreshedForDead.current = true;
+    void refresh();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cachedDead]);
+
   // ---- pool: safe sources first (direct link, cached torrent), dead links out ----
   const pool = useMemo(() => {
     const alive = candidates.filter((s) => !deadKeys.has(streamKey(s)));
@@ -194,7 +223,12 @@ export function useSource(seriesId: string, episode: number, { enabled = true }:
     return () => clearTimeout(t);
   }, [waitMs, decision]);
 
-  const lockedStream = locked && !bad.includes(locked) ? ranked.find((s) => streamKey(s) === locked) : undefined;
+  // The playing source stays even when a background refresh of the addons no longer lists it
+  // (new links for the same files): playback never restarts because of a refresh.
+  const [lastLocked, setLastLocked] = useState<AddonStream | undefined>();
+  const lockedListed = locked && !bad.includes(locked) ? ranked.find((s) => streamKey(s) === locked) : undefined;
+  if (lockedListed && lockedListed !== lastLocked) setLastLocked(lockedListed);
+  const lockedStream = lockedListed ?? (locked && !bad.includes(locked) && lastLocked && streamKey(lastLocked) === locked ? lastLocked : undefined);
   const auto = decision?.key ? pool.find((s) => streamKey(s) === decision.key) : undefined;
 
   const current = (manual ? ranked.find((s) => streamKey(s) === manual) : undefined) ?? lockedStream ?? auto;
@@ -203,14 +237,25 @@ export function useSource(seriesId: string, episode: number, { enabled = true }:
   const url = current && !webUrl ? playUrlOf(current) : undefined;
   useEffect(() => {
     const group = current?.behaviorHints?.bingeGroup;
-    if (enabled && (url || webUrl) && group) lastBinge.set(seriesId, group);
-  }, [enabled, url, webUrl, current, seriesId]);
+    if (enabled && !preview && (url || webUrl) && group) lastBinge.set(seriesId, group);
+  }, [enabled, preview, url, webUrl, current, seriesId]);
   // The auto source reached the native player: keep it (no reload when better answers arrive
   // later; upgrades go through `upgrade`). Hosted pages are not kept: a direct link showing up
   // later still replaces them. Adjusted during render ("state from previous render" pattern).
   if (enabled && !manual && !lockedStream && currentKey && url && locked !== currentKey) setLocked(currentKey);
 
   const markBad = (k: string, error?: string) => {
+    const s = ranked.find((x) => streamKey(x) === k) ?? (lastLocked && streamKey(lastLocked) === k ? lastLocked : undefined);
+    // Link from the disk cache: maybe just expired. Ask the addons again, then retry once.
+    if (s?.cachedAt != null && !retried.current.has(k)) {
+      retried.current.add(k);
+      setSuspended((p) => ({ keys: p.keys.includes(k) ? p.keys : [...(p.gen >= 0 && refreshed > p.gen ? [] : p.keys), k], gen: refreshed }));
+      setResolved((r) => (r[k] ? { ...r, [k]: {} } : r));
+      setManual((m) => (m === k ? undefined : m));
+      setLocked((l) => (l === k ? undefined : l));
+      void refresh();
+      return;
+    }
     setBad((b) => (b.includes(k) ? b : [...b, k]));
     if (error) setResolved((r) => ({ ...r, [k]: { ...r[k], error } }));
     setManual((m) => (m === k ? undefined : m));
@@ -221,17 +266,17 @@ export function useSource(seriesId: string, episode: number, { enabled = true }:
   useEffect(() => {
     if (!enabled || !current || !currentKey || !isTorrent(current) || !resolverLabel || resolved[currentKey]) return;
     const ctrl = new AbortController();
-    resolveTorrent(
-      { infoHash: current.infoHash!, fileIdx: current.fileIdx, filename: current.behaviorHints?.filename, sources: current.sources, episode },
-      ctrl.signal,
-    )
-      .then(({ url: u, via }) => setResolved((r) => ({ ...r, [currentKey]: { url: u, via } })))
+    const ref = { infoHash: current.infoHash!, fileIdx: current.fileIdx, filename: current.behaviorHints?.filename, sources: current.sources, episode };
+    // Pre-search: debrid only (an on-device torrent would start downloading).
+    (preview ? resolveTorrentViaDebrid(ref, ctrl.signal) : resolveTorrent(ref, ctrl.signal))
+      .then((r) => r && setResolved((m) => ({ ...m, [currentKey]: { url: r.url, via: r.via } })))
       .catch((e) => {
+        if (preview) return;
         if (!ctrl.signal.aborted) markBad(currentKey, e instanceof Error ? e.message : 'Échec');
       });
     return () => ctrl.abort();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [currentKey, resolverLabel, enabled]);
+  }, [currentKey, resolverLabel, enabled, preview]);
 
   // ---- upgrade: strictly better quality, same language fit, proved fast ----
   const sideOf = (s: AddonStream): UpgradeSide => ({
@@ -281,6 +326,34 @@ export function useSource(seriesId: string, episode: number, { enabled = true }:
     setResolved((m) => (m[k]?.error ? { ...m, [k]: {} } : m));
     setManual(k);
   };
+
+  /** "Chercher à nouveau": every addon asked again, failed links given another chance. */
+  const retryAll = () => {
+    setBad([]);
+    setResolved({});
+    setSuspended({ keys: [], gen: -1 });
+    retried.current.clear();
+    setManual(undefined);
+    setLocked(undefined);
+    void refresh(true);
+  };
+
+  // Plain-French reason when nothing can play (watch screen).
+  const playableAll = ranked.filter(usable);
+  const noSource = !current && !race.probing.size
+    ? classifyNoSource({
+        asked,
+        pending,
+        deciding: pool.length > 0 || suspendedKeys.length > 0 || ranked.some(probing),
+        streams: streams.length,
+        failed,
+        torrents: streams.filter(isTorrent).length,
+        canResolveTorrents: !!resolverLabel,
+        engineAvailable,
+        playable: playableAll.length,
+        dead: playableAll.filter((s) => bad.includes(streamKey(s)) || deadKeys.has(streamKey(s))).length,
+      })
+    : null;
 
   const stateOf = (s: AddonStream): SourceState => {
     const k = streamKey(s);
@@ -337,6 +410,10 @@ export function useSource(seriesId: string, episode: number, { enabled = true }:
     deferUpgrade,
     pick,
     markBad,
+    retryAll,
+    noSource,
+    /** Addons asked (0 = no source addon installed). */
+    asked,
   };
 }
 

@@ -2,6 +2,7 @@ import Ionicons from '@expo/vector-icons/Ionicons';
 import { router } from 'expo-router';
 import { StyleSheet, Text, View } from 'react-native';
 
+import { traceTap } from '@/addons/timing';
 import type { Series } from '@/data/catalog';
 import type { Release } from '@/data/releases';
 import type { ContinueItem } from '@/store/derived';
@@ -66,7 +67,10 @@ export function RankCard({ series, rank, kind }: { series: Series; rank: number;
 
 export function ContinueCard({ item, width = 208 }: { item: ContinueItem; width?: number }) {
   return (
-    <Press onPress={() => router.push(item.href)} style={{ width, gap: 8 }} accessibilityLabel={`${item.series.title}, ${item.label}`}>
+    <Press onPress={() => {
+      if (item.kind === 'anime') traceTap(item.key);
+      router.push(item.href);
+    }} style={{ width, gap: 8 }} accessibilityLabel={`${item.series.title}, ${item.label}`}>
       <Cover
         palette={item.series.palette} image={item.series.image}
         width={width}

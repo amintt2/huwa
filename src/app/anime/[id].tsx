@@ -3,8 +3,10 @@ import { router, useLocalSearchParams } from 'expo-router';
 import { ScrollView, StyleSheet, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
+import { traceTap } from '@/addons/timing';
 import { BridgeToManhwa } from '@/components/bridge';
 import { ListsButton } from '@/components/lists';
+import { PRIORITY, usePresearch } from '@/components/presearch';
 import { Button, Chip, Cover, IconButton, Press, Progress, Txt } from '@/components/ui';
 import { approx, chapterRangeLabel, resumeEpisode } from '@/data/bridge';
 import { episodeLabel, getSeries } from '@/data/catalog';
@@ -19,6 +21,17 @@ export default function AnimeDetail() {
   const progress = useStore((s) => s.episodes);
   const inList = useStore((s) => s.myList.includes(id));
   const commentCount = useThread(`series:${id}`).length;
+  // The episode "Commencer / Reprendre" opens: its sources are searched (and on Wi-Fi buffered)
+  // while the page is read.
+  const target = series?.anime ? resumeEpisode(series, progress) ?? series.anime.episodes[0] : undefined;
+  usePresearch(
+    'detail',
+    series && target
+      ? { seriesId: series.id, episodeId: target.id, episode: target.number, meta: { title: series.title, artist: episodeLabel(target), artwork: series.image } }
+      : null,
+    PRIORITY.detail,
+    { dwellMs: 300 },
+  );
   if (!series?.anime) return <Txt style={{ padding: S.xl }}>Anime introuvable.</Txt>;
 
   const eps = series.anime.episodes;
@@ -49,7 +62,10 @@ export default function AnimeDetail() {
             style={{ flex: 1 }}
             icon="play"
             label={started ? `Reprendre Ép. ${resume.number}` : 'Commencer'}
-            onPress={() => router.push(`/watch/${resume.id}`)}
+            onPress={() => {
+              traceTap(resume.id);
+              router.push(`/watch/${resume.id}`);
+            }}
           />
           <Press onPress={() => toggleMyList(series.id)} style={styles.square} accessibilityLabel={inList ? 'Retirer de ma liste' : 'Ajouter à ma liste'}>
             <Ionicons name={inList ? 'checkmark' : 'add'} size={24} color={C.text} />

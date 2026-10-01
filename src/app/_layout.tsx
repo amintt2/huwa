@@ -10,6 +10,7 @@ import { hydrateAddons } from '@/addons/registry';
 import { cloudBackup } from '@/p2p/cloud-backup';
 import { registerNativeTorrentEngine } from '@/torrent/register';
 import { Onboarding } from '@/components/onboarding';
+import { PresearchHost } from '@/components/presearch';
 import { OfflineBanner } from '@/components/states';
 import { loadCatalog } from '@/data/anilist';
 import { hydrateLinks } from '@/manga-ext/link';
@@ -143,6 +144,7 @@ export default function RootLayout() {
       {!isDemo && me ? <PasskeyOffer /> : null}
       <OfflineBanner />
       <PaperbackHost />
+      {me ? <PresearchHost /> : null}
     </ThemeProvider>
   );
 }
