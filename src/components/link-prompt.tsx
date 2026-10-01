@@ -82,7 +82,7 @@ export function LinkPrompt() {
   );
 }
 
-function Scanner({ visible, onClose, onLink }: { visible: boolean; onClose: () => void; onLink: (raw: string, link: PastedLink) => void }) {
+export function Scanner({ visible, onClose, onLink }: { visible: boolean; onClose: () => void; onLink: (raw: string, link: PastedLink) => void }) {
   const t = useT();
   const insets = useSafeAreaInsets();
   const [permission, request] = useCameraPermissions();

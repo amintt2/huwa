@@ -28,17 +28,17 @@ export function RecommendedExtensions() {
   };
 
   return (
-    <View style={{ gap: S.sm }}>
-      {RECOMMENDED.map((r) => {
+    <View style={styles.card}>
+      {RECOMMENDED.map((r, i) => {
         const on = installed(r.url);
         return (
-          <View key={r.url} style={styles.card}>
+          <View key={r.url} style={[styles.row, i < RECOMMENDED.length - 1 && styles.line]}>
             <View style={styles.icon}>
               <Ionicons name={r.icon} size={20} color={C.accentText} />
             </View>
             <View style={{ flex: 1, gap: 2 }}>
-              <Txt v="label">{r.name}</Txt>
-              <Txt v="small" numberOfLines={2}>{r.what}</Txt>
+              <Txt v="label" numberOfLines={1}>{r.name}</Txt>
+              <Txt v="small" numberOfLines={3} style={{ fontSize: 12, lineHeight: 17 }}>{r.what}</Txt>
             </View>
             <Press
               onPress={() => add(r.url)}
@@ -47,11 +47,17 @@ export function RecommendedExtensions() {
               accessibilityLabel={on ? `${r.name} ajouté` : `Ajouter ${r.name}`}
               style={[styles.add, on && styles.added]}>
               {busy === r.url ? (
-                <ActivityIndicator color={C.white} />
+                <ActivityIndicator color={C.accentText} />
               ) : on ? (
-                <Ionicons name="checkmark" size={18} color={C.accentText} />
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+                  <Ionicons name="checkmark" size={16} color={C.success} />
+                  <Txt v="small" color={C.success} style={F.semibold}>Ajoutée</Txt>
+                </View>
               ) : (
-                <Txt v="small" color={C.white} style={F.semibold}>Ajouter</Txt>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+                  <Ionicons name="add" size={16} color={C.accentText} />
+                  <Txt v="small" color={C.accentText} style={F.bold}>Ajouter</Txt>
+                </View>
               )}
             </Press>
           </View>
@@ -62,8 +68,13 @@ export function RecommendedExtensions() {
 }
 
 const styles = StyleSheet.create({
-  card: { flexDirection: 'row', alignItems: 'center', gap: S.md, padding: S.md, borderRadius: R.card, backgroundColor: C.surface },
-  icon: { width: 40, height: 40, borderRadius: 12, alignItems: 'center', justifyContent: 'center', backgroundColor: C.accentSoft },
-  add: { minWidth: 84, minHeight: 36, paddingHorizontal: S.md, borderRadius: R.pill, alignItems: 'center', justifyContent: 'center', backgroundColor: C.accent },
-  added: { backgroundColor: C.accentSoft },
+  card: { borderRadius: R.card + 2, borderCurve: 'continuous', backgroundColor: C.surface, borderWidth: 1, borderColor: C.border, overflow: 'hidden' },
+  row: { flexDirection: 'row', alignItems: 'center', gap: S.md, padding: S.md },
+  line: { borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: C.borderStrong },
+  icon: { width: 44, height: 44, borderRadius: 12, borderCurve: 'continuous', alignItems: 'center', justifyContent: 'center', backgroundColor: C.accentSoft, borderWidth: 1, borderColor: C.accentLine },
+  add: {
+    minWidth: 92, minHeight: 36, paddingHorizontal: S.md, borderRadius: R.pill, alignItems: 'center', justifyContent: 'center',
+    backgroundColor: C.accentSoft, borderWidth: 1, borderColor: C.accentLine,
+  },
+  added: { backgroundColor: 'rgba(61,220,151,0.10)', borderColor: 'rgba(61,220,151,0.30)' },
 });

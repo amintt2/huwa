@@ -121,6 +121,8 @@ export default function RootLayout() {
           <Stack.Screen name="addons" />
           <Stack.Screen name="manga-sources" />
           <Stack.Screen name="paperback" options={{ animation: 'none' }} />
+          <Stack.Screen name="extension" />
+          <Stack.Screen name="extension-add" options={{ presentation: 'modal', contentStyle: { backgroundColor: C.surface } }} />
           <Stack.Screen name="addon" options={SHEET} />
           <Stack.Screen name="install" options={SHEET} />
           <Stack.Screen name="pack" options={{ presentation: 'modal', contentStyle: { backgroundColor: C.surface } }} />
