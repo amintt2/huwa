@@ -162,15 +162,30 @@ public class HuwaPasskeyModule: Module {
     promise: Promise,
     map: @escaping (ASAuthorization) -> [String: Any]?
   ) {
-    if pending != nil { return promise.reject("busy", "Une demande de clé d’accès est déjà en cours") }
+    if let previous = pending {
+      // A request whose controller never called back (sheet torn down without a delegate call)
+      // must not block every later call: after a while, cancel it and go on.
+      guard Date().timeIntervalSince(previous.startedAt) > Self.staleAfter else {
+        return promise.reject("busy", "Une demande de clé d’accès est déjà en cours")
+      }
+      previous.abandon()
+      pending = nil
+    }
     let window = appContext?.utilities?.currentViewController()?.view.window ?? Self.keyWindow()
-    let handler = PasskeyRequest(anchor: window) { [weak self] result in
-      self?.pending = nil
+    let handler = PasskeyRequest(anchor: window) { [weak self] request, result in
+      if self?.pending === request { self?.pending = nil }
       switch result {
       case .success(let authorization):
         if let value = map(authorization) { promise.resolve(value) } else { promise.reject("failed", "Réponse inattendue") }
       case .failure(let error):
-        let (code, message) = Self.describe(error)
+        let (described, message) = Self.describe(error)
+        var code = described
+        // With .preferImmediatelyAvailableCredentials, "nothing on this device" comes back as a
+        // cancel, without any sheet: report it as no-credentials so the app can offer the
+        // other-device (QR) flow. A cancel after the sheet was shown stays a user cancel.
+        if immediate, code == "cancelled", !request.presented || Date().timeIntervalSince(request.startedAt) < 1.0 {
+          code = "no-credentials"
+        }
         promise.reject(code, message)
       }
     }
@@ -185,6 +200,9 @@ public class HuwaPasskeyModule: Module {
       controller.performRequests()
     }
   }
+
+  /// A request still pending after this long is considered lost (the system sheet times out well before).
+  private static let staleAfter: TimeInterval = 180
 
   private static func describe(_ error: Error) -> (String, String) {
     let ns = error as NSError
@@ -220,25 +238,41 @@ public class HuwaPasskeyModule: Module {
 
 private final class PasskeyRequest: NSObject, ASAuthorizationControllerDelegate, ASAuthorizationControllerPresentationContextProviding {
   let anchor: UIWindow?
-  let done: (Result<ASAuthorization, Error>) -> Void
+  let done: (PasskeyRequest, Result<ASAuthorization, Error>) -> Void
   var controller: ASAuthorizationController?
+  let startedAt = Date()
+  /// The system asked where to show its sheet (UI was presented).
+  private(set) var presented = false
+  private var finished = false
 
-  init(anchor: UIWindow?, done: @escaping (Result<ASAuthorization, Error>) -> Void) {
+  init(anchor: UIWindow?, done: @escaping (PasskeyRequest, Result<ASAuthorization, Error>) -> Void) {
     self.anchor = anchor
     self.done = done
   }
 
   func presentationAnchor(for controller: ASAuthorizationController) -> ASPresentationAnchor {
-    anchor ?? ASPresentationAnchor()
+    presented = true
+    return anchor ?? ASPresentationAnchor()
+  }
+
+  private func finish(_ result: Result<ASAuthorization, Error>) {
+    guard !finished else { return }
+    finished = true
+    done(self, result)
+    controller = nil
+  }
+
+  /// Settles a request the system never answered (its promise must not hang forever).
+  func abandon() {
+    controller?.cancel()
+    finish(.failure(ASAuthorizationError(.canceled)))
   }
 
   func authorizationController(controller: ASAuthorizationController, didCompleteWithAuthorization authorization: ASAuthorization) {
-    done(.success(authorization))
-    self.controller = nil
+    finish(.success(authorization))
   }
 
   func authorizationController(controller: ASAuthorizationController, didCompleteWithError error: Error) {
-    done(.failure(error))
-    self.controller = nil
+    finish(.failure(error))
   }
 }
