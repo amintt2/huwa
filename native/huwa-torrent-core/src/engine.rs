@@ -11,6 +11,7 @@
 
 use std::{
     collections::{HashMap, HashSet},
+    mem::ManuallyDrop,
     path::{Path, PathBuf},
     sync::{
         atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering},
@@ -216,13 +217,31 @@ impl Entry {
     }
 }
 
+/// The loopback HTTP server task (see `server::start`) and its graceful-stop signal.
+pub struct ServerHandle {
+    pub stop: tokio::sync::oneshot::Sender<()>,
+    pub task: tokio::task::JoinHandle<()>,
+}
+
 pub struct Engine {
-    pub runtime: tokio::runtime::Runtime,
+    /// Never dropped in place: the last `Arc<Engine>` may go away inside one of the runtime's own
+    /// tasks (an HTTP connection ending after `shutdown`), where a blocking runtime drop panics.
+    /// `Drop` uses `shutdown_background` instead.
+    pub runtime: ManuallyDrop<tokio::runtime::Runtime>,
     pub session: Arc<Session>,
     config: RwLock<Config>,
     entries: RwLock<HashMap<String, Arc<Entry>>>,
     port: AtomicU64,
     torrents_dir: PathBuf,
+    server: parking_lot::Mutex<Option<ServerHandle>>,
+}
+
+impl Drop for Engine {
+    fn drop(&mut self) {
+        // SAFETY: taken exactly once, here; the field is never used afterwards.
+        let runtime = unsafe { ManuallyDrop::take(&mut self.runtime) };
+        runtime.shutdown_background();
+    }
 }
 
 pub fn now_secs() -> u64 {
@@ -338,12 +357,13 @@ impl Engine {
             .context("creating librqbit session")?;
 
         let engine = Arc::new(Self {
-            runtime,
+            runtime: ManuallyDrop::new(runtime),
             session,
             config: RwLock::new(config),
             entries: RwLock::new(HashMap::new()),
             port: AtomicU64::new(0),
             torrents_dir,
+            server: parking_lot::Mutex::new(None),
         });
         engine.restore_entries();
         engine.spawn_janitor();
@@ -360,6 +380,14 @@ impl Engine {
 
     pub fn set_port(&self, port: u16) {
         self.port.store(port as u64, Ordering::Relaxed);
+    }
+
+    /// Called by `server::start`; `shutdown` stops and awaits it.
+    pub fn set_server(&self, server: ServerHandle) {
+        if let Some(old) = self.server.lock().replace(server) {
+            let _ = old.stop.send(());
+            old.task.abort();
+        }
     }
 
     pub fn url_for(&self, hex: &str, file: Option<usize>) -> String {
@@ -823,9 +851,29 @@ impl Engine {
         cfg.clone()
     }
 
+    /// Stops everything that keeps the engine alive: the HTTP server (its task owns an
+    /// `Arc<Engine>`), the magnet resolutions still running, then the librqbit session.
     pub fn shutdown(&self) {
         self.persist_entries();
-        self.runtime.block_on(self.session.stop());
+        let server = self.server.lock().take();
+        let resolvers: Vec<_> = self.entries.read().values().filter_map(|e| e.resolver.lock().take()).collect();
+        self.runtime.block_on(async {
+            if let Some(ServerHandle { stop, mut task }) = server {
+                let _ = stop.send(());
+                // Graceful first (in-flight responses end); a video stream can last for ever, so
+                // the listener is dropped after a short grace period anyway.
+                if tokio::time::timeout(Duration::from_secs(2), &mut task).await.is_err() {
+                    task.abort();
+                    let _ = task.await;
+                }
+            }
+            for t in resolvers {
+                t.abort();
+                let _ = t.await;
+            }
+            self.session.stop().await;
+        });
+        self.port.store(0, Ordering::Relaxed);
     }
 }
 
@@ -900,6 +948,18 @@ mod tests {
         assert_eq!(Arc::strong_count(&entry), 1);
         assert_eq!(session_torrents(&engine), 0);
         engine.shutdown();
+    }
+
+    #[test]
+    fn shutdown_stops_the_http_server_and_releases_the_engine() {
+        let engine = test_engine("shutdown");
+        let port = engine.runtime.block_on(crate::server::start(engine.clone())).unwrap();
+        assert!(std::net::TcpStream::connect(("127.0.0.1", port)).is_ok());
+        assert!(Arc::strong_count(&engine) >= 2, "the server task holds the engine");
+        engine.shutdown();
+        assert_eq!(Arc::strong_count(&engine), 1, "server task gone: nothing else keeps the engine alive");
+        assert!(std::net::TcpStream::connect(("127.0.0.1", port)).is_err(), "listener closed");
+        drop(engine); // runtime shut down without blocking
     }
 
     #[test]
