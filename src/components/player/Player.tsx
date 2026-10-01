@@ -91,7 +91,7 @@ export type PlayerProps = {
    * addons still answering (`answered` 0..1), `race` = links being tested / torrent resolved,
    * null = nothing more is coming (the bar fades out, `emptyText` shows).
    */
-  sourceSearch?: { phase: 'search' | 'race' | null; answered: number };
+  sourceSearch?: { phase: 'search' | 'race' | 'peers' | null; answered: number };
   /** Short message over the video (e.g. "better quality found"). */
   notice?: string;
   /** The parent should hide everything else and give the player the whole screen while `true`. */

@@ -19,19 +19,23 @@ import { scheduleOnRN } from 'react-native-worklets';
 import { Txt } from '@/components/ui';
 import { C, S } from '@/theme/tokens';
 
-/** search: addons answering · race: links measured / torrent resolved · connect: player loading. */
-export type LoadPhase = 'search' | 'race' | 'connect' | 'ready';
+/**
+ * search: addons answering · race: links measured / torrent resolved · peers: torrents probed by
+ * the on-device engine · connect: player loading.
+ */
+export type LoadPhase = 'search' | 'race' | 'peers' | 'connect' | 'ready';
 
-const RANK: Record<LoadPhase, number> = { search: 0, race: 1, connect: 2, ready: 3 };
+const RANK: Record<LoadPhase, number> = { search: 0, race: 1, peers: 2, connect: 3, ready: 4 };
 const LABEL: Record<LoadPhase, string> = {
   search: 'Recherche des sources…',
   race: 'Test des liens…',
+  peers: 'Recherche de pairs…',
   connect: 'Connexion au flux…',
   ready: 'C’est parti',
 };
 /** Where each phase starts (jump) and the ceiling it crawls towards. */
-const FLOOR = { search: 0.06, race: 0.45, connect: 0.7 };
-const CEIL = { search: 0.42, race: 0.68, connect: 0.9 };
+const FLOOR = { search: 0.06, race: 0.45, peers: 0.5, connect: 0.7 };
+const CEIL = { search: 0.42, race: 0.68, peers: 0.68, connect: 0.9 };
 /** No signal for this long (sources definitively failed): fade out, the empty text takes over. */
 const GIVE_UP_MS = 1200;
 

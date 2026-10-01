@@ -106,7 +106,7 @@ function WatchScreen({ id }: { id: string }) {
   const [maxPending, setMaxPending] = useState(0);
   if (src.pending > maxPending) setMaxPending(src.pending);
   const sourceSearch = {
-    phase: src.racing || src.deciding || (src.current && !src.url) ? 'race' : src.pending > 0 ? 'search' : null,
+    phase: src.peerRacing ? 'peers' : src.racing || src.deciding || (src.current && !src.url) ? 'race' : src.pending > 0 ? 'search' : null,
     answered: maxPending ? 1 - src.pending / maxPending : 0,
   } as const;
   const [menuOpen, setMenuOpen] = useState(false);
@@ -333,6 +333,8 @@ function WatchScreen({ id }: { id: string }) {
                 ? noSource.message
                 : src.racing
                   ? 'Test de la vitesse des sources…'
+                  : src.peerRacing
+                    ? 'Recherche de pairs…'
                   : src.pending > 0
                     ? 'Recherche de sources…'
                     : !src.resolverLabel && src.ranked.some(isTorrent)
