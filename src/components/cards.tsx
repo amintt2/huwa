@@ -45,7 +45,7 @@ export function ReleaseCard({ release, width = 168 }: { release: Release; width?
     if (ep) router.push(`/watch/${ep.id}`);
   };
   return (
-    <Press onPress={() => router.push(release.href)} style={[styles.release, { width }]} accessibilityLabel={`${series.title}, ${label}`}>
+    <Press onPress={() => router.push(release.href)} style={[styles.release, { width }]} accessibilityLabel={`${series.title}, ${label}, ${release.when}`}>
       <Cover palette={series.palette} image={series.image} width={width - 2} height={(width - 2) * 0.62} radius={0}>
         <TypeBadge kind={kind} />
         {release.tag && (

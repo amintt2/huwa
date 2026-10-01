@@ -108,7 +108,7 @@
               <button class="btn btn-soft" type="button" id="copyApp">Copier le lien huwa://</button>
             </div>
           </div>
-          <div class="qr" id="qr" role="img" aria-label="QR code du lien huwa://pack"></div>
+          <div class="qr" id="qr" role="img" aria-label="QR code du lien de ce pack"></div>
         </div>
 
         <section id="videoSec" hidden>
@@ -176,7 +176,10 @@
         $('openApp').href = app;
         $('copyApp').dataset.copy = app;
         $('copyPage').dataset.copy = P.pageLink(ref);
-        const ok = P.qr($('qr'), app);
+        // The QR code carries the https page link: a universal link that opens Huwa when it is
+        // installed (apple-app-site-association) and this page otherwise. The button keeps
+        // huwa:// (iOS never opens the app for a link to the page's own site).
+        const ok = P.qr($('qr'), P.pageLink(ref));
         $('qr').hidden = !ok;
         $('qrHint').textContent = ok ? 'Sur ordinateur, scanne le QR code avec ton téléphone.' : 'Ce pack est trop long pour un QR code : ouvre cette page sur ton téléphone.';
       }

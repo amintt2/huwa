@@ -440,3 +440,6 @@ const styles = StyleSheet.create({
     backgroundColor: C.accentSoft, alignSelf: 'stretch',
   },
 });
+
+// A reader crash stays on this route (retry / back) instead of taking the whole app down.
+export { ErrorScreen as ErrorBoundary } from '@/components/error-screen';

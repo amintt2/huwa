@@ -17,7 +17,8 @@ import { C, S } from '@/theme/tokens';
  */
 export function useInstallParam(route: 'addon' | 'install' | 'pack', parsed?: string) {
   const raw = useLinkingURL();
-  const m = raw && new RegExp(`^[a-z][\\w+.-]*://(?:/)?${route}\\?(?:.*&)?url=([^&]+)`, 'i').exec(raw);
+  // `huwa://<route>?…` or the site's universal link `https://huwa.mciut.fr/<route>?…`.
+  const m = raw && new RegExp(`^[a-z][\\w+.-]*://(?:/|(?:www\\.)?huwa\\.mciut\\.fr/)?${route}\\?(?:.*&)?url=([^&]+)`, 'i').exec(raw);
   if (!m) return parsed;
   try {
     return decodeURIComponent(m[1]);

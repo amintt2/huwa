@@ -356,12 +356,19 @@ export function Player({
   useEffect(() => {
     segRef.current.outro = outro;
   }, [outro]);
+  // New source / episode: the auto-next countdown may run again.
+  useEffect(() => {
+    segRef.current.countdownFired = false;
+  }, [source?.uri]);
 
   useEventListener(player, 'timeUpdate', ({ currentTime, bufferedPosition }) => {
     setTime({ t: currentTime, buffered: bufferedPosition });
     lastPos.current = { t: currentTime, d: player.duration || lastPos.current.d };
-    // The ending started: offer the next episode with a cancellable countdown (once).
+    // The ending started: offer the next episode with a cancellable countdown (once per pass:
+    // seeking back before the ending re-arms it).
     const o = segRef.current.outro;
+    const armAt = o ? o.start : (player.duration || Infinity) - 30;
+    if (segRef.current.countdownFired && currentTime < armAt - 5) segRef.current.countdownFired = false;
     if (o && !segRef.current.countdownFired && currentTime >= o.start && currentTime < o.end && cb.current.next && getPrefs().autoNext) {
       segRef.current.countdownFired = true;
       setCountdown(AUTO_NEXT_SECONDS);

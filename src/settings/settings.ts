@@ -64,6 +64,8 @@ export const SUBTITLE_FONT: Record<SubtitleSize, number> = { small: 15, medium: 
 let settings: Settings = DEFAULT_SETTINGS;
 let hydrated = false;
 let hydrating: Promise<void> | undefined;
+/** Set before the saved settings were read (first load only): re-applied on top of them. */
+let early: Partial<Settings> | null = null;
 const listeners = new Set<() => void>();
 
 const emit = () => listeners.forEach((l) => l());
@@ -105,6 +107,11 @@ export function hydrateSettings(force = false): Promise<void> {
     .catch(() => {})
     .finally(() => {
       hydrated = true;
+      if (early) {
+        settings = { ...settings, ...early };
+        early = null;
+        AsyncStorage.setItem(SETTINGS_KEY, JSON.stringify(settings)).catch(() => {});
+      }
       emit();
     });
   return hydrating;
@@ -131,5 +138,9 @@ export function setSetting<K extends keyof Settings>(key: K, value: Settings[K])
   if (settings[key] === value) return;
   settings = { ...settings, [key]: value };
   emit();
+  if (!hydrated) {
+    early = { ...early, [key]: value };
+    return;
+  }
   AsyncStorage.setItem(SETTINGS_KEY, JSON.stringify(settings)).catch(() => {});
 }

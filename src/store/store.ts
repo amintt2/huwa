@@ -6,6 +6,8 @@ import { useEffect, useState, useSyncExternalStore } from 'react';
 
 import { getSeries } from '@/data/catalog';
 
+import { debouncedWriter } from './persist';
+
 export type EpisodeProgress = { position: number; duration: number; done: boolean; updatedAt: number };
 export type ChapterProgress = { ratio: number; done: boolean; updatedAt: number };
 
@@ -48,15 +50,13 @@ const initial: State = {
 let state: State = initial;
 let hydrated = false;
 const listeners = new Set<() => void>();
-let saveTimer: ReturnType<typeof setTimeout> | undefined;
+// Flushed on backgrounding and when the player closes (see persist.ts).
+const saver = debouncedWriter(() => AsyncStorage.setItem(KEY, JSON.stringify(state)), 400);
 
 function set(updater: (s: State) => State) {
   state = updater(state);
   listeners.forEach((l) => l());
-  clearTimeout(saveTimer);
-  saveTimer = setTimeout(() => {
-    AsyncStorage.setItem(KEY, JSON.stringify(state)).catch(() => {});
-  }, 400);
+  saver.schedule();
 }
 
 const subscribe = (l: () => void) => {
@@ -174,7 +174,7 @@ export const seriesTitleOfTarget = (target: string) => getSeries(seriesIdOfTarge
 
 /** Re-read the persisted state, e.g. after importing a backup (Réglages → Importer). */
 export async function rehydrateStore() {
-  clearTimeout(saveTimer);
+  saver.cancel();
   try {
     const raw = await AsyncStorage.getItem(KEY);
     state = raw ? { ...initial, ...JSON.parse(raw) } : { ...initial };

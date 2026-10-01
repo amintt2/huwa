@@ -68,10 +68,14 @@ export default function Security() {
     }
     Alert.alert(
       'Retirer la phrase d’iCloud ?',
-      'La copie est supprimée de ton Trousseau iCloud sur tous tes appareils Apple. Garde ta phrase notée ailleurs.',
+      'La copie est supprimée de ton Trousseau iCloud sur TOUS tes appareils Apple, y compris ceux qui comptaient dessus pour retrouver ton compte. ' +
+        (state?.phraseVerified
+          ? 'Ta phrase est vérifiée : garde-la notée en lieu sûr.'
+          : 'Ta phrase n’est pas vérifiée : si tu ne l’as pas notée, ton compte deviendra irrécupérable en cas de perte de ce téléphone.'),
       [
         { text: 'Annuler', style: 'cancel' },
-        { text: 'Retirer', style: 'destructive', onPress: () => cloudBackup.setEnabled(false).catch(() => {}) },
+        ...(state?.phraseVerified ? [] : [{ text: 'Noter ma phrase d’abord', onPress: () => router.push('/settings/phrase') }]),
+        { text: 'Retirer de partout', style: 'destructive', onPress: () => cloudBackup.setEnabled(false).catch(() => {}) },
       ],
     );
   };
@@ -107,7 +111,13 @@ export default function Security() {
           </View>
         )}
 
-        <Group title="Sauvegardes">
+        <Group
+          title="Sauvegardes"
+          footer={
+            cloudBackupSupported && cloud.enabled
+              ? 'Désactiver le Trousseau iCloud efface la copie de ta phrase sur tous tes appareils Apple, pas seulement sur celui-ci.'
+              : undefined
+          }>
           <Row
             icon="key-outline"
             label="Phrase de récupération"
@@ -183,6 +193,10 @@ export default function Security() {
             <Row icon="finger-print-outline" label={`Empreinte ${me.fingerprint}`} detail={me.key} last />
           </Group>
         )}
+
+        <Group footer="Efface ton identité et tes données de cet appareil, et si tu veux la copie iCloud. Tout est expliqué avant de confirmer.">
+          <Row icon="trash-outline" label="Supprimer mon compte" destructive onPress={() => router.push('/settings/delete-account')} last />
+        </Group>
       </ScrollView>
     </View>
   );

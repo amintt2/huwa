@@ -1,12 +1,16 @@
 // Demo mode (store screenshots) must patch storage before anything reads it.
 import { isDemo } from '@/demo';
 import { DemoRoute } from '@/demo/route';
+// An account deleted last session: its P2P store goes before anything opens it.
+import { finishPendingDeletion } from '@/settings/delete-account';
 import { DarkTheme, Stack, ThemeProvider, router } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
 import { StatusBar } from 'expo-status-bar';
 import { useEffect, useState } from 'react';
+import { AppState } from 'react-native';
 
 import { hydrateAddons } from '@/addons/registry';
+import { isStoreBuild } from '@/config/channel';
 import { cloudBackup } from '@/p2p/cloud-backup';
 import { registerNativeTorrentEngine } from '@/torrent/register';
 import { Onboarding } from '@/components/onboarding';
@@ -25,10 +29,15 @@ import { useJournalSync } from '@/p2p/sync';
 import { setPendingLink, usePendingLink } from '@/packs/routes';
 import { useSettings, useSettingsHydrated } from '@/settings/settings';
 import { useListsHydrated } from '@/store/lists';
+import { flushPendingWrites, leavesForeground } from '@/store/persist';
 import { useHydrated } from '@/store/store';
 import { C } from '@/theme/tokens';
 
+finishPendingDeletion();
 SplashScreen.preventAutoHideAsync();
+
+// Any crash below the root shows a friendly screen with « Réessayer » (see error-screen.tsx).
+export { ErrorScreen as ErrorBoundary } from '@/components/error-screen';
 
 const theme = {
   ...DarkTheme,
@@ -50,6 +59,13 @@ export default function RootLayout() {
   const { onboarded } = useSettings();
   // Hold the splash until the catalog is on screen (cache or network), 6 s max.
   const [catalogReady, setCatalogReady] = useState(false);
+  // iOS may kill a suspended app without warning: write pending progress / lists before that.
+  useEffect(() => {
+    const sub = AppState.addEventListener('change', (s) => {
+      if (leavesForeground(s)) flushPendingWrites().catch(() => {});
+    });
+    return () => sub.remove();
+  }, []);
   useEffect(() => {
     hydrateAddons();
     registerNativeTorrentEngine();
@@ -122,24 +138,31 @@ export default function RootLayout() {
           <Stack.Screen name="settings/moderation" />
           <Stack.Screen name="settings/notifications" />
           <Stack.Screen name="settings/stats" />
-          <Stack.Screen name="addons" />
-          <Stack.Screen name="manga-sources" />
-          <Stack.Screen name="paperback" options={{ animation: 'none' }} />
-          <Stack.Screen name="extension" />
-          <Stack.Screen name="extension-add" options={{ presentation: 'modal', contentStyle: { backgroundColor: C.surface } }} />
-          <Stack.Screen name="addon" options={SHEET} />
-          <Stack.Screen name="install" options={SHEET} />
-          <Stack.Screen name="pack" options={{ presentation: 'modal', contentStyle: { backgroundColor: C.surface } }} />
-          <Stack.Screen name="pack-create" />
-          <Stack.Screen name="addon-catalog" />
+          <Stack.Screen name="settings/delete-account" />
+          <Stack.Screen name="about" />
+          {/* Extensions, packs, debrid and torrent: full flavor only. The App Store build is a
+              library app (PLAN.md « Version App Store »); links there are also redirected by
+              +native-intent. */}
+          <Stack.Protected guard={!isStoreBuild}>
+            <Stack.Screen name="addons" />
+            <Stack.Screen name="manga-sources" />
+            <Stack.Screen name="paperback" options={{ animation: 'none' }} />
+            <Stack.Screen name="source-section" />
+            <Stack.Screen name="extension" />
+            <Stack.Screen name="extension-add" options={{ presentation: 'modal', contentStyle: { backgroundColor: C.surface } }} />
+            <Stack.Screen name="addon" options={SHEET} />
+            <Stack.Screen name="install" options={SHEET} />
+            <Stack.Screen name="pack" options={{ presentation: 'modal', contentStyle: { backgroundColor: C.surface } }} />
+            <Stack.Screen name="pack-create" />
+            <Stack.Screen name="addon-catalog" />
+            <Stack.Screen name="debrid" />
+            <Stack.Screen name="discover" />
+            <Stack.Screen name="meta/[id]" />
+            <Stack.Screen name="downloads" />
+          </Stack.Protected>
           <Stack.Screen name="import" />
-          <Stack.Screen name="debrid" />
-          <Stack.Screen name="discover" />
-          <Stack.Screen name="meta/[id]" />
-          <Stack.Screen name="downloads" />
           <Stack.Screen name="browse" />
           <Stack.Screen name="offline" />
-          <Stack.Screen name="source-section" />
           <Stack.Screen name="search" />
           <Stack.Screen name="calendar" />
           <Stack.Screen name="lists" />

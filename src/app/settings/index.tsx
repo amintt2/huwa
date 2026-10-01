@@ -12,6 +12,7 @@ import { resetAll } from '@/store/store';
 import { langName } from '@/subtitles/lang';
 import { useSubtitlePrefs } from '@/subtitles/prefs';
 import { useSettings } from '@/settings/settings';
+import { isStoreBuild } from '@/config/channel';
 import { C, S } from '@/theme/tokens';
 
 export default function Settings() {
@@ -27,16 +28,18 @@ export default function Settings() {
   const { subLangs } = useSettings();
   const subtitleDetail = subPrefs.enabled ? subLangs.map(langName).join(', ') : 'Désactivés';
 
-  const network =
+  // One coherent status: the label says the state, the detail explains it (never « Connecté »
+  // next to « aucun pair connecté »).
+  const [networkLabel, network] =
     status.state === 'ready' && status.peers === 0
-      ? 'Mode local : tout fonctionne sur cet appareil, aucun pair connecté.'
+      ? ['Mode local', 'Tout fonctionne sur cet appareil ; aucun pair connecté pour l’instant.']
       : status.state === 'ready'
-        ? `${status.peers} pair${status.peers > 1 ? 's' : ''} connecté${status.peers > 1 ? 's' : ''}.`
+        ? [`Connecté · ${status.peers} pair${status.peers > 1 ? 's' : ''}`, 'Tes commentaires et messages s’échangent directement avec eux.']
         : status.state === 'offline'
-          ? 'Hors ligne : tes actions partiront à la reconnexion.'
+          ? ['Hors ligne', 'Tes actions partiront à la reconnexion.']
           : status.state === 'error'
-            ? `Réseau indisponible${status.error ? ` (${status.error})` : ''}.`
-            : 'Démarrage…';
+            ? ['Réseau indisponible', status.error ? `Erreur : ${status.error}.` : 'Le réseau P2P n’a pas démarré.']
+            : ['Démarrage…', 'Connexion au réseau P2P.'];
 
   return (
     <View style={{ flex: 1, backgroundColor: C.bg }}>
@@ -76,7 +79,9 @@ export default function Settings() {
 
         <Group title="Lecture">
           <Row icon="text" label="Sous-titres" detail={subtitleDetail} onPress={() => router.push('/settings/subtitles')} />
-          <Row icon="extension-puzzle-outline" label="Extensions" detail={`${addonCount} vidéo · ${mangaSources} manhwa`} onPress={() => router.push('/addons')} />
+          {!isStoreBuild && (
+            <Row icon="extension-puzzle-outline" label="Extensions" detail={`${addonCount} vidéo · ${mangaSources} manhwa`} onPress={() => router.push('/addons')} />
+          )}
           <Row icon="speedometer-outline" label="Statistiques de lecture" detail="Temps de démarrage, coupures, sources" onPress={() => router.push('/settings/stats')} />
           <Row
             icon="refresh"
@@ -98,7 +103,11 @@ export default function Settings() {
         </Group>
 
         <Group title="Réseau" footer="Huwa n’a pas de serveur : ton compte et tes données vivent sur tes appareils et chez les pairs que tu rejoins.">
-          <Row icon="git-network-outline" label={status.state === 'ready' ? 'Connecté' : 'Réseau'} detail={network} last />
+          <Row icon="git-network-outline" label={networkLabel} detail={network} last />
+        </Group>
+
+        <Group>
+          <Row icon="information-circle-outline" label="À propos" detail="Version, conditions, confidentialité, licences, contact" onPress={() => router.push('/about')} last />
         </Group>
 
         <Txt v="small" style={{ textAlign: 'center' }}>Huwa · données locales, sans télémétrie</Txt>

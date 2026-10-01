@@ -4,6 +4,7 @@ import { useSyncExternalStore } from 'react';
 
 import { getSettings, setSetting } from '@/settings/settings';
 import { registerRehydrate } from '@/settings/rehydrate';
+import { hydrationGate } from '@/store/persist';
 
 export type FontId = 'nunito' | 'system' | 'atkinson' | 'mplus' | 'comic' | 'merriweather' | 'mono';
 export type Background = 'none' | 'box' | 'band';
@@ -130,14 +131,21 @@ const KEY = 'huwa/subtitles/v1';
 let prefs: SubtitlePrefs = DEFAULT_SUBTITLE_PREFS;
 const listeners = new Set<() => void>();
 const emit = () => listeners.forEach((l) => l());
+// Changes made before the saved prefs are read are re-applied on top of them, then written.
+const gate = hydrationGate<SubtitlePrefs>();
+const save = () => AsyncStorage.setItem(KEY, JSON.stringify(prefs)).catch(() => {});
 
+// Also the backup-import reload: the gate is settled by then, so the imported value wins as is.
 const loadPrefs = () =>
   AsyncStorage.getItem(KEY)
-    .then((raw) => {
-      prefs = raw ? sanitizeSubtitlePrefs(JSON.parse(raw)) : DEFAULT_SUBTITLE_PREFS;
+    .then((raw) => (raw ? sanitizeSubtitlePrefs(JSON.parse(raw)) : DEFAULT_SUBTITLE_PREFS))
+    .catch(() => prefs)
+    .then((saved) => {
+      const { value, dirty } = gate.settle(saved);
+      prefs = sanitizeSubtitlePrefs(value);
       emit();
-    })
-    .catch(() => {});
+      if (dirty) save();
+    });
 loadPrefs();
 registerRehydrate(loadPrefs);
 
@@ -146,7 +154,7 @@ export const getSubtitlePrefs = () => prefs;
 export function setSubtitlePrefs(patch: Partial<SubtitlePrefs>) {
   prefs = sanitizeSubtitlePrefs({ ...prefs, ...patch });
   emit();
-  AsyncStorage.setItem(KEY, JSON.stringify(prefs)).catch(() => {});
+  if (gate.patch(patch)) save();
 }
 
 export function resetSubtitleStyle() {
@@ -182,8 +190,12 @@ AsyncStorage.getItem(OFFSETS_KEY)
   .then((raw) => {
     if (!raw) return;
     const v = JSON.parse(raw);
-    if (v && typeof v === 'object') offsets = { ...v, ...offsets };
+    if (!v || typeof v !== 'object') return;
+    const early = Object.keys(offsets).length > 0;
+    offsets = { ...v, ...offsets };
     offsetListeners.forEach((l) => l());
+    // An offset set before the load was written alone: write the merged map back.
+    if (early) AsyncStorage.setItem(OFFSETS_KEY, JSON.stringify(offsets)).catch(() => {});
   })
   .catch(() => {});
 registerRehydrate(() =>

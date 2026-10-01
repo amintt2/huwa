@@ -20,7 +20,14 @@ import { Button, Txt } from './ui';
 
 type Found = { words: string[]; hint?: AccountHint };
 
-export function CloudAccountCard({ onVisibleChange }: { onVisibleChange?: (visible: boolean) => void }) {
+export function CloudAccountCard({
+  onVisibleChange,
+  onFound,
+}: {
+  onVisibleChange?: (visible: boolean) => void;
+  /** A valid phrase is in iCloud Keychain (even if the card is dismissed afterwards): its owner's name when known. */
+  onFound?: (account: { name?: string }) => void;
+}) {
   const [found, setFound] = useState<Found>();
   const [dismissed, setDismissed] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -39,6 +46,10 @@ export function CloudAccountCard({ onVisibleChange }: { onVisibleChange?: (visib
       alive = false;
     };
   }, []);
+
+  useEffect(() => {
+    if (found) onFound?.({ name: found.hint?.name });
+  }, [found, onFound]);
 
   const visible = !!found && !dismissed;
   useEffect(() => {

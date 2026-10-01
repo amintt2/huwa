@@ -13,6 +13,9 @@ const defaults: TorrentSettings = { enabled: false, wifiOnly: true, quotaBytes: 
 
 let settings: TorrentSettings = defaults;
 let hydrated: Promise<void> | undefined;
+let loaded = false;
+/** Changes made before the saved settings were read, re-applied on top of them. */
+let early: Partial<TorrentSettings> | null = null;
 const listeners = new Set<() => void>();
 
 export const subscribeTorrentSettings = (l: () => void) => {
@@ -31,9 +34,17 @@ export function hydrateTorrentSettings() {
     hydrated = AsyncStorage.getItem(KEY)
       .then((raw) => {
         if (raw) settings = { ...defaults, ...(JSON.parse(raw) as Partial<TorrentSettings>) };
-        listeners.forEach((l) => l());
       })
-      .catch(() => {});
+      .catch(() => {})
+      .finally(() => {
+        loaded = true;
+        if (early) {
+          settings = { ...settings, ...early };
+          early = null;
+          AsyncStorage.setItem(KEY, JSON.stringify(settings)).catch(() => {});
+        }
+        listeners.forEach((l) => l());
+      });
   }
   return hydrated;
 }
@@ -48,6 +59,10 @@ registerRehydrate(() => {
 export function setTorrentSettings(patch: Partial<TorrentSettings>) {
   settings = { ...settings, ...patch };
   listeners.forEach((l) => l());
-  AsyncStorage.setItem(KEY, JSON.stringify(settings)).catch(() => {});
+  if (loaded) AsyncStorage.setItem(KEY, JSON.stringify(settings)).catch(() => {});
+  else {
+    early = { ...early, ...patch };
+    void hydrateTorrentSettings();
+  }
   return settings;
 }

@@ -18,21 +18,26 @@ const subscribe = (l: () => void) => {
   return () => listeners.delete(l);
 };
 
-const load = () =>
+// Chosen before the saved value was read: the user's choice wins over the late load (but not
+// over a backup import, which re-reads the imported value on purpose).
+let touched = false;
+
+const load = (fromImport = false) =>
   AsyncStorage.getItem(KEY)
     .then((raw) => {
-      if (!demoEngine && (raw === 'auto' || raw === 'native' || raw === 'mpv' || raw === null)) {
+      if ((fromImport || !touched) && !demoEngine && (raw === 'auto' || raw === 'native' || raw === 'mpv' || raw === null)) {
         pref = raw ?? 'auto';
         emit();
       }
     })
     .catch(() => {});
 load();
-registerRehydrate(load);
+registerRehydrate(() => load(true));
 
 export const getEnginePref = () => pref;
 
 export function setEnginePref(next: EnginePref) {
+  touched = true;
   pref = next;
   emit();
   AsyncStorage.setItem(KEY, next).catch(() => {});

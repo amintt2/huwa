@@ -29,9 +29,14 @@ import { chapterAfterEpisode } from '@/data/bridge';
 import { episodeLabel, getEpisode, useCatalog } from '@/data/catalog';
 import { useMappingSync } from '@/data/mapping-sync';
 import { useThread } from '@/store/derived';
+import { flushPendingWrites } from '@/store/persist';
 import { getState, markEpisodeDone, saveEpisodeProgress, toggleMyList, useStore } from '@/store/store';
 import { enableTorrentEngine, getTorrentSettings, isAvailable as torrentEngineLinked, useTorrentSettings } from '@/torrent';
+import { isStoreBuild } from '@/config/channel';
 import { C, S } from '@/theme/tokens';
+
+// A player crash stays on this route (retry / back) instead of taking the whole app down.
+export { ErrorScreen as ErrorBoundary } from '@/components/error-screen';
 
 export default function Watch() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -142,9 +147,16 @@ function WatchScreen({ id }: { id: string }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [src.url]);
 
+  // Leaving the episode: the player saves its last position in its own cleanup; write it to disk
+  // right after (next tick, once every cleanup ran) instead of waiting for the debounce.
+  useEffect(() => () => void setTimeout(() => flushPendingWrites().catch(() => {}), 0), []);
+
+  // A finished episode starts over; a rewatch in progress (position saved again, not at the end)
+  // resumes. `done` stays true for the "vu" badge, so it can't decide this alone.
   const startAt = () => {
     const saved = getState().episodes[id];
-    return saved && !saved.done ? saved.position : undefined;
+    if (!saved || !saved.duration) return undefined;
+    return saved.position / saved.duration < 0.92 ? saved.position : undefined;
   };
   const onProgress = (position: number, duration: number) => {
     saveEpisodeProgress(id, position, duration);
@@ -193,8 +205,10 @@ function WatchScreen({ id }: { id: string }) {
     />
   );
 
+  // Tighter rhythm than other screens: on a standard iPhone the bridge card stays above the
+  // comment composer instead of being cut by it.
   const header = (
-    <View style={{ padding: S.lg, gap: S.lg }}>
+    <View style={{ paddingHorizontal: S.lg, paddingTop: S.md, paddingBottom: S.lg, gap: S.md }}>
       <View style={{ gap: 6 }}>
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: S.sm }}>
           <Chip kind="anime" />
@@ -209,13 +223,16 @@ function WatchScreen({ id }: { id: string }) {
         <Button small variant="soft" icon={inList ? 'checkmark' : 'add'} label="Ma liste" onPress={() => toggleMyList(series.id)} />
         <Button small variant="soft" icon="chatbubble-outline" label={`${count}`}
           onPress={() => router.push({ pathname: '/comments', params: { target, kind: 'anime' } })} />
-        <Button
-          small
-          variant="soft"
-          icon={dlItem?.status === 'done' ? 'checkmark-circle' : 'arrow-down-circle-outline'}
-          label={!dlItem ? 'Télécharger' : dlItem.status === 'done' ? 'Téléchargé' : dlItem.status === 'failed' ? 'Échec' : 'En cours'}
-          onPress={() => setDlOpen(true)}
-        />
+        {/* App Store flavor: no episode downloads (their sources are extensions). */}
+        {!isStoreBuild && (
+          <Button
+            small
+            variant="soft"
+            icon={dlItem?.status === 'done' ? 'checkmark-circle' : 'arrow-down-circle-outline'}
+            label={!dlItem ? 'Télécharger' : dlItem.status === 'done' ? 'Téléchargé' : dlItem.status === 'failed' ? 'Échec' : 'En cours'}
+            onPress={() => setDlOpen(true)}
+          />
+        )}
       </View>
 
       {offline ? (
@@ -322,7 +339,11 @@ function WatchScreen({ id }: { id: string }) {
                       ? 'Ces sources sont des torrents. Ouvre le menu des sources pour les lire avec le moteur intégré ou un service débrid.'
                       : 'Aucune source lisible. Ouvre le menu des sources.'
             }
-            emptyAction={noSource?.action ? { label: noSource.action.label, onPress: () => onNoSourceAction(noSource.action!.kind) } : null}
+            emptyAction={
+              noSource?.action && !(isStoreBuild && STORE_HIDDEN_ACTIONS.has(noSource.action.kind))
+                ? { label: noSource.action.label, onPress: () => onNoSourceAction(noSource.action!.kind) }
+                : null
+            }
             startAt={startAt}
             onProgress={onProgress}
             onEnd={() => markEpisodeDone(id)}
@@ -366,13 +387,16 @@ function WatchScreen({ id }: { id: string }) {
   );
 }
 
+/** App Store flavor: no extension / debrid / torrent screens to send the user to. */
+const STORE_HIDDEN_ACTIONS = new Set<NoSourceAction>(['addons', 'debrid', 'enable-engine']);
+
 const styles = StyleSheet.create({
   offline: {
     flexDirection: 'row', alignItems: 'center', gap: S.md, padding: S.md, borderRadius: 14,
     backgroundColor: C.accentSoft, borderWidth: 1, borderColor: C.accentLine,
   },
   langWarn: {
-    flexDirection: 'row', alignItems: 'flex-start', gap: S.md, marginHorizontal: S.lg, padding: S.md, borderRadius: 14,
+    flexDirection: 'row', alignItems: 'flex-start', gap: S.md, padding: S.md, borderRadius: 14,
     backgroundColor: 'rgba(245,181,68,0.12)', borderWidth: 1, borderColor: 'rgba(245,181,68,0.35)',
   },
   topBar: { flexDirection: 'row', alignItems: 'center', gap: S.md, paddingHorizontal: S.md, paddingBottom: S.sm },

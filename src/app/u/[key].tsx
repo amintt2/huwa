@@ -7,6 +7,7 @@ import QRCode from 'react-native-qrcode-svg';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { HistoryRow } from '@/components/history';
+import { reportAccount } from '@/components/report';
 import { Avatar, BadgeGrid, Empty, Loading, RankCard, ScreenHeader, profileLink, shortKey } from '@/components/social';
 import { Button, Chip, IconButton, Txt } from '@/components/ui';
 import { social, useBlocked, useMe, useProfile, useRank } from '@/p2p/hooks';
@@ -56,12 +57,8 @@ export default function PublicProfile() {
     ]);
   };
 
-  const report = () =>
-    Alert.alert(`Signaler ${name}`, 'Ton signalement est publié dans ta liste : ceux qui s’y abonnent en tiennent compte.', [
-      { text: 'Spam ou arnaque', onPress: () => social.report(key, 'spam') },
-      { text: 'Harcèlement ou abus', onPress: () => social.report(key, 'abuse') },
-      { text: 'Annuler', style: 'cancel' },
-    ]);
+  // Same flow as in messages: published report, optional local block, e-mail to a human.
+  const report = () => reportAccount({ key, name, where: 'profil', blocked });
 
   const more = () => {
     const actions = [

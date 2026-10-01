@@ -42,7 +42,7 @@ export default function Library() {
       style={{ flex: 1, backgroundColor: C.bg }}
       contentInsetAdjustmentBehavior="automatic"
       contentContainerStyle={{ paddingTop: S.sm, paddingBottom: S.xxl }}>
-      <Txt v="display" style={{ fontSize: 28, paddingHorizontal: S.lg }}>Bibliothèque</Txt>
+      <Txt v="display" numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.6} style={{ fontSize: 28, paddingHorizontal: S.lg }}>Bibliothèque</Txt>
 
       <SectionHeader title="En cours" />
       <View style={{ paddingHorizontal: S.lg, gap: S.md }}>

@@ -3,6 +3,8 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useEffect, useState, useSyncExternalStore } from 'react';
 
+import { debouncedWriter } from './persist';
+
 export type WatchStatus = 'planned' | 'watching' | 'completed' | 'dropped';
 export const WATCH_STATUSES: WatchStatus[] = ['planned', 'watching', 'completed', 'dropped'];
 
@@ -19,15 +21,13 @@ const initial: ListsState = { lists: [], status: {} };
 let state: ListsState = initial;
 let hydrated = false;
 const listeners = new Set<() => void>();
-let saveTimer: ReturnType<typeof setTimeout> | undefined;
+// Flushed on backgrounding (see persist.ts).
+const saver = debouncedWriter(() => AsyncStorage.setItem(LISTS_KEY, JSON.stringify(state)), 300);
 
 function set(updater: (s: ListsState) => ListsState) {
   state = updater(state);
   listeners.forEach((l) => l());
-  clearTimeout(saveTimer);
-  saveTimer = setTimeout(() => {
-    AsyncStorage.setItem(LISTS_KEY, JSON.stringify(state)).catch(() => {});
-  }, 300);
+  saver.schedule();
 }
 
 const subscribe = (l: () => void) => {
@@ -43,7 +43,9 @@ export const getLists = () => state;
 
 export async function hydrateLists(force = false) {
   if (hydrated && !force) return;
-  if (force) clearTimeout(saveTimer); // a pending save would write the stale lists back
+  // A forced re-read (backup import) replaces the state: a write still pending from before would
+  // put the old lists back over the imported ones.
+  if (force) saver.cancel();
   try {
     const raw = await AsyncStorage.getItem(LISTS_KEY);
     const v = raw ? (JSON.parse(raw) as Partial<ListsState>) : {};

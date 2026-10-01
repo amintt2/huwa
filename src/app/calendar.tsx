@@ -3,7 +3,7 @@
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { router } from 'expo-router';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { ActivityIndicator, Alert, FlatList, ScrollView, StyleSheet, View, useWindowDimensions } from 'react-native';
+import { ActivityIndicator, Alert, AppState, FlatList, ScrollView, StyleSheet, View, useWindowDimensions } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { ErrorState, FilterChip, LoadingView, ScreenHeader, StateView } from '@/components/states';
@@ -54,7 +54,7 @@ export default function Calendar() {
   const [attempt, setAttempt] = useState(0);
   const [onlyMine, setOnlyMine] = useState(false);
   const [opening, setOpening] = useState<number | null>(null);
-  const [today] = useState(startOfToday);
+  const [today, setToday] = useState(startOfToday);
   const [day, setDay] = useState(0);
   const tabsRef = useRef<ScrollView>(null);
   const tabFrames = useRef<Record<number, { x: number; width: number }>>({});
@@ -83,10 +83,26 @@ export default function Calendar() {
     return () => ctrl.abort();
   }, [today, attempt]);
 
-  // Keeps "Diffusé" badges and the countdown current while the page stays open.
+  // Keeps "Diffusé" badges and the countdown current while the page stays open, and moves
+  // "Aujourd’hui" past midnight (also when coming back to the app the next morning). The selected
+  // tab keeps showing the same date.
   useEffect(() => {
-    const id = setInterval(() => setNow(Date.now()), 30_000);
-    return () => clearInterval(id);
+    let shown = startOfToday();
+    const tick = () => {
+      setNow(Date.now());
+      const fresh = startOfToday();
+      if (fresh === shown) return;
+      const shift = dayIndex(shown, fresh);
+      shown = fresh;
+      setToday(fresh);
+      setDay((d) => Math.max(0, d - shift));
+    };
+    const id = setInterval(tick, 30_000);
+    const sub = AppState.addEventListener('change', (s) => s === 'active' && tick());
+    return () => {
+      clearInterval(id);
+      sub.remove();
+    };
   }, []);
 
   /** Series the user follows: "Ma liste" + anything marked "En cours" / "À voir". */

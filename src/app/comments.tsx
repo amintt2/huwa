@@ -2,20 +2,47 @@ import { router, useLocalSearchParams } from 'expo-router';
 import { View } from 'react-native';
 
 import { CommentsPanel } from '@/components/comments';
+import { StateView } from '@/components/states';
 import { Chip, IconButton, Txt } from '@/components/ui';
-import { chapterLabel, episodeLabel, getChapter, getEpisode } from '@/data/catalog';
+import { chapterLabel, episodeLabel, getChapter, getEpisode, getSeries } from '@/data/catalog';
 import { useThread } from '@/store/derived';
 import { C, S, type Kind } from '@/theme/tokens';
 
 /** Bottom sheet with the full thread of an episode or a chapter. */
 export default function CommentsSheet() {
-  const { target, kind } = useLocalSearchParams<{ target: string; kind: Kind }>();
+  const params = useLocalSearchParams<{ target?: string; kind?: Kind }>();
+  const target = typeof params.target === 'string' && /^(ep|ch|series):.+/.test(params.target) ? params.target : '';
+  if (!target) {
+    // Shared / hand-typed link without a valid thread.
+    return (
+      <View style={{ flex: 1, backgroundColor: C.surface, justifyContent: 'center' }}>
+        <StateView icon="chatbubbles-outline" title="Fil introuvable" body="Ce lien ne désigne aucun fil de commentaires." action="Fermer" onAction={() => (router.canGoBack() ? router.back() : router.replace('/'))} />
+      </View>
+    );
+  }
+  return <Thread target={target} kindParam={params.kind} />;
+}
+
+/** The thread's kind: the link's `kind` when given, else what the target points to. */
+function kindOf(target: string, param?: string): Kind {
+  if (param === 'anime' || param === 'manhwa') return param;
+  const [type, id] = target.split(':');
+  if (type === 'ep') return 'anime';
+  if (type === 'ch') return 'manhwa';
+  const s = getSeries(id);
+  return s?.anime || !s?.manhwa ? 'anime' : 'manhwa';
+}
+
+function Thread({ target, kindParam }: { target: string; kindParam?: string }) {
+  const kind = kindOf(target, kindParam);
   const count = useThread(target).length;
   const [type, id] = target.split(':');
   const context =
     type === 'ep'
       ? (() => { const f = getEpisode(id); return f ? episodeLabel(f.episode) : ''; })()
-      : (() => { const f = getChapter(id); return f ? chapterLabel(f.chapter) : ''; })();
+      : type === 'ch'
+        ? (() => { const f = getChapter(id); return f ? chapterLabel(f.chapter) : ''; })()
+        : getSeries(id)?.title ?? '';
 
   // The header lives inside the panel's ScrollView: in an iOS form sheet the ScrollView is pinned to
   // the sheet's edges, so a sibling header above it ends up drawn underneath the list.
@@ -29,7 +56,7 @@ export default function CommentsSheet() {
           <Txt v="small" style={{ fontSize: 15 }}>{count}</Txt>
         </View>
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-          <Chip kind={kind === 'anime' ? 'anime' : 'manhwa'} />
+          <Chip kind={kind} />
           <Txt v="small" numberOfLines={1} style={{ flexShrink: 1 }}>{context}</Txt>
         </View>
       </View>
@@ -40,7 +67,7 @@ export default function CommentsSheet() {
 
   return (
     <View style={{ flex: 1, backgroundColor: C.surface }}>
-      <CommentsPanel target={target} kind={kind === 'anime' ? 'anime' : 'manhwa'} header={header} />
+      <CommentsPanel target={target} kind={kind} header={header} />
     </View>
   );
 }

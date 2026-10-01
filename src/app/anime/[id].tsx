@@ -8,6 +8,7 @@ import { traceTap } from '@/addons/timing';
 import { BridgeToManhwa } from '@/components/bridge';
 import { DownloadSheet, EpisodeDownloadButton } from '@/components/downloads/episode-download';
 import { ListsButton } from '@/components/lists';
+import { isStoreBuild } from '@/config/channel';
 import { PRIORITY, usePresearch } from '@/components/presearch';
 import { Button, Chip, Cover, IconButton, Press, Progress, Txt } from '@/components/ui';
 import { approxEp, chapterRangeLabel, resumeEpisode } from '@/data/bridge';
@@ -42,6 +43,12 @@ export default function AnimeDetail() {
     PRIORITY.detail,
     { dwellMs: 300 },
   );
+  // Long series (1000+ episodes): rows are rendered in pages instead of all at once; the first
+  // page reaches past the episode to resume.
+  const [limit, setLimit] = useState(() => {
+    const i = target && series?.anime ? series.anime.episodes.indexOf(target) : 0;
+    return Math.max(EPISODE_PAGE, i + 20);
+  });
   if (!series?.anime) return <Txt style={{ padding: S.xl }}>Anime introuvable.</Txt>;
 
   const eps = series.anime.episodes;
@@ -94,18 +101,19 @@ export default function AnimeDetail() {
           </Press>
         </View>
 
-        {eps.map((e) => {
+        {eps.slice(0, limit).map((e) => {
           const p = progress[e.id];
           const ratio = p ? p.position / p.duration : 0;
           return (
             <Press
               key={e.id}
               onPress={() => router.push(`/watch/${e.id}`)}
-              onLongPress={() => setDlFor(e)}
+              // App Store flavor: no episode downloads (their sources are extensions).
+              onLongPress={isStoreBuild ? undefined : () => setDlFor(e)}
               delayLongPress={350}
               style={styles.row}
               accessibilityLabel={episodeLabel(e)}
-              accessibilityHint="Appui long : options de téléchargement">
+              accessibilityHint={isStoreBuild ? undefined : 'Appui long : options de téléchargement'}>
               <Cover palette={series.palette} image={series.image} width={124} height={70} radius={10} dim={p?.done}>
                 <View style={styles.thumbPlay}>
                   <Ionicons name={p?.done ? 'checkmark' : 'play'} size={12} color={C.white} />
@@ -123,14 +131,24 @@ export default function AnimeDetail() {
                   {e.durationMin} min{series.manhwa ? ` · adapte les ${approxEp(series, e)}${chapterRangeLabel(e)}` : ''}
                 </Txt>
               </View>
-              <EpisodeDownloadButton
-                episodeId={e.id}
-                onPress={() => (getItem(e.id) ? setDlFor(e) : enqueueEpisodes(series, e, 'one'))}
-                onLongPress={() => setDlFor(e)}
-              />
+              {!isStoreBuild && (
+                <EpisodeDownloadButton
+                  episodeId={e.id}
+                  onPress={() => (getItem(e.id) ? setDlFor(e) : enqueueEpisodes(series, e, 'one'))}
+                  onLongPress={() => setDlFor(e)}
+                />
+              )}
             </Press>
           );
         })}
+        {eps.length > limit && (
+          <Button
+            variant="soft"
+            icon="chevron-down"
+            label={`Afficher ${Math.min(EPISODE_PAGE, eps.length - limit)} épisodes de plus (${eps.length - limit} restants)`}
+            onPress={() => setLimit((n) => n + EPISODE_PAGE)}
+          />
+        )}
       </View>
       {dlFor && <DownloadSheet series={series} episode={dlFor} visible onClose={() => setDlFor(null)} />}
     </ScrollView>
@@ -143,6 +161,8 @@ function SeasonChip({ series }: { series: Series }) {
   if (series.status === 'completed' && (season ?? 1) === 1) return <Chip kind="neutral" label="TERMINÉ" />;
   return <Chip kind="neutral" label={`SAISON ${season ?? 1}`} />;
 }
+
+const EPISODE_PAGE = 60;
 
 const styles = StyleSheet.create({
   nav: { position: 'absolute', left: S.lg },

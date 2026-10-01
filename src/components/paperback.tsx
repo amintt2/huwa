@@ -15,6 +15,7 @@ import { openSourceManga, refreshLinked, setLinkLang, useSourceLink } from '@/ma
 import type { RankedCandidate } from '@/manga-ext/match';
 import { getInstalled, useMangaExt, type InstalledSource } from '@/manga-ext/registry';
 import type { ExtSearchItem } from '@/manga-ext/validate';
+import { isStoreBuild } from '@/config/channel';
 import { C, F, R, S } from '@/theme/tokens';
 
 const PLACEHOLDER = palette(null);
@@ -220,6 +221,8 @@ export function SourcePanel({ series }: { series: Series }) {
   }
 
   if (!hasSources) {
+    // App Store flavor: no extensions to add.
+    if (isStoreBuild) return null;
     return (
       <Press onPress={() => router.push('/manga-sources' as Href)} style={[styles.panel, { flexDirection: 'row', alignItems: 'center', gap: S.md }]}
         accessibilityRole="button" accessibilityLabel="Ajouter des extensions manhwa">
