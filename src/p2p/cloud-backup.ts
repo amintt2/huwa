@@ -53,16 +53,23 @@ function hydrate() {
   if (!hydrated) {
     hydrated = (async () => {
       const raw = await AsyncStorage.getItem(PREF).catch(() => null);
-      const enabled = raw ? (JSON.parse(raw) as { enabled: boolean }).enabled : true;
+      // A corrupt preference must not wedge every later call (they all await this promise).
+      let enabled = true;
+      try {
+        const v = raw ? (JSON.parse(raw) as { enabled?: unknown }) : null;
+        if (typeof v?.enabled === 'boolean') enabled = v.enabled;
+      } catch {
+        // keep the default
+      }
       let saved = cloudBackupSupported ? !!(await HuwaKeychain!.get(ITEM).catch(() => null)) : false;
       // Accounts created before this feature (or while it was off then on): back up the phrase
       // this device already holds. Devices linked by QR never had the phrase: nothing to copy.
       if (cloudBackupSupported && enabled && !saved) {
-        const words = await recoveryPhrase.get();
+        const words = await recoveryPhrase.get().catch(() => undefined);
         if (words) saved = await HuwaKeychain!.set(ITEM, words.join(' ')).then(() => true, () => false);
       }
       emit({ enabled, saved });
-    })();
+    })().catch(() => emit({}));
   }
   return hydrated;
 }
