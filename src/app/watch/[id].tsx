@@ -10,7 +10,6 @@ import type { NoSourceAction } from '@/addons/no-source';
 import { useSubtitles } from '@/addons/registry';
 import { subtitleExtraOf } from '@/subtitles/request';
 import { isTorrent } from '@/addons/protocol';
-import { traceMark } from '@/addons/timing';
 import { qualityLabel, useSource } from '@/addons/use-source';
 import { EpisodeBridgeStrip } from '@/components/bridge';
 import { CommentsPanel } from '@/components/comments';
@@ -19,6 +18,7 @@ import { PrefetchNext } from '@/components/player/prefetch-next';
 import { WebPlayer } from '@/components/player/WebPlayer';
 import { SourceButton, SourcesMenu } from '@/components/sources-menu';
 import { useStreamPolicy } from '@/settings/network';
+import { useWatchTrace } from '@/stats/use-watch-trace';
 import { useSettings } from '@/settings/settings';
 import { Button, Chip, Cover, IconButton, Press, Txt } from '@/components/ui';
 import { chapterAfterEpisode } from '@/data/bridge';
@@ -63,16 +63,8 @@ function WatchScreen({ id }: { id: string }) {
   const playing = src.current;
   const video = useMemo(() => subtitleExtraOf(playing), [playing]);
   const addonSubs = useSubtitles(series.id, episode.number, true, video, langPrefs.subLangs);
-  // Dev timings (tap → sources → choice → first frame), see addons/timing.ts.
-  useEffect(() => traceMark(id, 'screen'), [id]);
-  const hasSources = src.ranked.length > 0;
-  useEffect(() => {
-    if (hasSources) traceMark(id, 'sources', src.ranked.some((s) => s.cachedAt != null) ? 'cache disque' : undefined);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [hasSources, id]);
-  useEffect(() => {
-    if (src.currentKey) traceMark(id, 'decision');
-  }, [src.currentKey, id]);
+  // Start timings (tap → sources → choice → first frame) → on-device stats, see addons/timing.ts.
+  useWatchTrace(id, src);
   // Subtitles attached to the playing stream first, then the subtitles addons (e.g. OpenSubtitles).
   const { streamSubtitles } = src;
   const streamAddon = src.current?.addonName ?? 'Flux';

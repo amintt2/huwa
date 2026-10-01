@@ -160,4 +160,7 @@ class SwitchingP2P implements P2P {
 
   appendJournal: P2P['appendJournal'] = (...a) => this.impl.appendJournal(...a);
   journal: P2P['journal'] = (...a) => this.impl.journal(...a);
+
+  contributeStats: P2P['contributeStats'] = (...a) => this.impl.contributeStats(...a);
+  communityStats: P2P['communityStats'] = () => this.impl.communityStats();
 }

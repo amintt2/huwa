@@ -29,6 +29,7 @@ import {
 } from './protocol';
 import type { Quality } from './quality';
 import { dropAnswer, freshness, readAnswer, writeAnswer } from './stream-cache';
+import { timedAddon } from '@/stats/addon-timing';
 
 export type InstalledAddon = { baseUrl: string; manifest: Manifest; enabled: boolean };
 
@@ -448,7 +449,7 @@ const streamOpts: JobOptions<AddonStream> = {
 /** Streams for an episode, unsorted (see `rankStreams`). */
 export function useStreams(seriesId: string, episode: number, enabled = true) {
   const r = useAggregate<AddonStream>('stream', seriesId, episode, async (a, req) => {
-    const items: StreamItem[] = a.baseUrl === builtin.baseUrl ? DEMO_STREAMS : await fetchStreams(a.baseUrl, req.type, req.id);
+    const items: StreamItem[] = a.baseUrl === builtin.baseUrl ? DEMO_STREAMS : await timedAddon(a.manifest, () => fetchStreams(a.baseUrl, req.type, req.id));
     return items.map((s) => ({ ...s, addonId: a.manifest.id, addonName: a.manifest.name }));
   }, enabled, streamOpts);
   // Status rows (scrape summaries, errors, donation banners) are kept apart for the "Infos" section.

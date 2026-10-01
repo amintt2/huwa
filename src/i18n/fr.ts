@@ -147,7 +147,7 @@ export const fr = {
   'settings.anilist': 'Synchro AniList',
   'settings.privacy': 'Confidentialité',
   'settings.privacyBody':
-    'Huwa n’a pas de compte ni de serveur. Ta progression, tes listes et tes réglages restent sur cet appareil. Les métadonnées viennent de l’API publique d’AniList ; les addons que tu installes contactent leurs propres serveurs. Aucune télémétrie.',
+    'Huwa n’a pas de compte ni de serveur. Ta progression, tes listes et tes réglages restent sur cet appareil. Les métadonnées viennent de l’API publique d’AniList ; les addons que tu installes contactent leurs propres serveurs. Aucune télémétrie : les statistiques de lecture restent sur l’appareil, sauf si tu actives « Comparer avec la communauté » (résumé anonyme et brouillé, sans ton identité).',
   'settings.about': 'À propos',
   'settings.version': 'Version {v}',
   'settings.legal':

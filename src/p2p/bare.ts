@@ -16,8 +16,10 @@ import type {
   P2P,
   P2PComment,
   P2PStatus,
+  CommunityStatsSums,
   Profile,
   PublicKey,
+  StatsContribution,
   Unsubscribe,
 } from './contract';
 
@@ -32,6 +34,8 @@ const TIMEOUTS: Record<string, number> = {
   postComment: 60_000,
   sendMessage: 60_000,
   getProfile: 20_000,
+  contributeStats: 90_000,
+  communityStats: 30_000,
 };
 const MAX_RESTARTS = 5;
 const LEGACY_KEY = 'huwa/state/v1';
@@ -359,6 +363,13 @@ export class BareP2P implements P2P {
   }
   journal(key?: PublicKey) {
     return this.call<JournalEntry[]>('journal', [key ?? null]);
+  }
+
+  async contributeStats(c: StatsContribution) {
+    await this.call<boolean>('contributeStats', [c]);
+  }
+  communityStats() {
+    return this.call<CommunityStatsSums>('communityStats', []);
   }
 }
 

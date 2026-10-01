@@ -19,6 +19,7 @@ const pow = require('./pow')
 const seal = require('./seal')
 const { makeAuth, verifyDeviceProof } = require('./auth')
 const { commentId, createRoomApply, createHomeApply, createDmApply, rateOk } = require('./apply')
+const stats = require('./stats')
 
 const ROOM_IDLE_MS = 60_000
 const LOOKUP_MS = 6_000
@@ -52,6 +53,11 @@ const workBaseKey = (work) => crypto.keyPair(hash('huwa/work/' + PROTOCOL + '/' 
 const dmPair = (a, b) => [a, b].sort()
 const dmBaseKey = (pair) => crypto.keyPair(hash('huwa/dm/' + PROTOCOL + '/' + pair.join(':'))).publicKey
 const idTopic = (identity) => hash('huwa/id/v1/' + identity)
+// Community stats rooms have their own version (separate bases, untouched by PROTOCOL bumps).
+const statsBaseKey = (month) => crypto.keyPair(hash('huwa/stats/v' + stats.STATS_VERSION + '/' + month)).publicKey
+/** The stats swarm and bases close after this long without use. */
+const STATS_IDLE_MS = 5 * 60_000
+const MAX_STATS_READ = 5000
 
 function viewOf(store) {
   return new Hyperbee(store.get('view'), { keyEncoding: 'utf-8', valueEncoding: 'json', extension: false })
@@ -106,6 +112,13 @@ class HuwaNode {
     this.suspended = false
     this.closed = false
     this._statusTimer = null
+    // Community stats (opt-in): separate Corestore + swarm, opened on demand (see _statsNet).
+    this.statsStore = null
+    this.statsLocal = null
+    this.statsSwarm = null
+    this.statsWakeup = null
+    this.statsBases = new Map() // month -> { id, base, discovery }
+    this._statsTimer = null
   }
 
   // ---- lifecycle ----------------------------------------------------------
@@ -149,6 +162,7 @@ class HuwaNode {
     this._emitStatus()
     if (this.pairing) await this.pairing.suspend().catch(noop)
     if (this.swarm) await this.swarm.suspend().catch(noop)
+    await this._closeStats().catch(noop)
     await this.store.suspend().catch(noop)
   }
 
@@ -171,6 +185,8 @@ class HuwaNode {
     for (const member of this.pairingMembers) await member.close().catch(noop)
     if (this.pairing) await this.pairing.close().catch(noop)
     if (this.swarm) await this.swarm.destroy().catch(noop)
+    await this._closeStats().catch(noop)
+    if (this.statsStore) await this.statsStore.close().catch(noop)
     const bases = [...this.rooms.values(), ...this.homes.values(), ...this.dms.values()].map((r) => r.base)
     if (this.home) bases.push(this.home)
     await Promise.all(bases.map((b) => b.close().catch(noop)))
@@ -963,6 +979,118 @@ class HuwaNode {
     if (!base) return []
     await base.update().catch(noop)
     return (await rangeValues(base.view, 'xp/')).map((e) => e.value.entry)
+  }
+
+  // ---- community stats (opt-in) ---------------------------------------------------
+  // Unlinkable by construction: a Corestore of its own (another primary key, nothing else in it
+  // that a peer could ask for), a swarm with a throwaway key pair and no hello (the identity is
+  // never presented there), and a fresh writer (random namespace) for every contribution.
+  // Peers still see the IP address of the connection, as everywhere on a P2P network.
+
+  _statsNet() {
+    if (this.closed) throw new Error('Nœud fermé')
+    if (!this.statsStore) {
+      this.statsStore = new Corestore(this.storage + '-stats')
+      this.statsLocal = new Hyperbee(this.statsStore.get({ name: 'stats-local' }), { keyEncoding: 'utf-8', valueEncoding: 'json' })
+    }
+    if (!this.statsSwarm) {
+      this.statsWakeup = new ProtomuxWakeup()
+      this.statsSwarm = new Hyperswarm({ keyPair: crypto.keyPair(), bootstrap: this.bootstrap })
+      this.statsSwarm.on('connection', (conn) => {
+        conn.on('error', noop)
+        this.statsWakeup.addStream(this.statsStore.replicate(conn))
+      })
+    }
+    this._touchStats()
+  }
+
+  _touchStats() {
+    if (this._statsTimer) clearTimeout(this._statsTimer)
+    this._statsTimer = later(() => this._closeStats().catch(noop), STATS_IDLE_MS)
+  }
+
+  async _closeStats() {
+    if (this._statsTimer) clearTimeout(this._statsTimer)
+    this._statsTimer = null
+    const entries = [...this.statsBases.values()]
+    this.statsBases.clear()
+    for (const e of entries) {
+      if (e.discovery) await e.discovery.destroy().catch(noop)
+      await e.base.close().catch(noop)
+    }
+    const swarm = this.statsSwarm
+    this.statsSwarm = null
+    this.statsWakeup = null
+    if (swarm) await swarm.destroy().catch(noop)
+  }
+
+  /** The month's stats room; `fresh` = a new writer nobody has seen (one per contribution). */
+  async _statsBase(month, { fresh = false } = {}) {
+    if (!stats.MONTH.test(month)) throw new Error('Mois invalide')
+    this._statsNet()
+    await this.statsStore.ready()
+    await this.statsLocal.ready()
+    let salt = await valueOf(this.statsLocal, 'salt/' + month)
+    if (!salt || fresh) {
+      salt = toHex(crypto.randomBytes(16))
+      await this.statsLocal.put('salt/' + month, salt)
+    }
+    const id = month + '/' + salt
+    let entry = this.statsBases.get(month)
+    if (entry && entry.id !== id) {
+      this.statsBases.delete(month)
+      if (entry.discovery) entry.discovery.destroy().catch(noop)
+      entry.base.close().catch(noop)
+      entry = null
+    }
+    if (!entry) {
+      const base = new Autobase(this.statsStore.namespace('stats/v' + stats.STATS_VERSION + '/' + id), statsBaseKey(month), {
+        optimistic: true,
+        valueEncoding: 'json',
+        wakeup: this.statsWakeup,
+        open: viewOf,
+        apply: stats.createStatsApply(month)
+      })
+      entry = { id, base, discovery: null, ready: base.ready() }
+      this.statsBases.set(month, entry)
+      await entry.ready
+      entry.discovery = this.statsSwarm ? this.statsSwarm.join(base.discoveryKey, { server: true, client: true }) : null
+    }
+    await entry.ready
+    return entry
+  }
+
+  /** Publishes one anonymous contribution (src/stats/community.ts) in this month's room. */
+  async contributeStats(c) {
+    if (!stats.statsBody(c)) throw new Error('Statistiques invalides')
+    const ts = Math.floor(Date.now() / stats.DAY_MS) * stats.DAY_MS
+    const month = stats.monthOf(ts)
+    const { base } = await this._statsBase(month, { fresh: true })
+    const value = { v: 1, t: 'stat', room: 'stats:' + month, ts, body: { id: c.id, v: c.v, h: c.h, s: c.s } }
+    value.nonce = await pow.solve(pow.powPayload(value, toHex(base.local.key)), stats.STATS_BITS)
+    if (!stats.statsNode(value, month)) throw new Error('Statistiques invalides')
+    await base.append(value, { optimistic: !base.writable })
+    await base.update()
+    if (!(await valueOf(base.view, 's/' + c.id))) throw new Error('Contribution refusée')
+    // Stays reachable a few minutes so peers can fetch it.
+    this._touchStats()
+    return true
+  }
+
+  /** Sums of the contributions of this month and the previous one (the UI applies the k threshold). */
+  async communityStats() {
+    const now = Date.now()
+    const d = new Date(now)
+    const months = [stats.monthOf(now), stats.monthOf(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() - 1, 15))]
+    const out = { contributions: 0, h: {}, s: [0, 0, 0] }
+    const entries = await Promise.all(months.map((m) => this._statsBase(m)))
+    // First open: give the swarm a moment to find peers.
+    await withTimeout(Promise.all(entries.map((e) => (e.discovery ? e.discovery.flushed() : null))), LOOKUP_MS, null).catch(noop)
+    for (const { base } of entries) {
+      await withTimeout(base.update(), LOOKUP_MS, null).catch(noop)
+      for (const e of await rangeValues(base.view, 's/', { limit: MAX_STATS_READ })) stats.mergeInto(out, e.value)
+    }
+    return out
   }
 
   // ---- subscriptions ------------------------------------------------------------

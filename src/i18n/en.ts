@@ -140,7 +140,7 @@ export const en: Record<Key, string> = {
   'settings.anilist': 'AniList sync',
   'settings.privacy': 'Privacy',
   'settings.privacyBody':
-    'Huwa has no account and no server. Your progress, lists and settings stay on this device. Metadata comes from AniList’s public API; add-ons you install contact their own servers. No telemetry.',
+    'Huwa has no account and no server. Your progress, lists and settings stay on this device. Metadata comes from AniList’s public API; add-ons you install contact their own servers. No telemetry: playback statistics stay on this device unless you turn on “Compare with the community” (an anonymous, noisy summary, without your identity).',
   'settings.about': 'About',
   'settings.version': 'Version {v}',
   'settings.legal':

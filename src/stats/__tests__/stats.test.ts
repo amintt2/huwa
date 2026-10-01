@@ -1,0 +1,218 @@
+import assert from 'node:assert/strict';
+import test from 'node:test';
+
+import { eventOf } from '../../addons/timing';
+import {
+  bucketOf,
+  buildContribution,
+  BUCKET_COUNT,
+  communityView,
+  COUNT_MAX,
+  COUNT_MIN,
+  geometricNoise,
+  histQuantile,
+  isContribution,
+  K_MIN,
+  mergeContributions,
+  monthOf,
+  type StatsContribution,
+} from '../community';
+import { addonTable, classifyPath, failReason, formatMs, median, pushRing, quantile, summarize, type PlaybackEvent } from '../model';
+
+/** Deterministic [0, 1) generator (mulberry32). */
+function seeded(seed: number) {
+  let a = seed >>> 0;
+  return () => {
+    a = (a + 0x6d2b79f5) >>> 0;
+    let t = a;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+const ev = (p: Partial<PlaybackEvent>): PlaybackEvent => ({ at: 1, kind: 'start', warm: false, stalls: 0, stalledMs: 0, fallbackToMpv: false, ...p });
+
+test('classifyPath: by how the URL was obtained, never keeping it', () => {
+  assert.equal(classifyPath({ web: true, url: 'https://x.example/embed/1' }), 'web-player');
+  assert.equal(classifyPath({ url: 'http://127.0.0.1:8123/abcd/0', torrent: true }), 'torrent-engine');
+  assert.equal(classifyPath({ url: 'http://localhost:8123/abcd/0' }), 'torrent-engine');
+  assert.equal(classifyPath({ url: 'https://abc.download.real-debrid.com/d/XYZ/ep.mkv', torrent: true }), 'debrid');
+  assert.equal(classifyPath({ url: 'https://abc.download.real-debrid.com/d/XYZ/ep.mkv' }), 'debrid');
+  assert.equal(classifyPath({ url: 'https://torrentio.strem.fun/resolve/realdebrid/KEY/hash/null/0/ep.mkv' }), 'aggregator-playback');
+  assert.equal(classifyPath({ url: 'https://comet.example/playback/b64config/hash/0' }), 'aggregator-playback');
+  assert.equal(classifyPath({ url: 'https://mediafusion.example/streaming_provider/secret/stream?info_hash=x' }), 'aggregator-playback');
+  assert.equal(classifyPath({ url: 'https://cdn.example.com/hls/ep1/master.m3u8' }), 'http-direct');
+  assert.equal(classifyPath({ url: 'https://user:pw@cdn.example.com:8443/v.mp4?token=resolve/' }), 'http-direct');
+  assert.equal(classifyPath({}), undefined);
+});
+
+test('failReason: coarse categories only', () => {
+  assert.equal(failReason('The request timed out.'), 'timeout');
+  assert.equal(failReason('P2P: délai dépassé (x)'), 'timeout');
+  assert.equal(failReason('HTTP 403 Forbidden'), 'http');
+  assert.equal(failReason('The Internet connection appears to be offline.'), 'network');
+  assert.equal(failReason('Cannot Open: unsupported codec'), 'format');
+  assert.equal(failReason('Lecture impossible'), 'other');
+  assert.equal(failReason(undefined), 'other');
+});
+
+test('quantile / median / p90 with interpolation', () => {
+  assert.equal(median([]), undefined);
+  assert.equal(median([5]), 5);
+  assert.equal(median([3, 1, 2]), 2);
+  assert.equal(median([1, 2, 3, 4]), 2.5);
+  assert.equal(quantile([1, 2, 3, 4, 5, 6, 7, 8, 9, 10], 0.9), 9.1);
+  assert.equal(quantile([10, 20], 0), 10);
+  assert.equal(quantile([10, 20], 1), 20);
+});
+
+test('summarize: success rate, paths, engines, warm/cold, stalls, recent bars', () => {
+  const events = [
+    ev({ path: 'http-direct', engine: 'native', tFirstFrame: 1000, tSources: 300, warm: true }),
+    ev({ path: 'http-direct', engine: 'native', tFirstFrame: 3000, stalls: 2, stalledMs: 4000 }),
+    ev({ path: 'debrid', engine: 'mpv', tFirstFrame: 2000, fallbackToMpv: true, kind: 'resume' }),
+    ev({ path: 'torrent-engine', engine: 'native', failed: 'timeout' }),
+    ev({ failed: 'no-source' }),
+    ev({ path: 'web-player', tFirstFrame: 5000, kind: 'next' }),
+  ];
+  const s = summarize(events);
+  assert.equal(s.total, 6);
+  assert.equal(s.overall.n, 4);
+  assert.equal(s.overall.median, 2500);
+  assert.equal(s.overall.success, 4 / 6);
+  assert.equal(s.byPath['http-direct']?.median, 2000);
+  assert.equal(s.byPath['http-direct']?.success, 1);
+  assert.equal(s.byPath['torrent-engine']?.success, 0);
+  assert.equal(s.byEngine.mpv?.n, 1);
+  assert.equal(s.byEngine.native?.success, 2 / 3);
+  assert.equal(s.warm.median, 1000);
+  // Cold starts exclude the web player (no warm handover possible there).
+  assert.equal(s.cold.n, 2);
+  assert.equal(s.byKind.resume?.median, 2000);
+  assert.equal(s.byKind.next?.median, 5000);
+  assert.equal(s.stalls.rate, 1 / 4);
+  assert.equal(s.stalls.medianMs, 4000);
+  assert.equal(s.fallbackRate, 1 / 4);
+  assert.equal(s.steps.sources, 300);
+  assert.deepEqual(s.recent, [1000, 3000, 2000, null, null, 5000]);
+  assert.deepEqual(s.failures, { timeout: 1, 'no-source': 1 });
+});
+
+test('addon table: by manifest id, most used first', () => {
+  const rows = addonTable({
+    'org.a': { name: 'A', ok: 3, fail: 1, ms: [100, 300, 200] },
+    'org.b': { name: 'B', ok: 9, fail: 0, ms: [50] },
+    'org.c': { name: 'C', ok: 0, fail: 0, ms: [] },
+  });
+  assert.deepEqual(rows.map((r) => r.id), ['org.b', 'org.a']);
+  assert.equal(rows[1].success, 0.75);
+  assert.equal(rows[1].median, 200);
+  assert.equal(rows[1].n, 4);
+});
+
+test('pushRing keeps the last N', () => {
+  let r: number[] = [];
+  for (let i = 0; i < 510; i++) r = pushRing(r, i, 500);
+  assert.equal(r.length, 500);
+  assert.equal(r[0], 10);
+  assert.equal(r[499], 509);
+});
+
+test('formatMs', () => {
+  assert.equal(formatMs(undefined), '—');
+  assert.equal(formatMs(847), '850 ms');
+  assert.equal(formatMs(1440), '1,4 s');
+  assert.equal(formatMs(12600), '13 s');
+});
+
+test('eventOf: abandoned quickly = nothing, long wait = timeout, played = timings', () => {
+  const base = { at: 5, info: {}, stalls: 0, stalledMs: 0 };
+  assert.equal(eventOf({ ...base, marks: { screen: 10 } }, 5000), null);
+  assert.equal(eventOf({ ...base, marks: {} }, 120_000), null, 'a tap without a watch screen');
+  assert.equal(eventOf({ ...base, marks: { screen: 10, sources: 400 } }, 25_000)?.failed, 'timeout');
+  assert.equal(eventOf({ ...base, marks: { screen: 10 }, failed: 'no-source' }, 1000)?.failed, 'no-source');
+  const e = eventOf(
+    { ...base, marks: { screen: 10, sources: 400.4, decision: 900, url: 950, 'first-frame': 1650.6 }, info: { path: 'debrid', engine: 'native', warm: true, network: 'wifi' }, stalls: 1, stalledMs: 800, failed: 'http' },
+    60_000,
+  )!;
+  assert.deepEqual(e, {
+    at: 5, kind: 'start', path: 'debrid', engine: 'native', warm: true, tSources: 400, tDecision: 900, tUrl: 950, tFirstFrame: 1651,
+    stalls: 1, stalledMs: 800, failed: undefined, fallbackToMpv: false, network: 'wifi',
+  });
+  // Nothing identifying in an event.
+  assert.ok(!/https?:|al\d+:/.test(JSON.stringify(e)));
+});
+
+test('buckets and geometric noise', () => {
+  assert.equal(bucketOf(0), 0);
+  assert.equal(bucketOf(499), 0);
+  assert.equal(bucketOf(500), 1);
+  assert.equal(bucketOf(19_999), 9);
+  assert.equal(bucketOf(60_000), 10);
+  const rand = seeded(7);
+  const xs = Array.from({ length: 20000 }, () => geometricNoise(rand));
+  const mean = xs.reduce((a, b) => a + b, 0) / xs.length;
+  assert.ok(Math.abs(mean) < 0.05, `zero-mean noise (${mean})`);
+  // Var of the two-sided geometric with ε = 1: 2α/(1-α)² ≈ 1.84
+  const v = xs.reduce((a, b) => a + b * b, 0) / xs.length;
+  assert.ok(v > 1.5 && v < 2.2, `variance ${v}`);
+});
+
+test('buildContribution: coarse, noisy, bounded, nothing identifying', () => {
+  const events = [
+    ...Array.from({ length: 12 }, (_, i) => ev({ path: 'http-direct', tFirstFrame: 800 + i * 100 })),
+    ev({ path: 'debrid', tFirstFrame: 1200 }),
+    ev({ path: 'debrid', tFirstFrame: 1300 }),
+    ev({ path: 'torrent-engine', failed: 'timeout' }),
+    ev({ path: 'http-direct', tFirstFrame: 900, stalls: 1 }),
+  ];
+  const c = buildContribution(events, 'a'.repeat(32), seeded(1))!;
+  assert.ok(c);
+  assert.ok(isContribution(c));
+  // debrid: only 2 samples → not shared.
+  assert.deepEqual(Object.keys(c.h), ['http-direct']);
+  assert.equal(c.h['http-direct']!.length, BUCKET_COUNT);
+  for (const n of [...c.h['http-direct']!, ...c.s]) assert.ok(Number.isInteger(n) && n >= COUNT_MIN);
+  assert.ok(c.h['http-direct']!.every((n) => n <= COUNT_MAX));
+  assert.deepEqual(Object.keys(c).sort(), ['h', 'id', 's', 'v']);
+  assert.equal(buildContribution(events.slice(12, 15), 'b'.repeat(32), seeded(1)), null, 'too little to share');
+});
+
+test('noise cancels out across many contributions', () => {
+  const rand = seeded(42);
+  const events = Array.from({ length: 10 }, () => ev({ path: 'http-direct', tFirstFrame: 1200 })); // bucket 2
+  const list: StatsContribution[] = [];
+  for (let i = 0; i < 400; i++) list.push(buildContribution(events, i.toString(16).padStart(32, '0'), rand)!);
+  const m = mergeContributions(list);
+  assert.equal(m.contributions, 400);
+  const h = m.h['http-direct']!;
+  // True sums: 4000 in bucket 2, 0 elsewhere; noise sd ≈ 1.36 × √400 ≈ 27 per bucket.
+  assert.ok(Math.abs(h[2] - 4000) < 150, `bucket 2 = ${h[2]}`);
+  assert.ok(h.every((n, i) => i === 2 || Math.abs(n) < 150));
+  const med = histQuantile(h, 0.5)!;
+  assert.ok(med > 1000 && med < 1500, `median ${med}`);
+  assert.ok(Math.abs(m.s[0] - 4000) < 150);
+});
+
+test('merge ignores duplicates and invalid contributions; k-anonymity threshold', () => {
+  const one: StatsContribution = { id: '1'.repeat(32), v: 1, h: { debrid: new Array(BUCKET_COUNT).fill(2) }, s: [22, 1, 3] };
+  const bad = { ...one, id: '2'.repeat(32), h: { debrid: [1] } } as StatsContribution;
+  const m = mergeContributions([one, one, bad]);
+  assert.equal(m.contributions, 1);
+  assert.equal(communityView(m), null);
+  const many = mergeContributions(Array.from({ length: K_MIN }, (_, i) => ({ ...one, id: String(i).padStart(32, '0') })));
+  const view = communityView(many)!;
+  assert.equal(view.contributions, K_MIN);
+  assert.ok(view.byPath.debrid && view.byPath.debrid.median! > 0);
+  assert.equal(view.success, 22 / 23);
+  assert.equal(monthOf(Date.UTC(2026, 9, 31, 23, 59)), '2026-10');
+});
+
+test('histQuantile interpolates inside buckets and ignores negative noise', () => {
+  const h = new Array(BUCKET_COUNT).fill(0);
+  h[1] = 10; // 500–1000 ms
+  h[0] = -3;
+  assert.equal(histQuantile(h, 0.5), 750);
+  assert.equal(histQuantile(new Array(BUCKET_COUNT).fill(-1), 0.5), undefined);
+});

@@ -54,6 +54,13 @@ export type JournalEntry =
   | { type: 'ch'; work: string; unit: number; ts: number }
   | { type: 'comment'; work: string; ts: number };
 
+/**
+ * Opt-in community playback stats (src/stats/community.ts): coarse noisy aggregates, no identity.
+ * `h`: time-to-first-frame histogram per playback path, `s`: [played, failed, stalled].
+ */
+export type StatsContribution = { id: string; v: number; h: Partial<Record<string, number[]>>; s: [number, number, number] };
+export type CommunityStatsSums = { contributions: number; h: Partial<Record<string, number[]>>; s: [number, number, number] };
+
 export type Unsubscribe = () => void;
 
 export interface P2P {
@@ -100,4 +107,10 @@ export interface P2P {
   // Journal → rank / history (phase 6)
   appendJournal(e: JournalEntry): Promise<void>;
   journal(key?: PublicKey): Promise<JournalEntry[]>;
+
+  // Community playback stats (opt-in). Published in a public room by a throwaway writer on a
+  // separate swarm: never signed with, nor sent alongside, the identity or device keys.
+  contributeStats(c: StatsContribution): Promise<void>;
+  /** Sums of the recent contributions, or null when the network is not available. */
+  communityStats(): Promise<CommunityStatsSums | null>;
 }
