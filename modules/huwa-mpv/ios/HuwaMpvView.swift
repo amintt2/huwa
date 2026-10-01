@@ -70,8 +70,29 @@ public final class HuwaMpvView: ExpoView {
     let size = CGSize(width: bounds.width * scale, height: bounds.height * scale)
     if size.width > 1 && size.height > 1 && metalLayer.drawableSize != size {
       metalLayer.drawableSize = size
+      scheduleVideoResize()
     }
     CATransaction.commit()
+  }
+
+  /// MPVKit's moltenvk render context never polls the layer size (its `control` answers
+  /// VO_NOTIMPL to everything), so mpv keeps its swapchain at the old geometry and the picture
+  /// stays in a corner after a rotation. Until libmpv is rebuilt with a resize-aware context, the
+  /// only lever is to rebuild the video output (`vid=no` → `vid=auto`); it re-reads drawableSize.
+  /// Debounced so a rotation animation triggers it once; audio and position are untouched.
+  private var resizeWork: DispatchWorkItem?
+  private func scheduleVideoResize() {
+    #if HUWA_MPV
+    guard core != nil else { return }
+    resizeWork?.cancel()
+    let work = DispatchWorkItem { [weak self] in
+      guard let self, let core = self.core, UIApplication.shared.applicationState == .active else { return }
+      core.setString("vid", "no")
+      core.setString("vid", "auto")
+    }
+    resizeWork = work
+    DispatchQueue.main.asyncAfter(deadline: .now() + 0.25, execute: work)
+    #endif
   }
 
   // MARK: commands (from JS, main thread)
