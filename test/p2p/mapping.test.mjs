@@ -174,4 +174,12 @@ test('map room: proposals propagate between nodes', { timeout: 120000 }, async (
   }
   assert.deepEqual(both.map((p) => p.author).sort(), [pa.key, pb.key].sort())
   stop()
+
+  // Unsubscribed before the room finished opening: the room must not stay retained.
+  for (const [kind, room, rooms] of [['mapping', 'm77', alice.mapRooms], ['comments', '7777', alice.rooms]]) {
+    alice.watch(kind, room, () => {})()
+    await (kind === 'mapping' ? alice._mapRoom(room) : alice._room(room))
+    await new Promise((r) => setTimeout(r, 50))
+    assert.equal(rooms.get(room)?.refs, 0, kind + ': no reference left after an early unsubscribe')
+  }
 })
