@@ -22,6 +22,7 @@ import type {
   StatsContribution,
   Unsubscribe,
 } from './contract';
+import { P2PError } from './errors';
 
 const CMD = { CALL: 1, EVENT: 2 } as const;
 const DEFAULT_TIMEOUT = 30_000;
@@ -212,8 +213,8 @@ export class BareP2P implements P2P {
         timer = setTimeout(() => reject(new Error(`P2P: délai dépassé (${m})`)), timeout);
       }),
     ]).finally(() => clearTimeout(timer));
-    const res = JSON.parse(decoder.decode(raw)) as { ok: boolean; v?: T; e?: string };
-    if (!res.ok) throw new Error(res.e ?? 'Erreur P2P');
+    const res = JSON.parse(decoder.decode(raw)) as { ok: boolean; v?: T; e?: string; code?: string };
+    if (!res.ok) throw new P2PError(res.e ?? 'Erreur P2P', res.code);
     return res.v as T;
   }
 

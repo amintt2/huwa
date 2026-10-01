@@ -8,6 +8,7 @@ import { Pressable, StyleSheet, View } from 'react-native';
 import Animated, { FadeInDown, FadeOut } from 'react-native-reanimated';
 
 import { cloudBackup, cloudBackupSupported } from '@/p2p/cloud-backup';
+import { isRestoreNotFound } from '@/p2p/errors';
 import { social } from '@/p2p/hooks';
 import { hintLabel, type AccountHint } from '@/p2p/passkey-core';
 import { requestPasskeyOffer } from '@/p2p/passkey';
@@ -24,6 +25,7 @@ export function CloudAccountCard({ onVisibleChange }: { onVisibleChange?: (visib
   const [dismissed, setDismissed] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();
+  const [offline, setOffline] = useState(false);
 
   useEffect(() => {
     if (!cloudBackupSupported) return;
@@ -58,7 +60,13 @@ export function CloudAccountCard({ onVisibleChange }: { onVisibleChange?: (visib
     } catch (e) {
       requestPasskeyOffer(false);
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
-      setError(e instanceof Error ? e.message : 'Restauration impossible.');
+      // No device of the account answered: the account is untouched, the same tap retries.
+      setOffline(isRestoreNotFound(e));
+      setError(
+        isRestoreNotFound(e)
+          ? 'Aucun de tes appareils n’a répondu. Ton compte n’a pas été modifié : ouvre Huwa sur un appareil déjà connecté, puis réessaie.'
+          : e instanceof Error ? e.message : 'Restauration impossible.',
+      );
       setBusy(false);
     }
   };
@@ -82,7 +90,7 @@ export function CloudAccountCard({ onVisibleChange }: { onVisibleChange?: (visib
         </View>
       </View>
       {error ? <Txt v="small" color={DANGER}>{error}</Txt> : null}
-      <Button label={busy ? 'Connexion…' : label.action} icon="log-in-outline" onPress={restore} />
+      <Button label={busy ? 'Connexion…' : offline ? 'Réessayer' : label.action} icon="log-in-outline" onPress={restore} />
       <Pressable
         onPress={() => setDismissed(true)}
         disabled={busy}

@@ -25,6 +25,8 @@ const ROOM_IDLE_MS = 60_000
 const LOOKUP_MS = 6_000
 const PAIRING_TTL_MS = 10 * 60_000
 const MAX_COMMENTS = 1000
+// Restore: how long the devices of the account get to answer (pointer core or hello).
+const RESTORE_LOOKUP_MS = 15_000
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
 const noop = () => {}
@@ -84,8 +86,9 @@ class HuwaNode {
    * @param {string} [opts.deviceName]
    * @param {(ev: object) => void} [opts.onevent]  status / me / subscription pushes
    */
-  constructor({ storage, bootstrap, deviceName = 'appareil', onevent = noop, log = noop }) {
+  constructor({ storage, bootstrap, deviceName = 'appareil', onevent = noop, log = noop, restoreLookupMs = RESTORE_LOOKUP_MS }) {
     this.storage = storage
+    this.restoreLookupMs = restoreLookupMs
     this.bootstrap = bootstrap && bootstrap.length ? bootstrap : undefined
     this.deviceName = deviceName
     this.onevent = onevent
@@ -445,6 +448,11 @@ class HuwaNode {
     return null
   }
 
+  /**
+   * Joins the existing account of `phrase`. Never creates a personal base: when no device of the
+   * account answers in time, fails with code RESTORE_NOT_FOUND and leaves this device untouched
+   * (a new base appended to the root-owned pointer would make the real one unreachable forever).
+   */
   async restoreIdentity(phrase) {
     if (this.secret) throw new Error('Une identité existe déjà sur cet appareil')
     if (!Array.isArray(phrase) || phrase.length < 12 || phrase.length > 24 || !phrase.every((w) => typeof w === 'string')) {
@@ -458,8 +466,12 @@ class HuwaNode {
     // Find the personal base through the pointer core owned by the root's discovery key.
     const pointer = this.store.get({ keyPair: out.pointer })
     await pointer.ready()
-    const discovery = this._join(pointer.discoveryKey)
-    const found = await this._waitFor(async () => {
+    // Client only: two devices restoring at once must not "find" each other's empty pointer.
+    const discovery = this._join(pointer.discoveryKey, { server: false, client: true })
+    // Devices linked by QR do not hold the pointer, but every device of the account announces on
+    // the identity topic and presents its personal base in its (identity-signed) hello.
+    const idDiscovery = this._join(idTopic(out.identity), { server: false, client: true })
+    const fromPointer = async () => {
       await pointer.update({ wait: false }).catch(noop)
       if (pointer.length === 0) return null
       const last = await pointer.get(pointer.length - 1, { timeout: 2000 }).catch(() => null)
@@ -470,9 +482,31 @@ class HuwaNode {
       } catch {
         return null
       }
-    }, 12_000)
-    if (discovery) await discovery.destroy().catch(noop)
-    await pointer.close()
+    }
+    const fromHello = () => {
+      const p = this.peers.get(out.identity)
+      return p && isKey(p.home) ? p.home : null
+    }
+    let found = null
+    try {
+      // The root-signed pointer wins; a hello only counts after a short grace period for it.
+      const grace = Date.now() + Math.min(4000, this.restoreLookupMs / 3)
+      found = await this._waitFor(async () => (await fromPointer()) || (Date.now() > grace ? fromHello() : null), this.restoreLookupMs)
+    } finally {
+      if (discovery) await discovery.destroy().catch(noop)
+      if (idDiscovery) await idDiscovery.destroy().catch(noop)
+      await pointer.close().catch(noop)
+      // The hello of my own devices was stored as a peer: not one.
+      if (this.peers.has(out.identity)) {
+        this.peers.delete(out.identity)
+        await this.local.del('peer/' + out.identity).catch(noop)
+      }
+    }
+    if (!found) {
+      const err = new Error("Aucun de tes appareils n'a répondu. Réessaie quand un appareil connecté à ton compte est en ligne (app ouverte).")
+      err.code = 'RESTORE_NOT_FOUND'
+      throw err
+    }
     return this._createFromMnemonic(mnemonic, null, found)
   }
 
