@@ -39,7 +39,7 @@ export default function SubtitleSettings() {
           <View style={styles.block}>
             <SwitchLine
               label="Afficher les sous-titres"
-              hint="Choisit automatiquement la meilleure piste : langue préférée, puis source, puis pistes « forcées »."
+              hint="Choisit automatiquement la meilleure piste : dialogues complets dans ta langue préférée, puis la meilleure source ; pistes « forcées » (panneaux, chansons) seulement s’il n’y a rien d’autre."
               value={prefs.enabled}
               onChange={(enabled) => setSubtitlePrefs({ enabled })}
             />
