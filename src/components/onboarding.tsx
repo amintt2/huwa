@@ -16,15 +16,17 @@ import { BRIDGE, C, S } from '@/theme/tokens';
 import { LanguagePrefs } from './language-prefs';
 import { LinkPrompt } from './link-prompt';
 import { RecommendedExtensions } from './recommended-extensions';
+import { StatsOptIn } from './stats-opt-in';
 import { FilterChip } from './states';
 import { Button, Txt, type IconName } from './ui';
 
-type Page = { icon: IconName; title: Key; body: Key; extensions?: boolean; prefs?: boolean };
+type Page = { icon: IconName; title: Key; body: Key; extensions?: boolean; prefs?: boolean; stats?: boolean };
 const BASE: Page[] = [
   { icon: 'swap-horizontal', title: 'onb.1.title', body: 'onb.1.body' },
   { icon: 'calendar-outline', title: 'onb.2.title', body: 'onb.2.body' },
   { icon: 'shield-checkmark-outline', title: 'onb.3.title', body: 'onb.3.body' },
   { icon: 'language-outline', title: 'onb.prefs.title', body: 'onb.prefs.body', prefs: true },
+  { icon: 'speedometer-outline', title: 'onb.stats.title', body: 'onb.stats.body', stats: true },
 ];
 // AltStore PAL / sideload builds end on "add your extensions"; the App Store build does not.
 const PAGES: Page[] = isStoreBuild ? BASE : [...BASE, { icon: 'extension-puzzle-outline', title: 'onb.4.title', body: 'onb.4.body', extensions: true }];
@@ -63,7 +65,13 @@ export function Onboarding() {
         onMomentumScrollEnd={(e) => setPage(Math.round(e.nativeEvent.contentOffset.x / width))}
         style={{ flex: 1 }}>
         {PAGES.map((p) =>
-          p.prefs ? (
+          p.stats ? (
+            <ScrollView key={p.title} style={{ width }} contentContainerStyle={styles.prefsPage} showsVerticalScrollIndicator={false}>
+              <Txt v="display" style={{ fontSize: 28 }} accessibilityRole="header">{t(p.title)}</Txt>
+              <Txt v="body" style={{ fontSize: 16, lineHeight: 23 }}>{t(p.body)}</Txt>
+              <StatsOptIn />
+            </ScrollView>
+          ) : p.prefs ? (
             <ScrollView key={p.title} style={{ width }} contentContainerStyle={styles.prefsPage} showsVerticalScrollIndicator={false}>
               <Txt v="display" style={{ fontSize: 28 }} accessibilityRole="header">{t(p.title)}</Txt>
               <Txt v="body" style={{ fontSize: 16, lineHeight: 23 }}>{t(p.body)}</Txt>

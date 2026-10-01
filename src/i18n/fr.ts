@@ -178,6 +178,8 @@ export const fr = {
   'onb.3.body': 'Pas de compte, pas de pub, pas de pistage. Choisis tes sources via des addons. Huwa n’héberge aucun contenu.',
   'onb.prefs.title': 'Tes préférences',
   'onb.prefs.body': 'Huwa choisira les bonnes sources et les bons sous-titres pour toi.',
+  'onb.stats.title': 'Aider à rendre Huwa plus rapide ?',
+  'onb.stats.body': 'Huwa mesure sur ton téléphone le temps que met chaque épisode à démarrer. Tu peux, si tu veux, partager ces mesures de façon anonyme pour comparer avec la communauté.',
   'onb.4.title': 'Ajoute tes extensions',
   'onb.4.body': 'Huwa lit ce que tes extensions lui donnent. Commence par les essentielles, tu pourras en ajouter d’autres à tout moment.',
   'onb.4.more': 'Plus d’extensions',

@@ -169,6 +169,8 @@ export const en: Record<Key, string> = {
   'onb.3.body': 'No account, no ads, no tracking. Pick your sources through add-ons. Huwa hosts no content.',
   'onb.prefs.title': 'Your preferences',
   'onb.prefs.body': 'Huwa will pick the right sources and subtitles for you.',
+  'onb.stats.title': 'Help make Huwa faster?',
+  'onb.stats.body': 'Huwa measures on your phone how long each episode takes to start. If you want, you can share these measurements anonymously to compare with the community.',
   'onb.4.title': 'Add your extensions',
   'onb.4.body': 'Huwa plays what your extensions provide. Start with the essentials; you can add more at any time.',
   'onb.4.more': 'More extensions',
