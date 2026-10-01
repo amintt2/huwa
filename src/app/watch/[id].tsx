@@ -1,8 +1,10 @@
+import Ionicons from '@expo/vector-icons/Ionicons';
 import { router, Stack, useLocalSearchParams } from 'expo-router';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { StyleSheet, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
+import { languageMismatch } from '@/addons/audio';
 import { useAnimeIds } from '@/addons/ids';
 import { useSubtitles } from '@/addons/registry';
 import { isTorrent } from '@/addons/protocol';
@@ -14,6 +16,7 @@ import { PrefetchNext } from '@/components/player/prefetch-next';
 import { WebPlayer } from '@/components/player/WebPlayer';
 import { SourceButton, SourcesMenu } from '@/components/sources-menu';
 import { useStreamPolicy } from '@/settings/network';
+import { useSettings } from '@/settings/settings';
 import { Button, Chip, Cover, IconButton, Press, Txt } from '@/components/ui';
 import { chapterAfterEpisode } from '@/data/bridge';
 import { episodeLabel, getEpisode } from '@/data/catalog';
@@ -76,6 +79,20 @@ function WatchScreen({ id }: { id: string }) {
   const [prefetchArmed, setPrefetchArmed] = useState(false);
   const streamPolicy = useStreamPolicy();
   const [notice, setNotice] = useState('');
+  // The chosen source doesn't match the user's languages (e.g. no VOSTFR: Spanish audio, English
+  // subtitles only): say it instead of letting them find out. Once per source, then a banner.
+  const langPrefs = useSettings();
+  const mismatch = src.current && (src.url || src.web) ? languageMismatch(src.current, langPrefs, subtitles.map((x) => x.lang)) : null;
+  const [mismatchShown, setMismatchShown] = useState<string | undefined>();
+  if (mismatch && src.currentKey && mismatchShown !== src.currentKey) {
+    setMismatchShown(src.currentKey);
+    setNotice(mismatch);
+  }
+  useEffect(() => {
+    if (!notice) return;
+    const id = setTimeout(() => setNotice(''), 6000);
+    return () => clearTimeout(id);
+  }, [notice]);
   const currentRef = useRef(src.currentKey);
   useEffect(() => {
     currentRef.current = src.currentKey;
@@ -86,7 +103,6 @@ function WatchScreen({ id }: { id: string }) {
     const from = loadedQuality.current;
     if (from !== undefined && (src.quality ?? 0) > (from ?? 0)) {
       setNotice(`Meilleure qualité trouvée : ${qualityLabel(src.quality)}`);
-      setTimeout(() => setNotice(''), 3500);
     }
     loadedQuality.current = src.quality;
   };
@@ -143,6 +159,15 @@ function WatchScreen({ id }: { id: string }) {
       </View>
 
       <SourceButton src={src} onOpen={() => setMenuOpen(true)} />
+      {mismatch && (
+        <Press onPress={() => setMenuOpen(true)} style={styles.langWarn} accessibilityRole="button" accessibilityLabel={`${mismatch}. Changer de source`}>
+          <Ionicons name="language-outline" size={18} color="#F5B544" />
+          <View style={{ flex: 1, gap: 2 }}>
+            <Txt v="label" style={{ fontSize: 14 }}>{mismatch}</Txt>
+            <Txt v="small">Aucune source ne correspond à tes langues pour l’instant. Touche pour choisir une autre source.</Txt>
+          </View>
+        </Press>
+      )}
 
       {next && (
         <Press onPress={() => router.replace(`/watch/${next.id}`)} style={styles.next} accessibilityLabel={`Suivant : ${episodeLabel(next)}`}>
@@ -257,6 +282,10 @@ function WatchScreen({ id }: { id: string }) {
 }
 
 const styles = StyleSheet.create({
+  langWarn: {
+    flexDirection: 'row', alignItems: 'flex-start', gap: S.md, marginHorizontal: S.lg, padding: S.md, borderRadius: 14,
+    backgroundColor: 'rgba(245,181,68,0.12)', borderWidth: 1, borderColor: 'rgba(245,181,68,0.35)',
+  },
   topBar: { flexDirection: 'row', alignItems: 'center', gap: S.md, paddingHorizontal: S.md, paddingBottom: S.sm },
   next: { flexDirection: 'row', alignItems: 'center', gap: S.md, padding: 10, borderRadius: 16, backgroundColor: C.surface },
   nextPlay: { borderRadius: 20, overflow: 'hidden', backgroundColor: C.accent },

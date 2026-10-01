@@ -61,3 +61,50 @@ export function langScore(s: StreamItem, prefs: { watchMode: WatchMode; subLangs
   if (!l.audio.length || l.audio.includes('ja')) return 5;
   return 12;
 }
+
+const LANG_NAME: Record<string, string> = {
+  fr: 'français', en: 'anglais', es: 'espagnol', de: 'allemand', it: 'italien', pt: 'portugais',
+  ar: 'arabe', ja: 'japonais', ko: 'coréen', zh: 'chinois', ru: 'russe', hi: 'hindi',
+};
+const ISO3: Record<string, string> = {
+  fre: 'fr', fra: 'fr', eng: 'en', spa: 'es', ger: 'de', deu: 'de', ita: 'it', por: 'pt', pob: 'pt',
+  ara: 'ar', jpn: 'ja', kor: 'ko', chi: 'zh', zho: 'zh', rus: 'ru', hin: 'hi',
+};
+/** "fre", "fr-FR", "French" → "fr". */
+export function normLang(l: string): string {
+  const x = l.trim().toLowerCase();
+  if (ISO3[x]) return ISO3[x];
+  const two = x.split(/[-_]/)[0];
+  if (two.length === 2) return two;
+  const byName = Object.entries(LANG_NAME).find(([, n]) => x.startsWith(n.slice(0, 4)) || x.startsWith(n));
+  if (byName) return byName[0];
+  const en: Record<string, string> = { french: 'fr', english: 'en', spanish: 'es', german: 'de', italian: 'it', portuguese: 'pt', arabic: 'ar', japanese: 'ja', korean: 'ko' };
+  return en[x] ?? x;
+}
+const names = (codes: string[]) => codes.map((c) => LANG_NAME[c] ?? c).join(', ');
+
+/**
+ * What the chosen source lacks compared with the user's languages, as a short French sentence,
+ * or null when it matches (or nothing is known). `subtitleLangs`: languages actually available
+ * (subtitles shipped with the stream + subtitles addons).
+ */
+export function languageMismatch(
+  s: StreamItem,
+  prefs: { watchMode: WatchMode; subLangs: string[]; dubLangs: string[] },
+  subtitleLangs: string[],
+): string | null {
+  const l = detectLangs(s);
+  if (prefs.watchMode === 'dub') {
+    if (!l.audio.length || prefs.dubLangs.some((c) => l.audio.includes(c))) return null;
+    return `Pas de version doublée en ${LANG_NAME[prefs.dubLangs[0]] ?? prefs.dubLangs[0]} : audio ${names(l.audio)}`;
+  }
+  const problems: string[] = [];
+  if (l.audio.length && !l.audio.includes('ja')) problems.push(`audio ${names(l.audio)}`);
+  const subs = [...new Set([...l.subs, ...subtitleLangs.map(normLang)])];
+  if (!prefs.subLangs.some((c) => subs.includes(c))) {
+    problems.push(subs.length ? `sous-titres ${names(subs.slice(0, 3))} seulement` : `aucun sous-titre en ${LANG_NAME[prefs.subLangs[0]] ?? prefs.subLangs[0]}`);
+  }
+  if (!problems.length) return null;
+  const want = prefs.subLangs[0] === 'fr' ? 'VOSTFR' : `VO sous-titrée ${LANG_NAME[prefs.subLangs[0]] ?? prefs.subLangs[0]}`;
+  return `Pas de ${want} trouvée : ${problems.join(', ')}`;
+}

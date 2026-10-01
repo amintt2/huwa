@@ -30,3 +30,16 @@ test('langScore follows the watch mode and language order', () => {
   assert.ok(langScore(vf, dub) < langScore(eng, dub));
   assert.ok(langScore(eng, dub) < langScore(raw, dub));
 });
+
+test('languageMismatch tells what the chosen source lacks', async () => {
+  const { languageMismatch, normLang } = await import('../audio');
+  const prefs = { watchMode: 'sub' as const, subLangs: ['fr', 'en'], dubLangs: ['fr'] };
+  // Spanish audio, English subtitles only, user wants VOSTFR (fr first, en accepted).
+  assert.equal(languageMismatch({ name: 'x', title: 'Show 🇪🇸' }, prefs, ['eng']), 'Pas de VOSTFR trouvée : audio espagnol');
+  assert.equal(languageMismatch({ name: 'x', title: 'Show 🇪🇸' }, { ...prefs, subLangs: ['fr'] }, ['eng']), 'Pas de VOSTFR trouvée : audio espagnol, sous-titres anglais seulement');
+  assert.equal(languageMismatch({ name: 'x', title: 'Show VOSTFR' }, prefs, []), null);
+  assert.equal(languageMismatch({ name: 'x', title: 'Show' }, { ...prefs, subLangs: ['fr'] }, []), 'Pas de VOSTFR trouvée : aucun sous-titre en français');
+  assert.equal(languageMismatch({ name: 'x', title: 'Show MULTI' }, { ...prefs, watchMode: 'dub' }, []), null);
+  assert.equal(normLang('fre'), 'fr');
+  assert.equal(normLang('French'), 'fr');
+});

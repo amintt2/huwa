@@ -3,6 +3,7 @@ import { router } from 'expo-router';
 import { StyleSheet, Text, View } from 'react-native';
 
 import type { Series } from '@/data/catalog';
+import { firstEpisodeOf, useSeasonNumber } from '@/data/franchise';
 import type { Release } from '@/data/releases';
 import type { ContinueItem } from '@/store/derived';
 import { C, F, R, S, type Kind } from '@/theme/tokens';
@@ -32,8 +33,18 @@ export function PosterCard({ series, kind, width = 116 }: { series: Series; kind
 /** Release card: art on top, centered uppercase title, info pills underneath. */
 export function ReleaseCard({ release, width = 168 }: { release: Release; width?: number }) {
   const { series, kind } = release;
+  const anime = kind === 'anime' && !!series.anime;
+  const season = useSeasonNumber(series, anime);
+  // "S3 · Épisode 7": the airing episode is rarely the show's first.
+  const label = anime && season && season > 1 ? `S${season} · ${release.label}` : release.label;
+  const first = series.anime?.episodes[0];
+  const showStart = anime && (season === undefined || season > 1 || (series.anime!.episodes.length > 1 && !!first));
+  const startOver = async () => {
+    const ep = await firstEpisodeOf(series);
+    if (ep) router.push(`/watch/${ep.id}`);
+  };
   return (
-    <Press onPress={() => router.push(release.href)} style={[styles.release, { width }]} accessibilityLabel={`${series.title}, ${release.label}`}>
+    <Press onPress={() => router.push(release.href)} style={[styles.release, { width }]} accessibilityLabel={`${series.title}, ${label}`}>
       <Cover palette={series.palette} image={series.image} width={width - 2} height={(width - 2) * 0.62} radius={0}>
         <TypeBadge kind={kind} />
         {release.tag && (
@@ -45,8 +56,17 @@ export function ReleaseCard({ release, width = 168 }: { release: Release; width?
       <View style={styles.releaseBody}>
         <Txt v="caption" color={C.text} numberOfLines={2} style={[styles.posterTitle, { fontSize: 13, lineHeight: 16, minHeight: 32 }]}>{series.title}</Txt>
         <View style={styles.releaseRule} />
-        <InfoPill icon={kind === 'anime' ? 'tv-outline' : 'book-outline'} label={release.label} tone={release.tag ? 'accent' : 'neutral'} />
-        <InfoPill icon="time-outline" label={release.when} />
+        <InfoPill icon={kind === 'anime' ? 'tv-outline' : 'book-outline'} label={label} tone={release.tag ? 'accent' : 'neutral'} />
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+          <View style={{ flex: 1 }}>
+            <InfoPill icon="time-outline" label={release.when} />
+          </View>
+          {showStart && (
+            <Press onPress={startOver} hitSlop={8} style={styles.startOver} accessibilityRole="button" accessibilityLabel="Regarder depuis la saison 1, épisode 1">
+              <Txt v="caption" color={C.accentText} style={{ fontSize: 10 }}>S1 Ép. 1</Txt>
+            </Press>
+          )}
+        </View>
       </View>
     </Press>
   );
@@ -108,6 +128,7 @@ const styles = StyleSheet.create({
     borderRadius: R.card, borderCurve: 'continuous', backgroundColor: C.surface,
     borderWidth: 1, borderColor: C.border, overflow: 'hidden',
   },
+  startOver: { paddingHorizontal: 8, paddingVertical: 4, borderRadius: R.pill, borderWidth: 1, borderColor: C.accentLine, backgroundColor: C.accentSoft },
   releaseBody: { padding: S.md, gap: 8, alignItems: 'stretch' },
   releaseRule: { height: 1, backgroundColor: C.border, marginVertical: 2 },
   newTag: {

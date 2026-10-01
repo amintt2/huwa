@@ -116,3 +116,27 @@ export function useFranchiseTarget(s: Series, active: boolean) {
   const target = unknown && !watchedSelf ? undefined : playTarget([...(prequels ?? []), s], watched);
   return { target, pending: unknown && !watchedSelf, seasonNumber: prequels ? prequels.length + 1 : undefined };
 }
+
+/** Season number of a series inside its franchise (1 = first), once its prequels are known. */
+export function useSeasonNumber(s: Series, active = true): number | undefined {
+  const [, setTick] = useState(0);
+  const prequels = knownPrequels(s);
+  const unknown = prequels === undefined;
+  useEffect(() => {
+    if (!active || !unknown) return;
+    let alive = true;
+    load().then(() => resolvePrequels(s)).then(() => alive && setTick((n) => n + 1));
+    return () => {
+      alive = false;
+    };
+  }, [active, unknown, s]);
+  return prequels ? prequels.length + 1 : undefined;
+}
+
+/** Episode 1 of the franchise's first season (fetches the prequels if needed). */
+export async function firstEpisodeOf(s: Series) {
+  await load();
+  await resolvePrequels(s);
+  const first = knownPrequels(s)?.[0] ?? s;
+  return first.anime?.episodes[0] ?? s.anime?.episodes[0];
+}

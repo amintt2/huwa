@@ -12,6 +12,7 @@ import Animated, {
   useAnimatedRef,
   useAnimatedScrollHandler,
   useAnimatedStyle,
+  useDerivedValue,
   useSharedValue,
   withTiming,
   type AnimatedRef,
@@ -58,6 +59,14 @@ type Rotation = ReturnType<typeof createRotation>;
  * Auto-rotation state machine, kept out of React (timers and gestures mutate it freely).
  * The progress timer and the slide run on the UI thread; page changes come back via `onPage`.
  */
+/** Page landed on (in real slides, may be a clone: -1 or n) → the real page, and whether to jump. */
+function wrapPage(p: number, n: number) {
+  'worklet';
+  if (n > 1 && p >= n) return { page: 0, jump: true };
+  if (n > 1 && p < 0) return { page: n - 1, jump: true };
+  return { page: Math.max(0, p), jump: false };
+}
+
 function createRotation(o: {
   x: SharedValue<number>;
   progress: SharedValue<number>;
@@ -70,6 +79,8 @@ function createRotation(o: {
   const st = {
     n: 0,
     width: 0,
+    /** Scroll index of the first real slide (1 when looping: a clone of the last slide sits at 0). */
+    off: 0,
     page: 0,
     enabled: false,
     held: false,
@@ -112,10 +123,11 @@ function createRotation(o: {
     const count = st.n;
     const w = st.width;
     const to = st.page + 1;
+    const off = st.off;
     const scroller = ref;
-    autoX.set(st.page * w);
+    autoX.set((st.page + off) * w);
     autoX.set(
-      withTiming(to * w, { duration: SLIDE_MS, easing: slideEase }, (done) => {
+      withTiming((to + off) * w, { duration: SLIDE_MS, easing: slideEase }, (done) => {
         autoX.set(-1);
         if (!done) {
           scheduleOnRN(endSlide);
@@ -123,17 +135,18 @@ function createRotation(o: {
         }
         // Landed on the clone of the first slide: jump back to the real one, invisibly.
         const wrapped = to >= count ? 0 : to;
-        if (scroller) scrollTo(scroller, wrapped * w, 0, false);
+        if (scroller) scrollTo(scroller, (wrapped + off) * w, 0, false);
         scheduleOnRN(settle, wrapped);
       }),
     );
   }
 
   return {
-    setGeometry(n: number, width: number, scroller: AnimatedRef<Animated.ScrollView>) {
+    setGeometry(n: number, width: number, scroller: AnimatedRef<Animated.ScrollView>, off: number) {
       ref = scroller;
       st.n = n;
       st.width = width;
+      st.off = off;
     },
     setEnabled(on: boolean) {
       st.enabled = on;
@@ -167,12 +180,9 @@ function createRotation(o: {
       clearTimeout(st.dragTimer);
       st.dragTimer = setTimeout(() => {
         if (!st.dragging) return;
-        let p = Math.round(x.get() / st.width);
-        if (p >= st.n && st.n > 1) {
-          p = 0;
-          ref?.current?.scrollTo({ x: 0, animated: false });
-        }
-        this.dragSettle(Math.max(0, p));
+        const p = wrapPage(Math.round(x.get() / st.width) - st.off, st.n);
+        if (p.jump) ref?.current?.scrollTo({ x: (p.page + st.off) * st.width, animated: false });
+        this.dragSettle(p.page);
       }, 600);
     },
     dispose() {
@@ -195,11 +205,15 @@ export function HeroCarousel({ items }: { items: Series[] }) {
   const reduceMotion = useReduceMotion();
   const n = items.length;
   const loop = n > 1;
-  const slides = loop ? [...items, items[0]] : items;
+  // Clones on both ends ([last, …items, first]) so it loops forward AND backward.
+  const off = loop ? 1 : 0;
+  const slides = loop ? [items[n - 1], ...items, items[0]] : items;
   const auto = focused && !reduceMotion && loop;
 
   const ref = useAnimatedRef<Animated.ScrollView>();
-  const x = useSharedValue(0);
+  const x = useSharedValue(off * width);
+  // Scroll offset in "real slide" units, for the dots.
+  const lx = useDerivedValue(() => x.get() - off * width);
   const progress = useSharedValue(0);
   const autoX = useSharedValue(-1);
   const pageSV = useSharedValue(0);
@@ -216,7 +230,7 @@ export function HeroCarousel({ items }: { items: Series[] }) {
     },
   );
 
-  useEffect(() => rot.setGeometry(n, width, ref), [rot, n, width, ref]);
+  useEffect(() => rot.setGeometry(n, width, ref, off), [rot, n, width, ref, off]);
   useEffect(() => {
     autoSV.set(auto ? 1 : 0);
     rot.setEnabled(auto);
@@ -237,12 +251,9 @@ export function HeroCarousel({ items }: { items: Series[] }) {
     },
     onMomentumEnd: (e) => {
       if (autoX.get() >= 0) return;
-      let p = Math.round(e.contentOffset.x / width);
-      if (p >= n && n > 1) {
-        scrollTo(ref, 0, 0, false);
-        p = 0;
-      }
-      scheduleOnRN(dragSettle, Math.max(0, p));
+      const p = wrapPage(Math.round(e.contentOffset.x / width) - off, n);
+      if (p.jump) scrollTo(ref, (p.page + off) * width, 0, false);
+      scheduleOnRN(dragSettle, p.page);
     },
   });
 
@@ -260,14 +271,17 @@ export function HeroCarousel({ items }: { items: Series[] }) {
         onScroll={onScroll}
         scrollEventThrottle={16}
         decelerationRate="fast"
+        contentOffset={{ x: off * width, y: 0 }}
         scrollsToTop={false}>
         {slides.map((s, i) => (
-          <Slide key={i < n ? s.id : `${s.id}-loop`} series={s} index={i} x={x} width={width} active={i === active} clone={i >= n} />
+          <Slide
+            key={loop && (i === 0 || i === n + 1) ? `${s.id}-loop-${i}` : s.id}
+            series={s} index={i} x={x} width={width} active={i - off === active} clone={loop && (i === 0 || i === n + 1)} />
         ))}
       </Animated.ScrollView>
       <View style={styles.dots} pointerEvents="none">
         {items.map((s, i) => (
-          <Dot key={s.id} index={i} count={n} x={x} width={width} progress={progress} page={pageSV} auto={autoSV} />
+          <Dot key={s.id} index={i} count={n} x={lx} width={width} progress={progress} page={pageSV} auto={autoSV} />
         ))}
       </View>
     </View>
