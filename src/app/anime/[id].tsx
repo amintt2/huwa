@@ -12,10 +12,11 @@ import { ListsButton } from '@/components/lists';
 import { isStoreBuild } from '@/config/channel';
 import { PRIORITY, usePresearch } from '@/components/presearch';
 import { DetailBackdrop, DetailNav, DetailTabs, Synopsis } from '@/components/detail';
+import { SeasonButton, SeasonSheet, type FranchiseSeasons } from '@/components/season-picker';
 import { ActionTile, Button, Chip, Cover, MetaLine, Press, Progress, Txt } from '@/components/ui';
 import { approxEp, chapterRangeLabel, resumeEpisode } from '@/data/bridge';
 import { episodeLabel, getSeries, useCatalog, type Episode, type Series } from '@/data/catalog';
-import { useSeasonNumber } from '@/data/franchise';
+import { useFranchiseSeasons, useSeasonNumber } from '@/data/franchise';
 import { useMappingSync } from '@/data/mapping-sync';
 import { enqueueEpisodes, getItem, useDownloadItems } from '@/downloads';
 import { useThread } from '@/store/derived';
@@ -24,6 +25,32 @@ import { C, F, S, TABULAR } from '@/theme/tokens';
 
 export default function AnimeDetail() {
   const { id } = useLocalSearchParams<{ id: string }>();
+  useCatalog();
+  const franchise = useFranchiseSeasons(getSeries(id));
+  const [picking, setPicking] = useState(false);
+  // Several seasons only: a lone season has nothing to pick.
+  const multi = franchise && franchise.seasons.length > 1 ? franchise : undefined;
+  return (
+    <>
+      {/* Keyed by id: switching season starts the page afresh (episode paging, presearch, sheets). */}
+      <AnimeDetailPage key={id} id={id} franchise={multi} onSeasons={() => setPicking(true)} />
+      {multi && (
+        <SeasonSheet
+          franchise={multi}
+          visible={picking}
+          onClose={() => setPicking(false)}
+          onPick={(s) => {
+            setPicking(false);
+            // Same screen, new series: back still leaves the anime page (no stack of seasons).
+            router.setParams({ id: s.id });
+          }}
+        />
+      )}
+    </>
+  );
+}
+
+function AnimeDetailPage({ id, franchise, onSeasons }: { id: string; franchise?: FranchiseSeasons; onSeasons: () => void }) {
   const insets = useSafeAreaInsets();
   // Chapter ranges change when earlier seasons or community corrections arrive.
   useCatalog();
@@ -81,7 +108,7 @@ export default function AnimeDetail() {
               </View>,
               String(series.year),
               `${eps.length} épisodes`,
-              <SeasonChip key="s" series={series} />,
+              <SeasonChip key="s" series={series} onPress={franchise && onSeasons} />,
             ]}
           />
           <Txt v="small" color={C.text2} numberOfLines={1}>{series.genres.join(' · ')}</Txt>
@@ -120,7 +147,10 @@ export default function AnimeDetail() {
 
           {series.manhwa && <BridgeToManhwa series={series} />}
 
-          <DetailTabs tabs={[{ label: 'Épisodes', active: true }, { label: 'Commentaires', count: commentCount, onPress: openComments }]} />
+          <DetailTabs
+            tabs={[{ label: 'Épisodes', active: true }, { label: 'Commentaires', count: commentCount, onPress: openComments }]}
+            right={franchise && <SeasonButton index={franchise.index} onPress={onSeasons} />}
+          />
 
           {eps.slice(0, limit).map((e) => {
             const p = progress[e.id];
@@ -188,11 +218,21 @@ export default function AnimeDetail() {
   );
 }
 
-/** "SAISON 2" once the franchise is known (also starts resolving it, which shifts the chapters). */
-function SeasonChip({ series }: { series: Series }) {
+/**
+ * "SAISON 2" once the franchise is known (also starts resolving it, which shifts the chapters).
+ * With several seasons it opens the season picker.
+ */
+function SeasonChip({ series, onPress }: { series: Series; onPress?: () => void }) {
   const season = useSeasonNumber(series);
-  if (series.status === 'completed' && (season ?? 1) === 1) return <Chip kind="neutral" label="Terminé" />;
-  return <Chip kind="neutral" label={`Saison ${season ?? 1}`} />;
+  if (!onPress && series.status === 'completed' && (season ?? 1) === 1) return <Chip kind="neutral" label="Terminé" />;
+  const chip = <Chip kind="neutral" label={`Saison ${season ?? 1}`} />;
+  if (!onPress) return chip;
+  return (
+    <Press onPress={onPress} haptics="select" hitSlop={10} accessibilityRole="button"
+      accessibilityLabel={`Saison ${season ?? 1}`} accessibilityHint="Choisir une autre saison">
+      {chip}
+    </Press>
+  );
 }
 
 const EPISODE_PAGE = 60;

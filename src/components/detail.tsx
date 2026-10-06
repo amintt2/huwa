@@ -106,8 +106,8 @@ export function Synopsis({ text }: { text: string }) {
   );
 }
 
-/** Underlined tabs ("Épisodes", "Commentaires 12"). */
-export function DetailTabs({ tabs }: { tabs: { label: string; active?: boolean; onPress?: () => void; count?: number }[] }) {
+/** Underlined tabs ("Épisodes", "Commentaires 12"), with an optional control on the right. */
+export function DetailTabs({ tabs, right }: { tabs: { label: string; active?: boolean; onPress?: () => void; count?: number }[]; right?: ReactNode }) {
   return (
     <View style={styles.tabs} accessibilityRole="tablist">
       {tabs.map((t) => (
@@ -122,6 +122,7 @@ export function DetailTabs({ tabs }: { tabs: { label: string; active?: boolean; 
           <View style={[styles.tabBar, t.active && { backgroundColor: C.accentText }]} />
         </Pressable>
       ))}
+      {right && <View style={styles.tabsRight}>{right}</View>}
     </View>
   );
 }
@@ -137,6 +138,7 @@ const styles = StyleSheet.create({
   navBg: { backgroundColor: 'rgba(8,11,19,0.96)', borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: C.hairline },
   more: { color: C.text, fontSize: 14, ...F.semibold, marginTop: 4 },
   tabs: { flexDirection: 'row', gap: S.xl, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: C.hairline },
+  tabsRight: { flex: 1, alignItems: 'flex-end', justifyContent: 'center', paddingTop: 4, paddingBottom: 3 },
   tab: { paddingTop: 4, gap: 10, minHeight: 44, justifyContent: 'flex-end' },
   tabBar: { height: 3, borderTopLeftRadius: 2, borderTopRightRadius: 2, backgroundColor: 'transparent' },
   count: { minWidth: 20, height: 20, borderRadius: 10, paddingHorizontal: 6, backgroundColor: C.elevated, alignItems: 'center', justifyContent: 'center' },

@@ -9,6 +9,7 @@ const EXCLUDED_KEYS = new Set([
   'huwa/catalog/v2', // catalog cache
   'huwa/ids/v2', // id mapping cache
   'huwa/franchise/v1', // AniList relations cache
+  'huwa/franchise/seasons/v1', // AniList relations cache (whole franchises)
   'huwa/episode-offsets/v1', // downloaded offsets index
   'huwa/downloads/v1', // index of chapter files on this device (files are not exported)
   'huwa/p2p/bare/migrated',

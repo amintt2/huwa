@@ -23,6 +23,7 @@ test('export keeps user data, leaves caches, cookies and device-bound secrets ou
     'huwa/pb/state/src1',
     'huwa/ids/v2',
     'huwa/franchise/v1',
+    'huwa/franchise/seasons/v1',
     'huwa/secure/root',
     'huwa/passkey/v1',
     'huwa/p2p/local/v1',
