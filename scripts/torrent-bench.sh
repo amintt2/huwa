@@ -81,7 +81,11 @@ librqbit-dualstack-sockets = { path = \"$vendor\" }"
   HOST_BIN="$dir/target/release/tbench-engine-host"
   local rev dirty
   rev="$(git -C "$ENGINE_DIR" rev-parse HEAD 2>/dev/null || cat "$ENGINE_DIR/../../REF" 2>/dev/null || echo unknown)"
-  dirty="$(git -C "$ENGINE_DIR" status --porcelain -- . 2>/dev/null | wc -l | tr -d ' ' || echo 0)"
+  if git -C "$ENGINE_DIR" rev-parse --git-dir >/dev/null 2>&1; then
+    dirty="$(git -C "$ENGINE_DIR" status --porcelain -- . | wc -l | tr -d ' ')"
+  else
+    dirty=0
+  fi
   local srchash
   srchash="$(cd "$ENGINE_DIR" && find src Cargo.toml -type f | sort | xargs cat | shasum | cut -c1-12)"
   printf '{"label":"%s","engineDir":"%s","gitRev":"%s","dirtyFiles":%s,"srcHash":"%s","builtAt":"%s"}\n' \
