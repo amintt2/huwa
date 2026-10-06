@@ -8,7 +8,7 @@ import { seriesOfTarget } from '@/social/migrate';
 import { commentPowPayload, powDifficulty, warmPow } from '@/social/pow';
 import { replayJournal } from '@/social/rank';
 
-import type { BackupState, Conversation, Device, DirectMessage, JournalEntry, Label, P2PComment, P2PStatus, Profile, PublicKey } from './contract';
+import type { BackupState, Conversation, Device, DirectMessage, JournalEntry, Label, P2PComment, P2PStatus, Profile, PublicKey, RestoreOptions } from './contract';
 import { DEMO_LABELERS } from './demo';
 import { getP2P } from './index';
 import { cloudBackup } from './cloud-backup';
@@ -240,8 +240,9 @@ export const social = {
     journalBus.emit();
     return r;
   },
-  async restoreIdentity(words: string[]) {
-    const r = await p2p().restoreIdentity(words);
+  /** See RestoreOptions: `allowNewHome` only after the user chose to start over without the old data. */
+  async restoreIdentity(words: string[], opts?: RestoreOptions) {
+    const r = await p2p().restoreIdentity(words, opts);
     await recoveryPhrase.set(words).catch(() => {});
     // The restored profile may still be on its way from the other devices: the hint is refreshed
     // by the root layout once the real name arrives.
