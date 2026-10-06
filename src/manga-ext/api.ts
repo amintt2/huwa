@@ -1,5 +1,6 @@
 // Typed, validated calls to installed sources.
 import { callSource } from './bridge';
+import { userAgentFor } from './clearance';
 import { parseHttpUrl } from './net';
 import { getInstalled } from './registry';
 import { jarFor } from './state';
@@ -61,6 +62,13 @@ export async function chapterPages(
     const k = Object.keys(h).find((x) => x.toLowerCase() === 'cookie');
     h[k ?? 'Cookie'] = k ? `${jarCookies}; ${h[k]}` : jarCookies;
     headers = h;
+  }
+  // Images behind a Cloudflare clearance need the User-Agent it was issued for.
+  const ua = target ? userAgentFor(target.host) : undefined;
+  if (ua) {
+    const h: Record<string, string> = {};
+    for (const [k, v] of Object.entries(headers ?? {})) if (k.toLowerCase() !== 'user-agent') h[k] = v;
+    headers = { ...h, 'User-Agent': ua };
   }
   return { pages, headers };
 }

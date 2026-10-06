@@ -421,6 +421,19 @@ export function start(transport: Transport, cheerio: unknown) {
       }
       case 'info':
         return { format, discover: discover.map((d) => d.section) };
+      case 'cfRequest': {
+        const fn = ext.getCloudflareBypassRequestAsync ?? ext.getCloudflareBypassRequest;
+        if (typeof fn !== 'function') return null;
+        const req = await fn.call(ext);
+        return req && typeof req === 'object' ? { url: String(req.url ?? '') + (req.param ? String(req.param) : ''), headers: stringHeaders(req.headers) } : null;
+      }
+      case 'cfDone': {
+        const req = (args[0] ?? {}) as Any;
+        const cookies = (Array.isArray(args[1]) ? args[1] : []).map((c: Any) => ({ ...c, expires: c?.expires ? new Date(c.expires) : undefined }));
+        if (typeof ext.cloudflareBypassCompleted === 'function') await ext.cloudflareBypassCompleted({ url: String(req.url ?? ''), method: 'GET', headers: {} }, cookies, {});
+        else if (typeof ext.saveCloudflareBypassCookies === 'function') await ext.saveCloudflareBypassCookies(cookies);
+        return null;
+      }
       case 'discover': {
         if (format === '0.9') {
           let sections: Any = typeof ext.getDiscoverSections === 'function' ? await ext.getDiscoverSections() : undefined;
@@ -458,10 +471,20 @@ export function start(transport: Transport, cheerio: unknown) {
   const message = (e: unknown) => {
     if (e && typeof e === 'object') {
       const err = e as { name?: string; message?: string };
-      if (err.name === 'CloudflareError' || /cloudflare/i.test(err.message ?? '')) return 'cloudflare: cette source demande une vérification Cloudflare, non prise en charge';
-      return String(err.message ?? err.name ?? 'Erreur').slice(0, 300);
+      return String(err.message || err.name || 'Erreur').slice(0, 300);
     }
     return String(e).slice(0, 300);
+  };
+
+  /** 0.9 `CloudflareError` (carries the page to open), or a 0.8 error that names Cloudflare. */
+  const cloudflareOf = (e: unknown): { url?: string } | undefined => {
+    if (!e || typeof e !== 'object') return undefined;
+    const err = e as { name?: string; type?: string; message?: string; resolutionRequest?: Any };
+    const typed = err.type === 'cloudflareError' || err.name === 'CloudflareError' || (err.resolutionRequest && typeof err.resolutionRequest === 'object');
+    if (!typed && !/cloudflare|bypass error/i.test(err.message ?? '')) return undefined;
+    const r = err.resolutionRequest;
+    const url = r && typeof r === 'object' && r.url ? String(r.url) + (r.param ? String(r.param) : '') : undefined;
+    return { url };
   };
 
   transport.onMessage((raw) => {
@@ -491,7 +514,7 @@ export function start(transport: Transport, cheerio: unknown) {
         .then(serialize)
         .then(
           (v) => send({ t: 'ret', cid: m.cid, ok: true, v }),
-          (e) => send({ t: 'ret', cid: m.cid, ok: false, e: message(e) }),
+          (e) => send({ t: 'ret', cid: m.cid, ok: false, e: message(e), cf: cloudflareOf(e) }),
         );
     }
   });

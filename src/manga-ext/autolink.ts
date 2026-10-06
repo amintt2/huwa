@@ -10,8 +10,9 @@ import { gql } from '@/data/anilist-api';
 import { getSeries, type Series } from '@/data/catalog';
 import { isDemo } from '@/demo/flags';
 
-import { searchSource } from './api';
-import { getSourceLink, openSourceManga, unlink } from './link';
+import { mangaChapters, mangaDetails, searchSource } from './api';
+import { isCloudflareError } from './cloudflare-core';
+import { getSourceLink, openSourceManga, setRejectedLookup, unlink } from './link';
 import {
   AUTO_LINK_SCORE,
   chapterPlausibility,
@@ -44,6 +45,8 @@ const MAX_ATTEMPTS = 2;
 let matches: Record<string, MatchState> = {};
 let titlesCache: Record<string, SeriesTitles & { at: number }> = {};
 const status = new Map<string, Status>();
+/** Sources that were blocked by Cloudflare during the last search for a series (button "Vérifier"). */
+const blocked = new Map<string, { sourceKey: string; url?: string }>();
 const running = new Map<string, Promise<void>>();
 const listeners = new Set<() => void>();
 let version = 0;
@@ -53,6 +56,12 @@ const emit = () => {
 };
 const save = () => AsyncStorage.setItem(KEY, JSON.stringify(matches)).catch(() => {});
 const ref = (c: { sourceKey: string; mangaId: string }) => `${c.sourceKey}|${c.mangaId}`;
+
+// Opening a source title must not land on a page the user refused for it.
+setRejectedLookup(async (r) => {
+  await hydrate();
+  return new Set(Object.entries(matches).filter(([, m]) => m.rejected.includes(r)).map(([id]) => id));
+});
 
 let hydration: Promise<void> | undefined;
 function hydrate() {
@@ -169,6 +178,9 @@ export function autoLink(seriesId: string, opts: { force?: boolean } = {}): Prom
     setStatus(seriesId, 'searching');
     const target = await seriesTitles(series);
     const found = await Promise.allSettled(sources.map((s) => candidatesFrom(s.key, target)));
+    const cf = found.find((r): r is PromiseRejectedResult => r.status === 'rejected' && isCloudflareError(r.reason));
+    if (cf) blocked.set(seriesId, { sourceKey: cf.reason.sourceKey, url: cf.reason.url });
+    else blocked.delete(seriesId);
     const all = found.flatMap((r) => (r.status === 'fulfilled' ? r.value : []));
     const rejected = new Set(prev?.rejected ?? []);
     const ranked = rankCandidates(target, all, sources.map((s) => s.key)).slice(0, 12);
@@ -205,7 +217,7 @@ export function autoLink(seriesId: string, opts: { force?: boolean } = {}): Prom
 /** The user picked this result himself (link picker). */
 export async function linkManually(seriesId: string, c: Pick<Candidate, 'sourceKey' | 'mangaId'>) {
   await hydrate();
-  await openSourceManga(c.sourceKey, c.mangaId, { seriesId });
+  await openSourceManga(c.sourceKey, c.mangaId, { seriesId, interactive: true });
   patch(seriesId, { manual: true, rejected: (matches[seriesId]?.rejected ?? []).filter((r) => r !== ref(c)) });
   setStatus(seriesId, 'linked');
 }
@@ -240,7 +252,34 @@ export function autoLinkLibrary(seriesIds: string[], max = 8) {
   return libraryPass;
 }
 
-export function useAutoLink(seriesId: string): { status: Status; match?: MatchState } {
+/**
+ * Chapter counts of the best proposals of a series ("Trouvé dans Asura Scans · 98 ch."): a
+ * details + chapters call per candidate, at most `max`, cached with the candidates. `isCancelled`
+ * stops between calls (the page was left).
+ */
+export async function probeCandidates(seriesId: string, max = 2, isCancelled: () => boolean = () => false) {
+  await hydrate();
+  const m = matches[seriesId];
+  if (!m) return;
+  const todo = m.candidates.filter((c) => c.chapters === undefined && !m.rejected.includes(ref(c))).slice(0, max);
+  for (const c of todo) {
+    if (isCancelled()) return;
+    try {
+      const details = await mangaDetails(c.sourceKey, c.mangaId);
+      if (isCancelled()) return;
+      const list = await mangaChapters(c.sourceKey, details);
+      const count = new Set(list.map((x) => `${x.lang}|${x.number}`)).size;
+      const cur = matches[seriesId];
+      if (cur) patch(seriesId, { candidates: cur.candidates.map((x) => (ref(x) === ref(c) ? { ...x, chapters: count } : x)) });
+    } catch {
+      // unreachable / blocked source: no count, the proposal stays
+    }
+  }
+}
+
+export const getBlocked = (seriesId: string) => blocked.get(seriesId);
+
+export function useAutoLink(seriesId: string): { status: Status; match?: MatchState; blocked?: { sourceKey: string; url?: string } } {
   useSyncExternalStore(
     (l) => {
       listeners.add(l);
@@ -252,5 +291,5 @@ export function useAutoLink(seriesId: string): { status: Status; match?: MatchSt
   useEffect(() => {
     hydrate().then(emit);
   }, []);
-  return { status: status.get(seriesId) ?? 'idle', match: matches[seriesId] };
+  return { status: status.get(seriesId) ?? 'idle', match: matches[seriesId], blocked: blocked.get(seriesId) };
 }

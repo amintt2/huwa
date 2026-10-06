@@ -3,6 +3,8 @@
 // state through `state.ts`). Nothing coming back is trusted: callers validate with `validate.ts`.
 import { useSyncExternalStore } from 'react';
 
+import { hydrateClearances, userAgentFor } from './clearance';
+import { CloudflareError, looksEmpty } from './cloudflare-core';
 import { createNet, DEFAULT_USER_AGENT } from './net';
 import { rnFetch } from './net-rn';
 import type { HostToSandbox, HttpRequest, PaperbackFormat, SandboxToHost, SourceOp } from './runtime/protocol';
@@ -36,9 +38,20 @@ type Frame = {
   calls: Map<number, Deferred<unknown>>;
   inflight: number;
   lastUsed: number;
+  /** Origin of its first page request (`https://site/`): where to send a Cloudflare check by default. */
+  site?: string;
+  /** Last Cloudflare challenge one of its requests ran into. */
+  challenged?: { at: number; url: string };
 };
 
-const net = createNet(rnFetch, { jar: jarFor });
+const net = createNet(rnFetch, {
+  jar: jarFor,
+  userAgentFor,
+  onChallenge: (key, url) => {
+    const f = frames.get(key);
+    if (f) f.challenged = { at: Date.now(), url };
+  },
+});
 const frames = new Map<string, Frame>();
 let inject: ((js: string) => void) | null = null;
 let hostReady = deferred<void>();
@@ -150,6 +163,7 @@ function handleFrame(f: Frame, msg: SandboxToHost) {
       if (!c) return;
       f.calls.delete(msg.cid);
       if (msg.ok) c.resolve(msg.v);
+      else if (msg.cf && typeof msg.cf === 'object') c.reject(new CloudflareError(f.key, typeof msg.cf.url === 'string' ? msg.cf.url : f.challenged?.url));
       else c.reject(new Error(typeof msg.e === 'string' ? msg.e.slice(0, 300) : 'Erreur de la source'));
       break;
     }
@@ -159,6 +173,8 @@ function handleFrame(f: Frame, msg: SandboxToHost) {
       if (msg.m !== 'http') return reply(false, undefined, 'Requête inconnue');
       if (f.inflight >= MAX_INFLIGHT) return reply(false, undefined, 'Trop de requêtes simultanées');
       f.inflight++;
+      const origin = /^(https?:\/\/[^/?#]+)/i.exec(String((msg.a as HttpRequest)?.url ?? ''))?.[1];
+      if (origin && !/\.(webp|jpe?g|png|gif|avif)(\?|$)/i.test(String(msg.a.url))) f.site ??= `${origin}/`;
       net
         .request(f.key, msg.a as HttpRequest)
         .then(
@@ -222,7 +238,7 @@ async function ensureLoaded(key: string): Promise<Frame> {
   frames.set(key, f);
   try {
     const [src] = await Promise.all([codeLoader(key), withTimeout(hostReady.promise, READY_TIMEOUT, 'Moteur d’extensions indisponible')]);
-    const st = await loadSourceState(key);
+    const [st] = await Promise.all([loadSourceState(key), hydrateClearances()]);
     post({ t: 'spawn', key });
     await withTimeout(f.ready.promise, READY_TIMEOUT, 'La source ne démarre pas');
     toFrame(key, { t: 'load', id: src.id, format: src.format, code: src.code, state: st.state, secure: st.secure, userAgent: DEFAULT_USER_AGENT });
@@ -230,27 +246,48 @@ async function ensureLoaded(key: string): Promise<Frame> {
     evict();
     return f;
   } catch (e) {
+    const challenged = f.challenged;
     if (e instanceof TimeoutError) await recoverFrom(key, f, 'Source bloquée au chargement, moteur redémarré');
     else if (frames.get(key) === f) killFrame(key);
+    // `initialise()` of some sources already loads the site: a challenge there fails the load.
+    if (challenged && !(e instanceof CloudflareError)) throw new CloudflareError(key, challenged.url);
     throw e;
   }
 }
 
-/** Calls an operation on an installed source. The result is raw and must be validated. */
+/** Ops whose empty result after a challenge means "blocked", not "nothing there". */
+const LISTING_OPS = new Set<SourceOp>(['search', 'discover', 'discoverItems', 'chapters', 'pages', 'details']);
+
+/**
+ * Calls an operation on an installed source. The result is raw and must be validated.
+ * Throws `CloudflareError` when the source (or one of its requests) hit a Cloudflare challenge:
+ * the source's own `CloudflareError`, or any failure / empty listing after a challenged request.
+ */
 export async function callSource(key: string, op: SourceOp, args: unknown[], timeout = CALL_TIMEOUT): Promise<unknown> {
+  const started = Date.now();
   const f = await ensureLoaded(key);
   const cid = nextCid++;
   const d = deferred<unknown>();
   f.calls.set(cid, d);
   f.lastUsed = Date.now();
   toFrame(key, { t: 'call', cid, op, args });
+  const challengedSince = () => (f.challenged && f.challenged.at >= started ? f.challenged : undefined);
+  let v: unknown;
   try {
-    return await withTimeout(d.promise, timeout, 'La source ne répond pas');
+    v = await withTimeout(d.promise, timeout, 'La source ne répond pas');
   } catch (e) {
     if (f.calls.delete(cid) && e instanceof TimeoutError) await recoverFrom(key, f, 'Source bloquée, moteur redémarré');
+    const ch = challengedSince();
+    if (ch && !(e instanceof CloudflareError)) throw new CloudflareError(key, ch.url);
     throw e;
   }
+  const ch = challengedSince();
+  if (ch && LISTING_OPS.has(op) && looksEmpty(v)) throw new CloudflareError(key, ch.url);
+  return v;
 }
+
+/** Last site a loaded source talked to (`undefined` when it hasn't run yet this session). */
+export const lastSiteOf = (key: string) => frames.get(key)?.site;
 
 const pongs = new Set<() => void>();
 function hostAlive(): Promise<boolean> {

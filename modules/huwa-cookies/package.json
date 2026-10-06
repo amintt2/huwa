@@ -1,0 +1,7 @@
+{
+  "name": "huwa-cookies",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Reads and clears the cookies of the shared WKWebView store (Cloudflare check of manga sources)",
+  "main": "index.ts"
+}

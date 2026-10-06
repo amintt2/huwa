@@ -3,6 +3,7 @@
 // cookie jar (never the app's cookies), per-source rate limit and concurrency, timeouts,
 // bounded response size. The transport (`RawFetch`) is injected: RN fetch in the app, Node fetch in tests.
 import { base64ToBytes, bytesToBase64, utf8DecodeStrict } from './b64';
+import { isChallengeResponse } from './cloudflare-core';
 import type { HttpCookie, HttpRequest, HttpResponse } from './runtime/protocol';
 
 export const MAX_RESPONSE_BYTES = 12 * 1024 * 1024;
@@ -170,6 +171,22 @@ export class CookieJar {
   toJSON() {
     return this.list;
   }
+  /**
+   * Adds a cookie that didn't come from a `Set-Cookie` of this jar's requests (copied from the
+   * Cloudflare verification WebView). Same replacement rule as `set`: name + domain + path.
+   */
+  put(c: { name: string; value: string; domain: string; hostOnly?: boolean; path?: string; expires?: number; secure?: boolean }) {
+    if (!c.name || c.name.length > 256 || c.value.length > 4096 || /[;\r\n]/.test(c.name + c.value)) return;
+    const domain = c.domain.replace(/^\./, '').toLowerCase();
+    if (!domain || isBlockedHost(domain)) return;
+    const path = c.path && c.path.startsWith('/') ? c.path : '/';
+    this.list = this.list.filter((x) => !(x.name === c.name && x.domain === domain && x.path === path));
+    if (!c.expires || c.expires > Date.now()) {
+      this.list.push({ name: c.name, value: c.value, domain, hostOnly: c.hostOnly ?? !c.domain.startsWith('.'), path, expires: c.expires, secure: !!c.secure });
+    }
+    if (this.list.length > 300) this.list.splice(0, this.list.length - 300);
+    this.onChange?.();
+  }
   private alive(now = Date.now()) {
     this.list = this.list.filter((c) => !c.expires || c.expires > now);
     return this.list;
@@ -311,7 +328,27 @@ const MAX_REDIRECTS = 10;
 
 const origin = (p: ParsedUrl) => `${p.protocol}://${p.host}:${p.port ?? ''}`;
 
-export function createNet(rawFetch: RawFetch, opts: { jar: (sourceKey: string) => CookieJar; maxBytes?: number }) {
+export type NetOptions = {
+  jar: (sourceKey: string) => CookieJar;
+  maxBytes?: number;
+  /**
+   * User-Agent to force for a host (a site cleared by a Cloudflare check only accepts the
+   * clearance cookie with the browser's User-Agent). `undefined` = keep the source's own.
+   */
+  userAgentFor?: (host: string) => string | undefined;
+  /** A response was a Cloudflare challenge (status / headers / page). */
+  onChallenge?: (sourceKey: string, url: string) => void;
+};
+
+/** First bytes of an error page, as text, for challenge detection (no full decode of big bodies). */
+function head(body: Uint8Array, max = 32 * 1024): string {
+  const n = Math.min(body.length, max);
+  let s = '';
+  for (let i = 0; i < n; i += 0x2000) s += String.fromCharCode.apply(null, Array.from(body.subarray(i, Math.min(n, i + 0x2000))));
+  return s;
+}
+
+export function createNet(rawFetch: RawFetch, opts: NetOptions) {
   const limiters = new Map<string, Limiter>();
   const limiter = (k: string) => limiters.get(k) ?? (limiters.set(k, new Limiter()), limiters.get(k)!);
   const maxBytes = opts.maxBytes ?? MAX_RESPONSE_BYTES;
@@ -349,6 +386,11 @@ export function createNet(rawFetch: RawFetch, opts: { jar: (sourceKey: string) =
         headers[key ?? 'Cookie'] = key ? `${jarCookies}; ${headers[key]}` : jarCookies;
       }
       if (bodyDropped) for (const k of Object.keys(headers)) if (k.toLowerCase() === 'content-type') delete headers[k];
+      const ua = opts.userAgentFor?.(target.host);
+      if (ua) {
+        for (const k of Object.keys(headers)) if (k.toLowerCase() === 'user-agent') delete headers[k];
+        headers['User-Agent'] = ua;
+      }
       return headers;
     };
 
@@ -381,7 +423,10 @@ export function createNet(rawFetch: RawFetch, opts: { jar: (sourceKey: string) =
           const location = REDIRECTS.has(raw.status) ? headersOut.location : undefined;
           const next = location ? resolveLocation(landed ? raw.url : url, location) : undefined;
           if (!next) {
+            const challenge = isChallengeResponse({ status: raw.status, headers: headersOut, body: raw.status >= 400 ? head(raw.body) : undefined });
+            if (challenge) opts.onChallenge?.(sourceKey, landed ? raw.url : url);
             return {
+              ...(challenge ? { challenge: true } : {}),
               url: landed ? raw.url : url,
               status: raw.status,
               headers: headersOut,

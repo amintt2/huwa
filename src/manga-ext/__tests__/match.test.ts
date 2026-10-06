@@ -8,8 +8,10 @@ import {
   candidateScore,
   chapterPlausibility,
   normalizeForMatch,
+  pickCatalogMatch,
   rankCandidates,
   searchQueries,
+  splitAltTitles,
   titleSimilarity,
   type SeriesTitles,
 } from '../match';
@@ -84,4 +86,35 @@ test('search queries: distinct, latin first, bounded', () => {
   assert.deepEqual(searchQueries(['나 혼자만 레벨업', 'Solo Leveling', 'solo leveling', 'Only I Level Up', 'Ore dake']), ['Solo Leveling', 'Only I Level Up', 'Ore dake']);
   assert.deepEqual(searchQueries(['나 혼자만 레벨업'], 3), ['나 혼자만 레벨업']);
   assert.deepEqual(searchQueries(['', ' ', 'x']), []);
+});
+
+// ---------- source title → catalog entry ----------
+
+
+test('alternative titles listed in one string are split, odd titles kept whole', () => {
+  const t = splitAltTitles(['SSM, The Lone Sword Master, 나 혼자 소드마스터']);
+  assert.ok(t.includes('The Lone Sword Master'));
+  assert.ok(t.includes('나 혼자 소드마스터'));
+  assert.ok(t.includes('SSM, The Lone Sword Master, 나 혼자 소드마스터'));
+  assert.deepEqual(splitAltTitles(['Fate/Zero']), ['Fate/Zero']);
+  assert.deepEqual(splitAltTitles(['Solo Leveling - Ragnarok']), ['Solo Leveling - Ragnarok']);
+  assert.ok(splitAltTitles(['A Returner ; Le retour']).includes('Le retour'));
+});
+
+const solo = { id: 'alm1', titles: ['Solo Leveling', 'Na Honjaman Level Up', '나 혼자만 레벨업'], chapters: 179, finished: true };
+const ragnarok = { id: 'alm2', titles: ['Solo Leveling: Ragnarok', 'Na Honjaman Level Up: Ragnarok'], chapters: null, finished: false };
+const swordmaster = { id: 'alm3', titles: ['Solo Swordmaster', 'Na Honja Sword Master'], chapters: null, finished: false };
+
+test('a source title links to its catalog entry when sure', () => {
+  assert.deepEqual(pickCatalogMatch(['Solo Leveling'], 200, [ragnarok, solo])?.id, 'alm1');
+  assert.equal(pickCatalogMatch(['Solo Leveling: Ragnarok'], 68, [solo, ragnarok])?.id, 'alm2');
+  assert.equal(pickCatalogMatch(splitAltTitles(['Solo Swordmaster', 'SSM, 나 혼자 소드마스터']), 20, [swordmaster, solo])?.id, 'alm3');
+});
+
+test('no link when unsure, implausible or refused', () => {
+  assert.equal(pickCatalogMatch(['Solo Leveling Side'], 10, [solo]), null); // only similar
+  assert.equal(pickCatalogMatch(['Solo Leveling'], 4, [solo]), null); // 4 chapters for a finished 179-chapter series
+  assert.equal(pickCatalogMatch(['Solo Leveling'], 200, [solo], new Set(['alm1'])), null);
+  const twin = { ...solo, id: 'alm9' };
+  assert.equal(pickCatalogMatch(['Solo Leveling'], 200, [solo, twin]), null); // two entries with that title
 });

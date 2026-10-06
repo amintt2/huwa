@@ -130,3 +130,49 @@ export function searchQueries(titles: string[], max = 3): string[] {
   }
   return out;
 }
+
+// ---------- the other direction: a source title → its catalog (AniList) page ----------
+
+/**
+ * Alternative titles as sources give them: often one string with several names
+ * (`"SSM, The Lone Sword Master, 나 혼자 소드마스터"`, `"A ; B"`, `"A / B"`). The parts are added next
+ * to the original string (a title that really has a comma stays usable as is). Only list
+ * separators are used: `Fate/Zero` or `Solo Leveling - Ragnarok` are not split.
+ */
+export function splitAltTitles(titles: string[]): string[] {
+  const out: string[] = [];
+  for (const raw of titles) {
+    const t = raw.trim();
+    if (!t) continue;
+    out.push(t);
+    const parts = t.split(/\s*[;|•·]\s*|\s*,\s+|\s+\/\s+/).map((p) => p.trim()).filter((p) => compact(p).length >= 3);
+    if (parts.length > 1) out.push(...parts);
+  }
+  return [...new Set(out)].slice(0, 30);
+}
+
+export type CatalogCandidate = SeriesTitles & { id: string };
+
+/**
+ * Picks the catalog entry a source title is, or `null` when not sure enough to link it without
+ * asking: best score ≥ `AUTO_LINK_SCORE`, a believable chapter count, no near tie with another
+ * entry, not refused by the user before (`rejected` ids).
+ */
+export function pickCatalogMatch(
+  sourceTitles: string[],
+  sourceChapters: number | undefined,
+  candidates: CatalogCandidate[],
+  rejected: Set<string> = new Set(),
+): { id: string; score: number } | null {
+  const scored = candidates
+    .filter((c) => !rejected.has(c.id))
+    .map((c) => ({ id: c.id, c, score: candidateScore(c, sourceTitles, sourceChapters) }))
+    .sort((a, b) => b.score - a.score);
+  const best = scored[0];
+  if (!best || best.score < AUTO_LINK_SCORE) return null;
+  if (sourceChapters !== undefined && chapterPlausibility(best.c, sourceChapters) < 0.5) return null;
+  const second = scored.find((s) => s.id !== best.id);
+  // Two entries with the same title (a remake, a novel with the same name): ask instead.
+  if (second && second.score >= best.score - 0.03 && bestTitleScore(sourceTitles, second.c.titles) >= AUTO_LINK_SCORE) return null;
+  return { id: best.id, score: best.score };
+}

@@ -29,6 +29,9 @@ import {
   type MangaFilters,
   type Origin,
 } from '@/data/manhwa-filters';
+import { getSeries } from '@/data/catalog';
+import { linkForTile, useLinkedSeries } from '@/manga-ext/link';
+import { getInstalled } from '@/manga-ext/registry';
 import { useContinueItems } from '@/store/derived';
 import { C, F, R, S } from '@/theme/tokens';
 
@@ -87,13 +90,24 @@ export function HuwaHome({ state, bottomInset }: { state: ReturnType<typeof useH
   );
 }
 
+/** "Disponible dans tes sources": the tile's series is linked to an installed source. */
+function sourceBadge(linked: ReturnType<typeof useLinkedSeries>, s: { id: string; manhwaId?: number }) {
+  const l = linkForTile(linked, s);
+  return l ? `✓ ${getInstalled(l.key)?.name ?? 'Source'}` : undefined;
+}
+
 // ---------- sections ----------
 
 function HomeSections({ bottomInset, onMore }: { bottomInset: number; onMore: (sort: BrowseSort) => void }) {
   const home = useManhwaHome();
   const cont = useContinueItems().filter((i) => i.kind === 'manhwa');
+  const linked = useLinkedSeries();
+  const inSources = useMemo(() => linked.flatMap((l) => (getSeries(l.seriesId)?.manhwa ? [{ link: l, series: getSeries(l.seriesId)! }] : [])).slice(0, 20), [linked]);
   type Row = { id: string };
-  const rows: Row[] = useMemo(() => [...(cont.length ? [{ id: 'continue' }] : []), ...HOME_SECTIONS.map((s) => ({ id: s.id }))], [cont.length]);
+  const rows: Row[] = useMemo(
+    () => [...(cont.length ? [{ id: 'continue' }] : []), ...(inSources.length ? [{ id: 'sources' }] : []), ...HOME_SECTIONS.map((s) => ({ id: s.id }))],
+    [cont.length, inSources.length],
+  );
 
   return (
     <FlatList
@@ -116,6 +130,29 @@ function HomeSections({ bottomInset, onMore }: { bottomInset: number; onMore: (s
             </View>
           );
         }
+        if (item.id === 'sources') {
+          return (
+            <Rail
+              title="Dans tes sources"
+              subtitle="Les vrais chapitres, prêts à lire"
+              data={inSources}
+              keyOf={(x) => x.series.id}
+              tileWidth={112}
+              renderTile={({ link, series }, width) => (
+                <PosterTile
+                  title={series.title}
+                  image={series.image}
+                  imageHeaders={series.id.startsWith('px') ? link.imageHeaders : undefined}
+                  palette={series.palette}
+                  width={width}
+                  badge={`${getInstalled(link.key)?.name ?? 'Source'} · ${series.manhwa?.chapters.length ?? 0} ch.`}
+                  onPress={() => router.push(`/manhwa/${series.id}` as Href)}
+                  accessibilityLabel={`${series.title}, dans ${getInstalled(link.key)?.name ?? 'tes sources'}`}
+                />
+              )}
+            />
+          );
+        }
         const section = HOME_SECTIONS.find((s) => s.id === item.id)!;
         const data = home.data?.[section.id] ?? [];
         return (
@@ -133,7 +170,9 @@ function HomeSections({ bottomInset, onMore }: { bottomInset: number; onMore: (s
                 palette={s.palette}
                 width={width}
                 rating={section.id === 'top' || section.id === 'trending' ? s.rating : undefined}
-                badge={section.id === 'updated' && s.status === 'ongoing' ? 'En cours' : section.id === 'fresh' && s.year ? String(s.year) : undefined}
+                badge={
+                  sourceBadge(linked, s) ?? (section.id === 'updated' && s.status === 'ongoing' ? 'En cours' : section.id === 'fresh' && s.year ? String(s.year) : undefined)
+                }
                 onPress={() => open(s)}
               />
             )}
@@ -165,6 +204,7 @@ function ResultsGrid({
 }) {
   const tileW = useGridTile(3);
   const res = useBrowse(filters, true);
+  const linked = useLinkedSeries();
   const sorts = Object.keys(SORT_LABELS) as BrowseSort[];
 
   return (
@@ -203,7 +243,7 @@ function ResultsGrid({
         </View>
       }
       renderItem={({ item: s }) => (
-        <PosterTile title={s.title} image={s.image} palette={s.palette} width={tileW} rating={s.rating} onPress={() => open(s)} />
+        <PosterTile title={s.title} image={s.image} palette={s.palette} width={tileW} rating={s.rating} badge={sourceBadge(linked, s)} onPress={() => open(s)} />
       )}
       ListEmptyComponent={
         res.loading ? (

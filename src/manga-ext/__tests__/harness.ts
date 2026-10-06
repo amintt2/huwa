@@ -88,7 +88,7 @@ export async function createNodeSandbox(handle: (req: HttpRequest) => Promise<Ht
       const done = once(`ret${id}`);
       toSandbox({ t: 'call', cid: id, op, args });
       const r = (await done) as Extract<SandboxToHost, { t: 'ret' }>;
-      if (!r.ok) throw new Error(r.e);
+      if (!r.ok) throw Object.assign(new Error(r.e), { cf: r.cf });
       return r.v as T;
     },
   };

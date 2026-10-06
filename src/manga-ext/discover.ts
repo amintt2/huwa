@@ -5,16 +5,20 @@ import { useEffect, useSyncExternalStore } from 'react';
 
 import { sourceImageHeaders } from './api';
 import { callSource } from './bridge';
+import { isCloudflareError, sourceErrorText as errorText } from './cloudflare-core';
 import { getInstalled } from './registry';
 import { normalizeSectionItems, normalizeSections, type ExtSearchItem, type ExtSearchPage, type ExtSection } from './validate';
 
-export type SectionState = { state: 'loading' | 'ok' | 'error'; items: ExtSearchItem[]; next?: unknown; error?: string };
+/** A Cloudflare check is needed (page to open, when known). */
+export type Blocked = { url?: string };
+export type SectionState = { state: 'loading' | 'ok' | 'error'; items: ExtSearchItem[]; next?: unknown; error?: string; blocked?: Blocked };
 export type SourceHome = {
   state: 'idle' | 'loading' | 'ok' | 'error';
   sections: ExtSection[];
   rows: Record<string, SectionState>;
   imageHeaders?: Record<string, string>;
   error?: string;
+  blocked?: Blocked;
   at: number;
 };
 
@@ -61,7 +65,7 @@ async function warmHeaders(key: string, items: ExtSearchItem[]) {
 export async function loadSourceHome(key: string, force = false) {
   const cur = homes.get(cacheKey(key));
   if (!force && cur && (cur.state === 'loading' || (cur.state === 'ok' && Date.now() - cur.at < TTL))) return;
-  set(key, { state: 'loading', error: undefined, ...(force ? { rows: {} } : {}) });
+  set(key, { state: 'loading', error: undefined, blocked: undefined, ...(force ? { rows: {} } : {}) });
   try {
     const format = formatOf(key);
     const sections = normalizeSections(format, await callSource(key, 'discover', [], 90_000)).filter((s) => s.kind !== 'genres');
@@ -79,15 +83,16 @@ export async function loadSourceHome(key: string, force = false) {
           setRow(key, s.id, { state: 'ok', items: page.items, next: page.next });
           warmHeaders(key, page.items).catch(() => {});
         } catch (e) {
-          setRow(key, s.id, { state: 'error', items: [], error: e instanceof Error ? e.message : 'Erreur' });
+          setRow(key, s.id, { state: 'error', items: [], error: errorText(e), blocked: isCloudflareError(e) ? { url: e.url } : undefined });
         }
       }
     };
     await Promise.all(Array.from({ length: Math.min(ROW_CONCURRENCY, queue.length) }, worker));
   } catch (e) {
-    set(key, { state: 'error', error: e instanceof Error ? e.message : 'Source indisponible' });
+    set(key, { state: 'error', error: errorText(e), blocked: isCloudflareError(e) ? { url: e.url } : undefined });
   }
 }
+
 
 export const getSourceHome = (key: string) => homes.get(cacheKey(key)) ?? EMPTY;
 export const getSection = (key: string, id: string) => getSourceHome(key).sections.find((s) => s.id === id);
