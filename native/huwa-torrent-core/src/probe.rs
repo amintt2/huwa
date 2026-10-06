@@ -298,12 +298,14 @@ pub struct CachedMeta {
     pub peers: Vec<SocketAddr>,
     /// Addresses the probe discovered (swarm size seen from here), for `streaming::peer_limit_for`.
     pub swarm: usize,
+    /// Peers that answered the probe's handshake.
+    pub answering: usize,
     at: Instant,
 }
 
 impl CachedMeta {
     pub fn new(torrent_bytes: Bytes, files: Vec<(String, u64)>, peers: Vec<SocketAddr>, at: Instant) -> Self {
-        Self { torrent_bytes, files, peers, swarm: 0, at }
+        Self { torrent_bytes, files, peers, swarm: 0, answering: 0, at }
     }
 }
 
@@ -346,6 +348,7 @@ impl MetaCache {
             }
             m.peers = out;
             m.swarm = m.swarm.max(seen.len());
+            m.answering = m.answering.max(good.len());
         }
     }
 
@@ -635,6 +638,12 @@ async fn run(engine: Arc<Engine>, probe: Arc<Probe>, req: ProbeRequest, id20: Id
                 return;
             }
             meta = Some(Meta { files, from_list_only: false });
+            // Back to a torrent the engine parked (another episode / series was played meanwhile):
+            // no live peer, and without an address to try the probe waited for the DHT until the
+            // race's soft deadline. The peers that answered last time are tried first.
+            if let Some(m) = engine.meta_cache.get(&hex, Instant::now()) {
+                enqueue(&mut queue, &mut seen, &mut seen_order, &m.peers, true);
+            }
         }
     }
     if meta.is_none() {

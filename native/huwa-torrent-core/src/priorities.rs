@@ -486,6 +486,173 @@ pub fn startup_tail_plan(kind: ContainerIndex, file_size: u64, piece_length: u64
     }
 }
 
+/// What the player reads at the end of the file before its first frame, known from the file's
+/// first bytes (`index_need`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum IndexNeed {
+    /// Everything from this offset to the end (MP4 `moov` after `mdat`; Matroska elements the
+    /// SeekHead places after the first cluster, Tags/Chapters with the Cues).
+    From(u64),
+    /// Nothing before the first frame (MP4 faststart; Matroska with only the Cues at the end:
+    /// mpv defers them to the first seek).
+    Nothing,
+    /// Not parseable from these bytes: fetch the startup plan (`startup_tail_plan`).
+    Unknown,
+}
+
+const MKV_EBML: u32 = 0x1A45_DFA3;
+const MKV_SEGMENT: u32 = 0x1853_8067;
+const MKV_SEEKHEAD: u32 = 0x114D_9B74;
+const MKV_SEEK: u32 = 0x4DBB;
+const MKV_SEEK_ID: u32 = 0x53AB;
+const MKV_SEEK_POSITION: u32 = 0x53AC;
+const MKV_CLUSTER: u32 = 0x1F43_B675;
+const MKV_CUES: u32 = 0x1C53_BB6B;
+
+/// EBML element ID (1–4 bytes, marker bits kept) at `pos`.
+fn ebml_id(b: &[u8], pos: usize) -> Option<(u32, usize)> {
+    let first = *b.get(pos)?;
+    let len = first.leading_zeros() as usize + 1;
+    if len > 4 || pos + len > b.len() {
+        return None;
+    }
+    Some((b[pos..pos + len].iter().fold(0u32, |v, x| (v << 8) | *x as u32), len))
+}
+
+/// EBML size (1–8 bytes, marker removed) at `pos`; `None` for "unknown size" (all ones).
+fn ebml_size(b: &[u8], pos: usize) -> Option<(Option<u64>, usize)> {
+    let first = *b.get(pos)?;
+    let len = first.leading_zeros() as usize + 1;
+    if len > 8 || pos + len > b.len() {
+        return None;
+    }
+    let mut v = (first as u64) & (0xFF >> len);
+    for x in &b[pos + 1..pos + len] {
+        v = (v << 8) | *x as u64;
+    }
+    let unknown = v == (1u64 << (7 * len)) - 1;
+    Some(((!unknown).then_some(v), len))
+}
+
+fn be_uint(b: &[u8]) -> u64 {
+    b.iter().take(8).fold(0u64, |v, x| (v << 8) | *x as u64)
+}
+
+/// mpv's Matroska demuxer before frame 1 reads every element its SeekHead points to, but defers
+/// the Cues when they are the only one left (`demux_mkv.c`): elements placed after the first
+/// cluster (mkvmerge: Cues + statistics Tags at the end) are read at the end of the file.
+fn mkv_index_need(head: &[u8], file_len: u64) -> IndexNeed {
+    let parse = || -> Option<IndexNeed> {
+        let (id, l) = ebml_id(head, 0)?;
+        if id != MKV_EBML {
+            return None;
+        }
+        let (size, l2) = ebml_size(head, l)?;
+        let mut p = l + l2 + size? as usize;
+        let (id, l) = ebml_id(head, p)?;
+        if id != MKV_SEGMENT {
+            return None;
+        }
+        let (_, l2) = ebml_size(head, p + l)?;
+        p += l + l2;
+        let segment = p as u64;
+        let mut seeks: Vec<(u32, u64)> = Vec::new();
+        let mut first_cluster = None;
+        while p < head.len() {
+            let (id, l) = ebml_id(head, p)?;
+            let (size, l2) = ebml_size(head, p + l)?;
+            let data = p + l + l2;
+            if id == MKV_CLUSTER {
+                first_cluster = Some(p as u64);
+                break;
+            }
+            let size = size? as usize;
+            if id == MKV_SEEKHEAD {
+                let end = (data + size).min(head.len());
+                let mut q = data;
+                while q < end {
+                    let (sid, sl) = ebml_id(head, q)?;
+                    let (ssize, sl2) = ebml_size(head, q + sl)?;
+                    let sdata = q + sl + sl2;
+                    let ssize = ssize? as usize;
+                    if sid == MKV_SEEK {
+                        let (mut target, mut pos) = (None, None);
+                        let mut r = sdata;
+                        while r < (sdata + ssize).min(end) {
+                            let (cid, cl) = ebml_id(head, r)?;
+                            let (csize, cl2) = ebml_size(head, r + cl)?;
+                            let cdata = r + cl + cl2;
+                            let csize = csize? as usize;
+                            let bytes = head.get(cdata..cdata + csize)?;
+                            match cid {
+                                MKV_SEEK_ID => target = Some(be_uint(bytes) as u32),
+                                MKV_SEEK_POSITION => pos = Some(be_uint(bytes)),
+                                _ => {}
+                            }
+                            r = cdata + csize;
+                        }
+                        if let (Some(t), Some(at)) = (target, pos) {
+                            seeks.push((t, segment + at));
+                        }
+                    }
+                    q = sdata + ssize;
+                }
+            }
+            p = data + size;
+        }
+        let first_cluster = first_cluster.or_else(|| seeks.iter().find(|(id, _)| *id == MKV_CLUSTER).map(|(_, at)| *at))?;
+        let late: Vec<&(u32, u64)> = seeks.iter().filter(|(id, at)| *id != MKV_CLUSTER && *at > first_cluster && *at < file_len).collect();
+        if late.iter().all(|(id, _)| *id == MKV_CUES) {
+            return Some(IndexNeed::Nothing);
+        }
+        late.iter().map(|(_, at)| *at).min().map(IndexNeed::From)
+    };
+    parse().unwrap_or(IndexNeed::Unknown)
+}
+
+/// MP4 top-level boxes: `moov` before `mdat` = nothing at the end; `mdat` first = the `moov`
+/// right after it, to the end of the file.
+fn mp4_index_need(head: &[u8], file_len: u64) -> IndexNeed {
+    let mut off = 0u64;
+    loop {
+        let o = off as usize;
+        let Some(h) = head.get(o..o + 8) else { return IndexNeed::Unknown };
+        let size32 = u32::from_be_bytes([h[0], h[1], h[2], h[3]]) as u64;
+        let size = match size32 {
+            0 => file_len - off,
+            1 => match head.get(o + 8..o + 16) {
+                Some(l) => be_uint(l),
+                None => return IndexNeed::Unknown,
+            },
+            s => s,
+        };
+        if size < 8 {
+            return IndexNeed::Unknown;
+        }
+        match &h[4..8] {
+            b"moov" => return IndexNeed::Nothing,
+            b"mdat" => {
+                let next = off + size;
+                return if next < file_len { IndexNeed::From(next) } else { IndexNeed::Unknown };
+            }
+            _ => off += size,
+        }
+    }
+}
+
+/// What the player reads at the end before frame 1, from the first bytes of the file.
+pub fn index_need(kind: ContainerIndex, head: &[u8], file_len: u64) -> IndexNeed {
+    match kind {
+        ContainerIndex::MoovAtEnd => mp4_index_need(head, file_len),
+        ContainerIndex::MatroskaTail => mkv_index_need(head, file_len),
+        ContainerIndex::Other => IndexNeed::Unknown,
+    }
+}
+
+/// Bytes of the head read to plan the container index (`index_need`): the MP4 box headers and
+/// the Matroska SeekHead are in the first KiB; one piece arrives anyway for the player.
+pub const INDEX_HEAD_BYTES: u64 = 64 * 1024;
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -722,6 +889,87 @@ mod tests {
         assert_eq!(tail_prefetch_bytes(200 * mib, mib), MIN_TAIL_PREFETCH_BYTES);
         assert_eq!(tail_prefetch_bytes(1400 * mib, mib), 1400 * mib / 512);
         assert_eq!(tail_prefetch_bytes(40 * 1024 * mib, mib), MAX_TAIL_PREFETCH_BYTES);
+    }
+
+    fn ebml(id: u32, payload: &[u8]) -> Vec<u8> {
+        let mut out = Vec::new();
+        let idb = id.to_be_bytes();
+        let skip = idb.iter().position(|b| *b != 0).unwrap();
+        out.extend_from_slice(&idb[skip..]);
+        // 8-byte size, like mkvmerge's reserved sizes.
+        out.push(0x01);
+        out.extend_from_slice(&(payload.len() as u64).to_be_bytes()[1..]);
+        out.extend_from_slice(payload);
+        out
+    }
+
+    fn seek(id: u32, pos: u64) -> Vec<u8> {
+        let mut body = ebml(MKV_SEEK_ID, &id.to_be_bytes());
+        body.extend(ebml(MKV_SEEK_POSITION, &pos.to_be_bytes()));
+        ebml(MKV_SEEK, &body)
+    }
+
+    /// EBML header, Segment, SeekHead (entries), Info, then a Cluster at `cluster` (segment-relative).
+    fn mkv_head(entries: &[(u32, u64)]) -> Vec<u8> {
+        let mut seekhead = Vec::new();
+        for (id, pos) in entries {
+            seekhead.extend(seek(*id, *pos));
+        }
+        let mut seg = ebml(MKV_SEEKHEAD, &seekhead);
+        seg.extend(ebml(0x1549_A966, &[0u8; 20]));
+        let cluster_at = seg.len() as u64;
+        seg.extend(ebml(MKV_CLUSTER, &[0u8; 64]));
+        let mut out = ebml(MKV_EBML, &[0u8; 16]);
+        out.extend_from_slice(&MKV_SEGMENT.to_be_bytes());
+        out.extend_from_slice(&[0x01, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF]); // unknown size
+        let segment_start = out.len() as u64;
+        out.extend(seg);
+        assert!(cluster_at > 0 && segment_start > 0);
+        out
+    }
+
+    #[test]
+    fn matroska_tail_needs_follow_mpv() {
+        let len = 1_000_000_000;
+        // mkvmerge: Cues and Tags after the clusters → read before frame 1, from the earliest.
+        let head = mkv_head(&[(MKV_CUES, 999_000_000), (0x1254_C367, 999_003_000)]);
+        match index_need(ContainerIndex::MatroskaTail, &head, len) {
+            IndexNeed::From(at) => assert!(at > 999_000_000 && at < 999_000_100, "{at}"),
+            other => panic!("{other:?}"),
+        }
+        // ffmpeg / Cues only at the end: deferred by mpv to the first seek.
+        let head = mkv_head(&[(MKV_CUES, 999_000_000), (0x1254_C367, 50)]);
+        assert_eq!(index_need(ContainerIndex::MatroskaTail, &head, len), IndexNeed::Nothing);
+        // Not Matroska / cut too short: the startup plan.
+        assert_eq!(index_need(ContainerIndex::MatroskaTail, b"RIFF....AVI ", len), IndexNeed::Unknown);
+        assert_eq!(index_need(ContainerIndex::MatroskaTail, &head[..20], len), IndexNeed::Unknown);
+    }
+
+    #[test]
+    fn mp4_moov_at_the_end_or_first() {
+        let len = 1_115_809_099u64;
+        let mut head = Vec::new();
+        head.extend_from_slice(&32u32.to_be_bytes());
+        head.extend_from_slice(b"ftypisom");
+        head.extend_from_slice(&[0u8; 20]);
+        head.extend_from_slice(&8u32.to_be_bytes());
+        head.extend_from_slice(b"free");
+        let mdat = 1_114_676_020u64;
+        head.extend_from_slice(&(mdat as u32).to_be_bytes());
+        head.extend_from_slice(b"mdat");
+        assert_eq!(index_need(ContainerIndex::MoovAtEnd, &head, len), IndexNeed::From(40 + mdat));
+        // 64-bit mdat size.
+        let mut big = head[..40].to_vec();
+        big.extend_from_slice(&1u32.to_be_bytes());
+        big.extend_from_slice(b"mdat");
+        big.extend_from_slice(&(mdat + 8).to_be_bytes());
+        assert_eq!(index_need(ContainerIndex::MoovAtEnd, &big, len), IndexNeed::From(40 + mdat + 8));
+        // faststart: moov before mdat.
+        let mut fast = head[..40].to_vec();
+        fast.extend_from_slice(&1_133_039u32.to_be_bytes());
+        fast.extend_from_slice(b"moov");
+        assert_eq!(index_need(ContainerIndex::MoovAtEnd, &fast, len), IndexNeed::Nothing);
+        assert_eq!(index_need(ContainerIndex::MoovAtEnd, &head[..12], len), IndexNeed::Unknown);
     }
 
     #[test]

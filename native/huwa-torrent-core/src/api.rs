@@ -41,6 +41,10 @@ pub fn dispatch(engine: &Arc<Engine>, method: &str, args: Value) -> Result<Value
             let req: StartStreamRequest = serde_json::from_value(args)?;
             Ok(serde_json::to_value(engine.start_stream(req)?)?)
         }
+        "prewarm" => {
+            let req: StartStreamRequest = serde_json::from_value(args)?;
+            Ok(serde_json::to_value(engine.prewarm(req)?)?)
+        }
         "status" => Ok(serde_json::to_value(engine.status(&id_of(&args)?)?)?),
         "list" => Ok(serde_json::to_value(engine.list())?),
         "stats" => Ok(serde_json::to_value(engine.stats())?),
@@ -53,6 +57,13 @@ pub fn dispatch(engine: &Arc<Engine>, method: &str, args: Value) -> Result<Value
             let id = id_of(&args)?;
             engine.runtime.block_on(engine.resume(&id))?;
             Ok(Value::Bool(true))
+        }
+        // The player left this torrent (screen closed, other episode): playback ended, torrent
+        // paused, no longer the focus. Cheap and idempotent; `startStream` brings it back.
+        "release" => {
+            let id = id_of(&args)?;
+            let at = args.get("at").and_then(Value::as_u64);
+            Ok(Value::Bool(engine.release(&id, at)?))
         }
         "remove" => {
             let id = id_of(&args)?;

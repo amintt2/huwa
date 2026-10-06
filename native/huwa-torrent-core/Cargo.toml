@@ -35,6 +35,15 @@ hex = "0.4"
 url = "2"
 urlencoding = "2"
 
+# Offline end-to-end start benchmark (local seeders, shaped links, mpv CLI): bench/README.md.
+[[example]]
+name = "start_bench"
+path = "bench/start_bench.rs"
+
+# `--cfg huwa_baseline`: the bench built against the engine before the start fixes (bench/README.md).
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ["cfg(huwa_baseline)"] }
+
 [target.'cfg(target_os = "android")'.dependencies]
 jni = "0.21"
 
@@ -52,3 +61,6 @@ panic = "unwind"
 # (`bind_device` is Linux-only in socket2). Local copy with a one-line cfg fix; drop when fixed upstream.
 [patch.crates-io]
 librqbit-dualstack-sockets = { path = "../vendor/librqbit-dualstack-sockets" }
+# librqbit 9.0.1 with the start/seek fixes listed in ../vendor/librqbit/HUWA_PATCHES.md (in-flight
+# pieces kept on re-selection, idle peers woken when a stream moves). Same version, same API.
+librqbit = { path = "../vendor/librqbit" }

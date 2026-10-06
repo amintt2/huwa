@@ -167,7 +167,7 @@ fn the_anchor_keeps_the_seeder_between_two_player_requests() {
     let playback = s
         .engine
         .streaming
-        .on_request(&s.engine.runtime, &s.hex, &handle, 0, (24 * MIB) as u64, PlaybackIntent::DirectInitial, 0, true, ContainerIndex::Other)
+        .on_request(&s.engine.runtime, &s.hex, &handle, 0, (24 * MIB) as u64, PlaybackIntent::DirectInitial, 0, true, ContainerIndex::Other, false)
         .map(|(p, _)| p)
         .unwrap();
     s.select(&entry, false);

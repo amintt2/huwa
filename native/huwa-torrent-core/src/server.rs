@@ -23,7 +23,7 @@ use crate::{
     engine::{Engine, Entry, ServerHandle},
     priorities::{classify_request, ContainerIndex, PlaybackIntent},
     range::{parse_range, RangeSpec},
-    streaming::TrackedReader,
+    streaming::{startup_lookahead, TrackedReader, DEFAULT_LOOKAHEAD_BYTES},
 };
 
 /// Body chunk size. librqbit's `FileStream` reads at most up to the end of the current piece per
@@ -239,6 +239,9 @@ async fn stream_file(
     }
     let cache_limit = engine.config().cache_limit_bytes;
     let metered = entry.metered.load(Ordering::Relaxed);
+    let index = container_index(&file_name);
+    // Two answering peers (probe) or connected ones: the container index can come in parallel.
+    let parallel = entry.answering.load(Ordering::Relaxed) >= 2 || handle.stats().live.is_some_and(|l| l.snapshot.peer_stats.live >= 2);
     let playback = engine.streaming.on_request(
         &engine.runtime,
         &hex,
@@ -248,13 +251,27 @@ async fn stream_file(
         intent,
         cache_limit,
         metered,
-        container_index(&file_name),
+        index,
+        parallel,
     );
     debug!(intent = intent.as_str(), start, to_send, metered, "priority intent");
     // Our stream is registered (opened above): a new window narrows librqbit to the stream queues
     // until its first bytes arrive; metered networks never select the whole file (see streaming.rs).
     let settled = playback.as_ref().is_none_or(|(p, _)| p.settled());
-    engine.sync_selection(&entry, &handle, !metered && settled).await;
+    let quiet = playback.as_ref().is_none_or(|(p, _)| p.settled_for(crate::streaming::QUIET_AFTER_DATA));
+    let focused = engine.focus().as_deref() == Some(hex.as_str());
+    engine.sync_selection(&entry, &handle, !metered && quiet && focused).await;
+    // A window that has not delivered yet: only the pieces the player needs first are asked for,
+    // widened back to librqbit's default with the first bytes (see `startup_lookahead`).
+    let narrow = matches!(intent, PlaybackIntent::DirectInitial | PlaybackIntent::DirectSeek) && !settled;
+    if narrow {
+        let piece = playback.as_ref().map_or(0, |(p, _)| p.geometry.piece_len);
+        // A single peer serves one piece after the other: the first request asks for its first
+        // piece only, so the container index the player reads next (planned from that piece, see
+        // `Streaming::on_request`) comes right after it, not after the rest of the 4 MiB.
+        let single = intent == PlaybackIntent::DirectInitial && !parallel && index != ContainerIndex::Other;
+        stream.set_lookahead(if single { piece.max(1) } else { startup_lookahead(piece) });
+    }
 
     if start > 0 {
         if let Err(e) = stream.seek(SeekFrom::Start(start)).await {
@@ -274,7 +291,11 @@ async fn stream_file(
     entry.active_streams.fetch_add(1, Ordering::Relaxed);
     entry.first_byte_sent.store(true, Ordering::Relaxed);
     let guard = StreamGuard { entry: entry.clone(), end };
-    let reader = GuardedReader { inner: TrackedReader::new(stream.take(to_send), playback, start), _guard: guard };
+    let mut tracked = TrackedReader::new(stream.take(to_send), playback, start);
+    if narrow {
+        tracked.on_quiet(Box::new(|r: &mut tokio::io::Take<librqbit::FileStream>| r.get_mut().set_lookahead(DEFAULT_LOOKAHEAD_BYTES)));
+    }
+    let reader = GuardedReader { inner: tracked, _guard: guard };
     let body = Body::from_stream(tokio_util::io::ReaderStream::with_capacity(reader, BODY_CHUNK));
     (status, out, body).into_response()
 }

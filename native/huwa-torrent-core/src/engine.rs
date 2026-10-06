@@ -163,6 +163,7 @@ pub struct EngineStats {
     pub port: u16,
     pub cache_limit_bytes: u64,
     pub cache_used_bytes: u64,
+    pub evictions: EvictionStats,
     pub seeding: bool,
     pub torrents: Vec<TorrentStatus>,
 }
@@ -214,6 +215,10 @@ pub struct Entry {
     pub resolving_from: AtomicU8,
     /// Where the time of the current start goes (see `timeline.rs`).
     pub timeline: StartTimeline,
+    /// A pre-warm runs (`Engine::prewarm`): not parked by the monitor meanwhile.
+    pub prewarming: AtomicBool,
+    /// Peers that answered the probe (several: the container index is fetched with the head).
+    pub answering: AtomicUsize,
 }
 
 impl Entry {
@@ -275,6 +280,37 @@ pub struct Engine {
     /// Janitor and streaming monitor: they upgrade a `Weak<Engine>` on every tick, so `shutdown`
     /// aborts and awaits them (otherwise a tick could still hold the engine afterwards).
     background: parking_lot::Mutex<Vec<tokio::task::JoinHandle<()>>>,
+    /// Torrent of the latest `start_stream` (the one on screen). The others are parked by the
+    /// streaming monitor once their player left (see `park`): rapid switching never leaves old
+    /// torrents downloading against the new start.
+    focus: RwLock<Option<String>>,
+    /// Cache evictions done by `enforce_quota` (count, bytes, time), for `stats`.
+    evictions: parking_lot::Mutex<EvictionStats>,
+}
+
+/// Head bytes fetched by a pre-warm (at least two pieces): what a player reads before frame 1.
+pub const PREWARM_HEAD_BYTES: u64 = 2 * 1024 * 1024;
+/// A pre-warm gives up (and parks the torrent) after this long.
+pub const PREWARM_BUDGET: Duration = Duration::from_secs(30);
+
+/// Free space kept under the cache quota by the janitor (at most a tenth of the quota), so a new
+/// stream never waits for an eviction.
+pub const CACHE_HEADROOM: u64 = 512 * 1024 * 1024;
+/// Quota pass interval (in-memory accounting: a few `stats()` calls). The first pass runs one
+/// interval after launch: the first start of a session goes first.
+pub const QUOTA_TICK: Duration = Duration::from_secs(15);
+/// No eviction this long after a start.
+pub const START_QUIET: Duration = Duration::from_secs(10);
+/// A torrent touched this recently is never evicted (a return to it may be under way).
+pub const EVICT_MIN_IDLE: Duration = Duration::from_secs(30);
+
+#[derive(Debug, Clone, Default, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EvictionStats {
+    pub count: u32,
+    pub bytes: u64,
+    pub total_ms: u64,
+    pub max_ms: u64,
 }
 
 impl Drop for Engine {
@@ -447,6 +483,8 @@ impl Engine {
             meta_cache: MetaCache::default(),
             streaming: Default::default(),
             background: parking_lot::Mutex::new(Vec::new()),
+            focus: RwLock::new(None),
+            evictions: Default::default(),
         });
         engine.restore_entries();
         let janitor = engine.spawn_janitor();
@@ -561,23 +599,34 @@ impl Engine {
                 resolver: parking_lot::Mutex::new(None),
                 resolving_from: AtomicU8::new(META_ENGINE),
                 timeline: StartTimeline::default(),
+                prewarming: AtomicBool::new(false),
+                answering: AtomicUsize::new(0),
             });
             map.insert(hex, entry);
         }
         info!("restored {} torrent(s)", map.len());
     }
 
-    /// Periodic cache-quota enforcement and persistence.
+    /// Periodic cache-quota enforcement (every `QUOTA_TICK`, cheap: in-memory accounting) and
+    /// persistence (every minute), in the background, never while a stream starts.
     fn spawn_janitor(self: &Arc<Self>) -> tokio::task::JoinHandle<()> {
         let weak = Arc::downgrade(self);
         self.runtime.spawn(async move {
+            let mut ticks = 0u32;
             loop {
-                tokio::time::sleep(Duration::from_secs(60)).await;
+                tokio::time::sleep(QUOTA_TICK).await;
+                ticks += 1;
                 let Some(engine) = weak.upgrade() else { return };
-                if let Err(e) = engine.enforce_quota().await {
-                    warn!("quota enforcement failed: {e:#}");
+                // Never while a stream is starting (deletes compete for the disk with the first
+                // pieces): the headroom leaves room enough to wait for the next pass.
+                if !engine.starting_now() {
+                    if let Err(e) = engine.enforce_quota().await {
+                        warn!("quota enforcement failed: {e:#}");
+                    }
                 }
-                engine.persist_entries();
+                if ticks % 4 == 0 {
+                    engine.persist_entries();
+                }
             }
         })
     }
@@ -585,11 +634,94 @@ impl Engine {
     /// Registers the torrent (if new), starts the magnet resolution in the background and
     /// returns the loopback URL immediately. The HTTP handler waits for readiness.
     pub fn start_stream(self: &Arc<Self>, req: StartStreamRequest) -> Result<StartStreamResponse> {
+        self.start_inner(req, true)
+    }
+
+    /// Pre-warm (Wi-Fi, before the tap): the first pieces of the file and its container index are
+    /// fetched for a torrent the app expects to play (`prewarm` API), then the torrent is parked.
+    /// The tap's `start_stream` then finds them on disk: the first frame needs no download. Never
+    /// the focus (the torrent on screen keeps it); cancelled by `release`. A few MiB at most: the
+    /// head stream's look-ahead is narrowed to the head itself.
+    pub fn prewarm(self: &Arc<Self>, req: StartStreamRequest) -> Result<StartStreamResponse> {
+        let (_, hex) = normalize_hash(&req.info_hash)?;
+        if let Some(e) = self.entry(&hex) {
+            // Being played (or pre-warmed) right now: nothing to add, and nothing to disturb.
+            let busy = self.focus().as_deref() == Some(hex.as_str())
+                || e.active_streams.load(Ordering::Relaxed) > 0
+                || e.prewarming.load(Ordering::Acquire);
+            if busy {
+                let file = *e.selected_file.read();
+                let ext = e.handle().and_then(|h| file.and_then(|i| file_ext_of(&h, i)));
+                return Ok(StartStreamResponse { id: hex.clone(), url: self.url_for(&hex, file, ext), info_hash: hex });
+            }
+        }
+        let resp = self.start_inner(req, false)?;
+        let entry = self.entry(&resp.info_hash).context("unknown torrent")?;
+        if entry.prewarming.swap(true, Ordering::AcqRel) {
+            return Ok(resp);
+        }
+        let engine = self.clone();
+        self.runtime.spawn(async move {
+            let job = async {
+                let h = entry.wait_ready(PREWARM_BUDGET).await?;
+                h.wait_until_initialized().await?;
+                if h.is_paused() {
+                    engine.session.unpause(&h).await?;
+                }
+                let file = (*entry.selected_file.read()).context("no file")?;
+                let g = crate::streaming::Geometry::of(&h, file).context("no geometry")?;
+                let name = h
+                    .with_metadata(|m| m.file_infos.get(file).map(|f| f.relative_filename.to_string_lossy().into_owned()))
+                    .ok()
+                    .flatten()
+                    .unwrap_or_default();
+                let head_end = PREWARM_HEAD_BYTES.max(2 * g.piece_len).min(g.file_len);
+                let (tail, _) = crate::priorities::startup_tail_plan(crate::server::container_index(&name), g.file_len, g.piece_len);
+                let head = crate::streaming::walk_pieces_narrow(h.clone(), file, g, 0, head_end, head_end);
+                let tail_job = async {
+                    if tail > 0 && g.file_len - tail > head_end {
+                        crate::streaming::walk_pieces_narrow(h.clone(), file, g, g.file_len - tail, g.file_len, tail).await
+                    } else {
+                        Ok(())
+                    }
+                };
+                // Once both streams are registered, nothing else is selected: only they download.
+                let deselect = async {
+                    tokio::time::sleep(Duration::from_millis(100)).await;
+                    engine.sync_selection(&entry, &h, false).await;
+                };
+                let (a, b, ()) = tokio::join!(head, tail_job, deselect);
+                a.and(b)
+            };
+            let res = tokio::time::timeout(PREWARM_BUDGET, job).await;
+            entry.prewarming.store(false, Ordering::Release);
+            match res {
+                Ok(Ok(())) => info!(hex = %entry.hex, "pre-warm done"),
+                Ok(Err(e)) => warn!(hex = %entry.hex, "pre-warm failed: {e:#}"),
+                Err(_) => info!(hex = %entry.hex, "pre-warm timed out"),
+            }
+            if engine.focus().as_deref() != Some(entry.hex.as_str()) {
+                engine.park(&entry);
+            }
+        });
+        Ok(resp)
+    }
+
+    fn start_inner(self: &Arc<Self>, req: StartStreamRequest, focus: bool) -> Result<StartStreamResponse> {
         let (id20, hex) = normalize_hash(&req.info_hash)?;
         let trackers = self.torrent_trackers(&req.sources);
+        if focus {
+            let previous = self.focus.write().replace(hex.clone());
+            if previous.as_deref() != Some(hex.as_str()) {
+                self.background_others(&hex);
+            }
+        }
 
         if let Some(existing) = self.entry(&hex) {
             existing.touch();
+            if let Some(m) = self.meta_cache.get(&hex, std::time::Instant::now()) {
+                existing.answering.store(m.answering, Ordering::Relaxed);
+            }
             existing.metered.store(req.metered, Ordering::Relaxed);
             if let Some(name) = req.name.as_ref() {
                 if existing.display_name.read().is_none() {
@@ -632,14 +764,18 @@ impl Engine {
                             }
                         });
                     }
-                    // Played before: if the selection was left empty (metered network, or the
-                    // previous playback ended before its window settled), librqbit has dropped the
-                    // seeders as "not needed" and only re-dials them when the selection grows. The
-                    // player's first request narrows it again (see `sync_selection`).
-                    let reselect = async { tokio::time::timeout(Duration::from_secs(2), self.sync_selection(&existing, &h, true)).await };
-                    if self.runtime.block_on(reselect).is_err() {
-                        warn!(hex = %hex, "re-selecting the played file timed out");
-                    }
+                    // Played before: if the selection was left empty (metered network, parked, or
+                    // the previous playback ended before its window settled), librqbit has dropped
+                    // the seeders as "not needed" and only re-dials them when the selection grows.
+                    // The player's first request narrows it again (see `sync_selection`). In the
+                    // background: the URL goes back at once (this used to block the call up to 2 s,
+                    // and every other engine call queued behind it on the app's module queue).
+                    let (engine, entry, h) = (self.clone(), existing.clone(), h.clone());
+                    self.runtime.spawn(async move {
+                        if tokio::time::timeout(Duration::from_secs(2), engine.sync_selection(&entry, &h, true)).await.is_err() {
+                            warn!(hex = %entry.hex, "re-selecting the played file timed out");
+                        }
+                    });
                 }
                 self.spawn_start_watcher(&existing);
                 let file = req.file_idx.or(*existing.selected_file.read());
@@ -677,8 +813,13 @@ impl Engine {
             resolver: parking_lot::Mutex::new(None),
             resolving_from: AtomicU8::new(if probed.is_some() { META_PROBE } else { META_MAGNET }),
             timeline: StartTimeline::default(),
+            prewarming: AtomicBool::new(false),
+            answering: AtomicUsize::new(0),
         });
         entry.timeline.begin();
+        if let Some(m) = &probed {
+            entry.answering.store(m.answering, Ordering::Relaxed);
+        }
         match &probed {
             Some(m) => entry.timeline.set_swarm_setup(m.peers.len(), crate::streaming::peer_limit_for(m.swarm, max_peers)),
             None => entry.timeline.set_swarm_setup(0, max_peers),
@@ -772,9 +913,8 @@ impl Engine {
             entry.ready.notify_waiters();
             entry.ready.notify_one();
             engine.persist_entries();
-            if let Err(e) = engine.enforce_quota().await {
-                warn!("quota enforcement failed: {e:#}");
-            }
+            // No eviction here (it used to run right now, during the first player requests, with a
+            // directory walk): the janitor keeps `CACHE_HEADROOM` free ahead of time.
         });
         *entry.resolver.lock() = Some(task);
         self.spawn_start_watcher(&entry);
@@ -827,6 +967,78 @@ impl Engine {
                 if file.and_then(|i| stats.file_progress.get(i).copied()).unwrap_or(0) > 0 {
                     t.mark_first_piece();
                 }
+            }
+        });
+    }
+
+    pub fn focus(&self) -> Option<String> {
+        self.focus.read().clone()
+    }
+
+    /// The focused torrent started less than `START_QUIET` ago (its first pieces are coming in).
+    pub fn starting_now(&self) -> bool {
+        let Some(e) = self.focus().and_then(|h| self.entry(&h)) else { return false };
+        let since = crate::timeline::epoch_ms().saturating_sub(e.timeline.started_at_ms());
+        since < START_QUIET.as_millis() as u64
+    }
+
+    /// A new torrent took the focus: the others stop their natural-order download at once (only
+    /// what an open player response still reads continues: a next-episode prefetch started while
+    /// one plays). Parking (peers, announces) follows once their player left (`park`).
+    fn background_others(self: &Arc<Self>, focus: &str) {
+        for e in self.entries() {
+            if e.hex == focus || e.selection.load(Ordering::Acquire) != SELECTION_WHOLE_FILE {
+                continue;
+            }
+            let Some(h) = e.handle() else { continue };
+            let engine = self.clone();
+            self.runtime.spawn(async move { engine.sync_selection(&e, &h, false).await });
+        }
+    }
+
+    /// The app left this torrent's player (`release` API call): parked at once, and no longer the
+    /// focus. A later `start_stream` brings it back (unpause, selection, the probe's peers).
+    /// `decided_at` (ms since the Unix epoch, the app's clock): a start of this torrent after that
+    /// moment wins (the release of a screen that was left arrived after the next screen started
+    /// the same torrent: same pack, next-episode prefetch, pre-warm taken over by the tap).
+    pub fn release(self: &Arc<Self>, hex: &str, decided_at: Option<u64>) -> Result<bool> {
+        let entry = self.entry(hex).context("unknown torrent")?;
+        if decided_at.is_some_and(|at| entry.timeline.started_at_ms() > at) {
+            return Ok(false);
+        }
+        {
+            let mut focus = self.focus.write();
+            if focus.as_deref() == Some(hex) {
+                *focus = None;
+            }
+        }
+        self.park(&entry);
+        Ok(true)
+    }
+
+    /// Stops everything a torrent runs for a player that left: playback (walker, anchor, tail
+    /// prefetch, open responses), selection (nothing), and the torrent itself (paused: peers
+    /// disconnected, no announce). Non-blocking; pieces on disk and the probe metadata stay, so a
+    /// return to it starts like the first time. No-op for a paused torrent.
+    pub fn park(self: &Arc<Self>, entry: &Arc<Entry>) {
+        self.streaming.release(&entry.hex);
+        let Some(handle) = entry.handle() else { return };
+        if handle.is_paused() {
+            return;
+        }
+        info!(hex = %entry.hex, "parking a torrent the player left");
+        let (engine, entry) = (self.clone(), entry.clone());
+        self.runtime.spawn(async move {
+            // Another start of this torrent meanwhile: leave it alone.
+            if engine.focus().as_deref() == Some(entry.hex.as_str()) {
+                return;
+            }
+            engine.sync_selection(&entry, &handle, false).await;
+            if engine.focus().as_deref() == Some(entry.hex.as_str()) || entry.active_streams.load(Ordering::Relaxed) > 0 {
+                return;
+            }
+            if let Err(e) = engine.session.pause(&handle).await {
+                warn!("parking pause failed: {e:#}");
             }
         });
     }
@@ -953,7 +1165,8 @@ impl Engine {
             version: crate::VERSION,
             port: self.port(),
             cache_limit_bytes: cfg.cache_limit_bytes,
-            cache_used_bytes: cache::dir_size(&self.torrents_dir),
+            cache_used_bytes: self.cache_used_bytes(),
+            evictions: self.evictions.lock().clone(),
             seeding: cfg.seeding,
             torrents: self.list(),
         }
@@ -1035,32 +1248,56 @@ impl Engine {
         Ok(before.saturating_sub(after))
     }
 
-    /// Evicts least-recently-used idle torrents until the data folder fits the quota.
+    /// Torrent data on disk: the pieces librqbit has (per-file progress, in memory). No directory
+    /// walk (a sparse, preallocated file also counted for its full length there).
+    pub fn cache_used_bytes(&self) -> u64 {
+        self.entries().iter().filter_map(|e| e.handle()).map(|h| h.stats().file_progress.iter().sum::<u64>()).sum()
+    }
+
+    /// Evicts least-recently-used idle torrents until the cache is `CACHE_HEADROOM` under the
+    /// quota, so a new start always has room without evicting on its own path. Never the focused
+    /// torrent, one with an open player response, or one touched in the last `EVICT_MIN_IDLE`.
+    /// Runs from the janitor (in the background); each eviction is timed (`EngineStats.evictions`).
     pub async fn enforce_quota(&self) -> Result<u64> {
         let limit = self.config.read().cache_limit_bytes;
         if limit == 0 {
             return Ok(0);
         }
-        let mut used = cache::dir_size(&self.torrents_dir);
-        if used <= limit {
+        let target = limit.saturating_sub(CACHE_HEADROOM.min(limit / 10));
+        let mut used = self.cache_used_bytes();
+        if used <= target {
             return Ok(0);
         }
+        let focus = self.focus();
+        let now = now_secs();
         let mut candidates: Vec<Arc<Entry>> = self
             .entries()
             .into_iter()
-            .filter(|e| e.active_streams.load(Ordering::Relaxed) == 0 && e.handle().is_some())
+            .filter(|e| {
+                e.active_streams.load(Ordering::Relaxed) == 0
+                    && e.handle().is_some()
+                    && focus.as_deref() != Some(e.hex.as_str())
+                    && now.saturating_sub(e.last_access.load(Ordering::Relaxed)) >= EVICT_MIN_IDLE.as_secs()
+            })
             .collect();
         candidates.sort_by_key(|e| e.last_access.load(Ordering::Relaxed));
         let mut freed = 0;
         for e in candidates {
-            if used <= limit {
+            if used <= target {
                 break;
             }
             let size = e.handle().map(|h| h.stats().file_progress.iter().sum::<u64>()).unwrap_or(0);
+            let t = std::time::Instant::now();
             info!("cache quota: evicting {} ({} bytes)", e.hex, size);
             if self.remove(&e.hex).await.is_ok() {
                 used = used.saturating_sub(size);
                 freed += size;
+                let ms = t.elapsed().as_millis() as u64;
+                let mut ev = self.evictions.lock();
+                ev.count += 1;
+                ev.bytes += size;
+                ev.total_ms += ms;
+                ev.max_ms = ev.max_ms.max(ms);
             }
         }
         Ok(freed)

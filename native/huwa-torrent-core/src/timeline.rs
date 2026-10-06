@@ -30,7 +30,7 @@ pub const META_ENGINE: u8 = 3;
 
 const NONE: u64 = u64::MAX;
 
-fn epoch_ms() -> u64 {
+pub fn epoch_ms() -> u64 {
     SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_millis() as u64).unwrap_or(0)
 }
 
@@ -116,6 +116,11 @@ impl StartTimeline {
         self.peers_at_first_byte.store(u32::MAX, Ordering::Relaxed);
         self.initial_peers.store(0, Ordering::Relaxed);
         self.epoch.fetch_add(1, Ordering::AcqRel) + 1
+    }
+
+    /// When the current start began (ms since the Unix epoch).
+    pub fn started_at_ms(&self) -> u64 {
+        self.origin.lock().1
     }
 
     pub fn epoch(&self) -> u32 {
