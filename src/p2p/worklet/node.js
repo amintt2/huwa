@@ -1034,7 +1034,7 @@ class HuwaNode {
     try {
       const me = this.secret.identity
       const stats = await valueOf(room.base.view, 'a/' + me)
-      if (!rateOk(stats, Date.now(), MAP_RATE).ok) throw new Error('Patiente quelques secondes avant une nouvelle correction')
+      if (!rateOk(stats, Date.now(), this.secret.device.publicKey, MAP_RATE).ok) throw new Error('Patiente quelques secondes avant une nouvelle correction')
       const value = await this._append(room.base, 'map', 'map:' + key, body, { nonceBits: pow.difficultyFor(stats) })
       const stored = await valueOf(room.base.view, mapKey(body, me))
       if (!stored || stored.ts !== value.ts) throw new Error('Correction refusée')
