@@ -4,7 +4,7 @@
 import { useEffect, useRef, useState } from 'react';
 
 import { probeCancel, probeStart, probeStatuses } from './index';
-import { MIN_CONNECTED, PROBE_TIMEOUT_MS, type PeerProbe } from './peer-race';
+import { MIN_CONNECTED, PEER_POLL_MS, PROBE_TIMEOUT_MS, type PeerProbe } from './peer-race';
 import type { ProbeStatus } from './types';
 
 export type PeerTarget = {
@@ -17,7 +17,6 @@ export type PeerTarget = {
   episode?: number;
 };
 
-const POLL_MS = 400;
 /** Monotonic clock of the race (`startedAt`, `doneAtMs`). */
 export const peerClock = () => (typeof performance !== 'undefined' ? performance.now() : Date.now());
 const now = peerClock;
@@ -158,7 +157,7 @@ export function usePeerRace(
       }
       if (updates.length) setState((s) => ({ ...s, probes: { ...s.probes, ...Object.fromEntries(updates) } }));
     };
-    const timer = setInterval(() => void tick(), POLL_MS);
+    const timer = setInterval(() => void tick(), PEER_POLL_MS);
     return () => {
       stopped = true;
       clearInterval(timer);

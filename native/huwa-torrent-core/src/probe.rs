@@ -41,19 +41,30 @@ use tokio::{
     task::JoinHandle,
 };
 
-use crate::engine::{build_magnet, is_video_name, normalize_hash, pick_file, trackers_from_sources, Engine};
+use crate::engine::{build_magnet, is_video_name, normalize_hash, pick_file, Engine};
 
-/// Probes actually running at once (more are queued). JS asks for 4 on Wi-Fi, 2 on cellular.
-pub const MAX_CONCURRENT_PROBES: usize = 6;
-pub const DEFAULT_TIMEOUT_MS: u64 = 8_000;
+/// Probes actually running at once (more are queued). JS asks for 4 on Wi-Fi (8 once the race
+/// widens because every candidate looks weak), 2 on cellular (3 widened).
+pub const MAX_CONCURRENT_PROBES: usize = 8;
+/// The race commits after 1.5 s (popular) / 2.5 s (obscure) at most, see `src/torrent/peer-race.ts`:
+/// a probe running longer only matters for the sources menu.
+pub const DEFAULT_TIMEOUT_MS: u64 = 3_000;
 const MIN_TIMEOUT_MS: u64 = 1_000;
 const MAX_TIMEOUT_MS: u64 = 30_000;
 /// Answering peers needed to call a swarm healthy.
 pub const DEFAULT_MIN_PEERS: usize = 3;
-const HANDSHAKE_CONCURRENCY: usize = 10;
-/// Handshakes tried per probe at most (then the probe ends with what it has).
-const MAX_HANDSHAKES: usize = 40;
-const HANDSHAKE_TIMEOUT: Duration = Duration::from_millis(2_500);
+/// Parallel handshakes and handshakes tried per probe, scaled to the swarm size (see
+/// `handshake_concurrency` / `max_handshakes`). Most addresses a DHT returns for a popular torrent
+/// are stale: with a fixed 10 slots × 2.5 s and 40 attempts, the slots were held by dead addresses
+/// while the live ones waited, and the attempts ran out before 3 peers answered — popular swarms
+/// came out slower than obscure ones, or `weak`.
+const MIN_HANDSHAKE_CONCURRENCY: usize = 10;
+const MAX_HANDSHAKE_CONCURRENCY: usize = 32;
+const MIN_HANDSHAKES: usize = 40;
+const MAX_HANDSHAKES: usize = 120;
+/// A live peer answers a handshake within one round trip (< 1 s even on cellular); waiting longer
+/// only keeps a slot on a dead address.
+pub const HANDSHAKE_TIMEOUT: Duration = Duration::from_millis(1_500);
 /// Finished / cancelled probe records kept for `probeStatus`, then dropped.
 const FINISHED_TTL: Duration = Duration::from_secs(120);
 const MAX_RECORDS: usize = 48;
@@ -285,12 +296,14 @@ pub struct CachedMeta {
     pub files: Vec<(String, u64)>,
     /// Peers that answered first, then the other discovered ones.
     pub peers: Vec<SocketAddr>,
+    /// Addresses the probe discovered (swarm size seen from here), for `streaming::peer_limit_for`.
+    pub swarm: usize,
     at: Instant,
 }
 
 impl CachedMeta {
     pub fn new(torrent_bytes: Bytes, files: Vec<(String, u64)>, peers: Vec<SocketAddr>, at: Instant) -> Self {
-        Self { torrent_bytes, files, peers, at }
+        Self { torrent_bytes, files, peers, swarm: 0, at }
     }
 }
 
@@ -332,6 +345,7 @@ impl MetaCache {
                 }
             }
             m.peers = out;
+            m.swarm = m.swarm.max(seen.len());
         }
     }
 
@@ -468,6 +482,36 @@ pub fn answering(handshakes: usize, engine_live: usize) -> usize {
     handshakes.max(engine_live)
 }
 
+/// Handshakes in flight for a swarm where `seen` addresses were discovered so far.
+pub fn handshake_concurrency(seen: usize) -> usize {
+    (MIN_HANDSHAKE_CONCURRENCY + seen / 4).min(MAX_HANDSHAKE_CONCURRENCY)
+}
+
+/// Handshakes tried at most for a swarm where `seen` addresses were discovered.
+pub fn max_handshakes(seen: usize) -> usize {
+    (MIN_HANDSHAKES + seen / 2).min(MAX_HANDSHAKES)
+}
+
+/// Adds discovered addresses to the handshake queue. `fresh` ones (trackers' answers, peers that
+/// just served the metadata, peers that answered a previous probe) go before the DHT ones, which are
+/// often stale.
+pub fn enqueue(queue: &mut VecDeque<SocketAddr>, seen: &mut HashSet<SocketAddr>, order: &mut Vec<SocketAddr>, addrs: &[SocketAddr], fresh: bool) {
+    let mut front = Vec::new();
+    for a in addrs {
+        if seen.insert(*a) {
+            order.push(*a);
+            if fresh {
+                front.push(*a);
+            } else {
+                queue.push_back(*a);
+            }
+        }
+    }
+    for a in front.into_iter().rev() {
+        queue.push_front(a);
+    }
+}
+
 pub fn clamp_timeout(ms: Option<u64>) -> Duration {
     Duration::from_millis(ms.unwrap_or(DEFAULT_TIMEOUT_MS).clamp(MIN_TIMEOUT_MS, MAX_TIMEOUT_MS))
 }
@@ -598,17 +642,14 @@ async fn run(engine: Arc<Engine>, probe: Arc<Probe>, req: ProbeRequest, id20: Id
             let pick = pick_probe_file(&m.files, req.file_idx, req.filename.as_deref(), req.episode);
             apply_meta(&probe, &m.files, &pick, Some(0));
             file_ok = Some(matches!(pick, FilePick::File(_)));
-            for a in &m.peers {
-                if seen.insert(*a) {
-                    seen_order.push(*a);
-                    queue.push_back(*a);
-                }
-            }
+            enqueue(&mut queue, &mut seen, &mut seen_order, &m.peers, true);
             meta = Some(Meta { files: m.files, from_list_only: false });
         }
     }
 
-    let trackers = trackers_from_sources(&req.sources);
+    // Same list as the stream start (public trackers added to poor magnets): a probe that only had
+    // the magnet's trackers + a cold DHT reported popular swarms as dead.
+    let trackers = engine.torrent_trackers(&req.sources);
     let session = engine.session.clone();
     let mut add_fut = if meta.is_none() {
         let opts = AddTorrentOptions {
@@ -627,7 +668,7 @@ async fn run(engine: Arc<Engine>, probe: Arc<Probe>, req: ProbeRequest, id20: Id
     let mut attempts = 0usize;
 
     loop {
-        while handshakes.len() < HANDSHAKE_CONCURRENCY && attempts < MAX_HANDSHAKES {
+        while handshakes.len() < handshake_concurrency(seen.len()) && attempts < max_handshakes(seen.len()) {
             let Some(addr) = queue.pop_front() else { break };
             attempts += 1;
             handshakes.push(async move { (addr, handshake(addr, id20.0, peer_id, HANDSHAKE_TIMEOUT).await) });
@@ -636,7 +677,7 @@ async fn run(engine: Arc<Engine>, probe: Arc<Probe>, req: ProbeRequest, id20: Id
             st.peers = seen.len();
             st.connected = answering(good.len(), live_peers);
         });
-        let nothing_left = meta.is_some() && handshakes.is_empty() && (attempts >= MAX_HANDSHAKES || (queue.is_empty() && dht.is_none()));
+        let nothing_left = meta.is_some() && handshakes.is_empty() && (attempts >= max_handshakes(seen.len()) || (queue.is_empty() && dht.is_none()));
         if let Some(state) = settle(meta.is_some(), file_ok, answering(good.len(), live_peers), min_peers, nothing_left) {
             probe.finish(state, None);
             break;
@@ -660,12 +701,8 @@ async fn run(engine: Arc<Engine>, probe: Arc<Probe>, req: ProbeRequest, id20: Id
                         let pick = pick_probe_file(&files, req.file_idx, req.filename.as_deref(), req.episode);
                         apply_meta(&probe, &files, &pick, Some(started.elapsed().as_millis() as u64));
                         file_ok = Some(matches!(pick, FilePick::File(_)));
-                        for a in &lo.seen_peers {
-                            if seen.insert(*a) {
-                                seen_order.push(*a);
-                                queue.push_back(*a);
-                            }
-                        }
+                        // Tracker answers and the peers that served the metadata: alive a moment ago.
+                        enqueue(&mut queue, &mut seen, &mut seen_order, &lo.seen_peers, true);
                         engine.meta_cache.insert(&hex, CachedMeta::new(lo.torrent_bytes.clone(), files.clone(), Vec::new(), Instant::now()));
                         meta = Some(Meta { files, from_list_only: true });
                     }
@@ -688,12 +725,7 @@ async fn run(engine: Arc<Engine>, probe: Arc<Probe>, req: ProbeRequest, id20: Id
             }
             next = async { dht.as_mut().unwrap().next().await }, if dht.is_some() => {
                 match next {
-                    Some(addr) => {
-                        if seen.insert(addr) {
-                            seen_order.push(addr);
-                            queue.push_back(addr);
-                        }
-                    }
+                    Some(addr) => enqueue(&mut queue, &mut seen, &mut seen_order, &[addr], false),
                     None => dht = None,
                 }
             }
@@ -820,6 +852,29 @@ mod tests {
     }
 
     #[test]
+    fn handshakes_scale_with_the_swarm() {
+        assert_eq!(handshake_concurrency(0), MIN_HANDSHAKE_CONCURRENCY);
+        assert_eq!(handshake_concurrency(40), 20);
+        assert_eq!(handshake_concurrency(500), MAX_HANDSHAKE_CONCURRENCY);
+        assert_eq!(max_handshakes(0), MIN_HANDSHAKES);
+        assert_eq!(max_handshakes(1000), MAX_HANDSHAKES);
+        assert!(HANDSHAKE_TIMEOUT <= Duration::from_millis(1_500), "a dead address must not hold a slot long");
+    }
+
+    #[test]
+    fn fresh_peers_are_tried_before_dht_ones() {
+        let a = |i: u8| -> SocketAddr { SocketAddr::from(([10, 0, 0, i], 6881)) };
+        let (mut q, mut seen, mut order) = (VecDeque::new(), HashSet::new(), Vec::new());
+        // DHT answers first (often stale)…
+        enqueue(&mut q, &mut seen, &mut order, &[a(1), a(2)], false);
+        // …then the metadata arrives with the peers that served it / the trackers' answers.
+        enqueue(&mut q, &mut seen, &mut order, &[a(3), a(4), a(1)], true);
+        // a(1) was already queued (not twice); the fresh ones go first, in their order.
+        assert_eq!(q.iter().copied().collect::<Vec<_>>(), vec![a(3), a(4), a(1), a(2)]);
+        assert_eq!(order, vec![a(1), a(2), a(3), a(4)], "discovery order kept for the meta cache");
+    }
+
+    #[test]
     fn timeouts_are_bounded() {
         assert_eq!(clamp_timeout(None), Duration::from_millis(DEFAULT_TIMEOUT_MS));
         assert_eq!(clamp_timeout(Some(10)), Duration::from_millis(MIN_TIMEOUT_MS));
@@ -849,6 +904,7 @@ mod tests {
         c.insert("h", CachedMeta::new(Bytes::from_static(b"x"), vec![f("a.mkv", 1)], vec![], t0));
         c.set_peers("h", &[b], &[a, b]);
         assert_eq!(c.get("h", t0).unwrap().peers, vec![b, a]);
+        assert_eq!(c.get("h", t0).unwrap().swarm, 2);
         assert!(c.get("h", t0 + META_TTL + Duration::from_secs(1)).is_none());
         assert!(c.get("h", t0).is_none(), "expired entry dropped");
         for i in 0..META_CAP + 3 {
@@ -990,7 +1046,7 @@ mod tests {
         assert!(!cached.files.is_empty());
         let t0 = Instant::now();
         engine
-            .start_stream(crate::engine::StartStreamRequest { info_hash: hash.into(), file_idx: st.file_idx, sources: vec![], name: None })
+            .start_stream(crate::engine::StartStreamRequest { info_hash: hash.into(), file_idx: st.file_idx, sources: vec![], name: None, metered: false })
             .unwrap();
         let entry = engine.entry(hash).unwrap();
         engine.runtime.block_on(entry.wait_ready(Duration::from_secs(10))).unwrap();

@@ -14,7 +14,7 @@ use std::{
     mem::ManuallyDrop,
     path::{Path, PathBuf},
     sync::{
-        atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering},
+        atomic::{AtomicBool, AtomicU64, AtomicU8, AtomicUsize, Ordering},
         Arc,
     },
     time::{Duration, SystemTime, UNIX_EPOCH},
@@ -90,7 +90,20 @@ pub struct StartStreamRequest {
     /// Display name (from the addon) used until the metadata is known.
     #[serde(default)]
     pub name: Option<String>,
+    /// Metered network (cellular): only a window ahead of the playhead is downloaded, never the
+    /// whole file in the background (see `Engine::sync_selection`). Updated by every call.
+    #[serde(default)]
+    pub metered: bool,
 }
+
+/// librqbit file selection of a torrent (`Entry::selection`).
+pub const SELECTION_UNKNOWN: u8 = 0;
+/// Nothing selected: only the pieces covered by open `FileStream`s download (librqbit keeps
+/// streaming unselected files). Used before the first bytes of a window arrive (no natural-order
+/// fan-out competing with the head) and on metered networks (no background download).
+pub const SELECTION_STREAMS_ONLY: u8 = 1;
+/// The played file selected: the rest of it downloads in natural order after the windows.
+pub const SELECTION_WHOLE_FILE: u8 = 2;
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -186,6 +199,10 @@ pub struct Entry {
     pub first_byte_sent: AtomicBool,
     pub last_served_end: AtomicU64,
     pub consecutive_waits: AtomicU64,
+    /// Last `metered` flag sent by the app (`StartStreamRequest::metered`).
+    pub metered: AtomicBool,
+    /// What is selected in librqbit right now (`SELECTION_*`).
+    pub selection: AtomicU8,
     /// Background magnet resolution (`start_stream`). Aborted and awaited by `remove`, so a torrent
     /// deleted while resolving cannot come back as an unlisted download.
     pub resolver: parking_lot::Mutex<Option<tokio::task::JoinHandle<()>>>,
@@ -247,6 +264,9 @@ pub struct Engine {
     pub meta_cache: MetaCache,
     /// Read-ahead walkers, playhead / stall tracking and recovery state (see `streaming.rs`).
     pub streaming: crate::streaming::Streaming,
+    /// Janitor and streaming monitor: they upgrade a `Weak<Engine>` on every tick, so `shutdown`
+    /// aborts and awaits them (otherwise a tick could still hold the engine afterwards).
+    background: parking_lot::Mutex<Vec<tokio::task::JoinHandle<()>>>,
 }
 
 impl Drop for Engine {
@@ -307,6 +327,13 @@ pub fn is_video_name(name: &str) -> bool {
         .and_then(|e| e.to_str())
         .map(|e| VIDEO_EXT.contains(&e.to_ascii_lowercase().as_str()))
         .unwrap_or(false)
+}
+
+/// Whether the played file is fully downloaded (`None` when unknown).
+pub fn selected_file_complete(file_progress: &[u64], handle: &ManagedTorrentHandle, file: Option<usize>) -> Option<bool> {
+    let i = file?;
+    let len = handle.with_metadata(|m| m.file_infos.get(i).map(|f| f.len)).ok().flatten()?;
+    Some(file_progress.get(i).copied().unwrap_or(0) >= len)
 }
 
 /// Picks the largest video file, else the largest file.
@@ -389,11 +416,18 @@ impl Engine {
             probes: Probes::default(),
             meta_cache: MetaCache::default(),
             streaming: Default::default(),
+            background: parking_lot::Mutex::new(Vec::new()),
         });
         engine.restore_entries();
-        engine.spawn_janitor();
-        crate::streaming::spawn_monitor(&engine);
+        let janitor = engine.spawn_janitor();
+        let monitor = crate::streaming::spawn_monitor(&engine);
+        engine.background.lock().extend([janitor, monitor]);
         Ok(engine)
+    }
+
+    /// Trackers announced for a torrent (stream start and probes alike, see `trackers::for_torrent`).
+    pub fn torrent_trackers(&self, sources: &[String]) -> Vec<String> {
+        crate::trackers::for_torrent(sources, !self.config.read().default_trackers.is_empty())
     }
 
     pub fn config(&self) -> Config {
@@ -493,6 +527,8 @@ impl Engine {
                 first_byte_sent: AtomicBool::new(false),
                 last_served_end: AtomicU64::new(0),
                 consecutive_waits: AtomicU64::new(0),
+                metered: AtomicBool::new(false),
+                selection: AtomicU8::new(SELECTION_UNKNOWN),
                 resolver: parking_lot::Mutex::new(None),
             });
             map.insert(hex, entry);
@@ -501,7 +537,7 @@ impl Engine {
     }
 
     /// Periodic cache-quota enforcement and persistence.
-    fn spawn_janitor(self: &Arc<Self>) {
+    fn spawn_janitor(self: &Arc<Self>) -> tokio::task::JoinHandle<()> {
         let weak = Arc::downgrade(self);
         self.runtime.spawn(async move {
             loop {
@@ -512,20 +548,18 @@ impl Engine {
                 }
                 engine.persist_entries();
             }
-        });
+        })
     }
 
     /// Registers the torrent (if new), starts the magnet resolution in the background and
     /// returns the loopback URL immediately. The HTTP handler waits for readiness.
     pub fn start_stream(self: &Arc<Self>, req: StartStreamRequest) -> Result<StartStreamResponse> {
         let (id20, hex) = normalize_hash(&req.info_hash)?;
-        let mut trackers = trackers_from_sources(&req.sources);
-        if self.config.read().default_trackers.is_empty() {
-            trackers = crate::trackers::augment(trackers);
-        }
+        let trackers = self.torrent_trackers(&req.sources);
 
         if let Some(existing) = self.entry(&hex) {
             existing.touch();
+            existing.metered.store(req.metered, Ordering::Relaxed);
             if let Some(name) = req.name.as_ref() {
                 if existing.display_name.read().is_none() {
                     *existing.display_name.write() = Some(name.clone());
@@ -567,6 +601,8 @@ impl Engine {
             first_byte_sent: AtomicBool::new(false),
             last_served_end: AtomicU64::new(0),
             consecutive_waits: AtomicU64::new(0),
+            metered: AtomicBool::new(req.metered),
+            selection: AtomicU8::new(SELECTION_UNKNOWN),
             resolver: parking_lot::Mutex::new(None),
         });
         self.entries.write().insert(hex.clone(), entry.clone());
@@ -577,6 +613,7 @@ impl Engine {
         // Probed a moment ago (torrent race): no magnet resolution, the peers that answered the
         // probe are dialled first, and only the wanted file is allocated.
         let probed = self.meta_cache.get(&hex, std::time::Instant::now());
+        let max_peers = self.config.read().max_peers;
         let task_entry = entry.clone();
         let task = self.runtime.spawn(async move {
             let entry = task_entry;
@@ -588,6 +625,7 @@ impl Engine {
             let add = match probed {
                 Some(m) => {
                     opts.only_files = entry.requested_file.filter(|i| *i < m.files.len()).or_else(|| pick_file(&m.files)).map(|i| vec![i]);
+                    opts.peer_limit = crate::streaming::peer_limit_for(m.swarm, max_peers);
                     if !m.peers.is_empty() {
                         opts.initial_peers = Some(m.peers.clone());
                     }
@@ -618,9 +656,13 @@ impl Engine {
                             .requested_file
                             .filter(|i| *i < files.len())
                             .or_else(|| pick_file(&files));
+                        // Selected until the player's first request opens its stream: the peers
+                        // connected meanwhile stay interested (an empty selection would make librqbit
+                        // drop the seeders before the stream exists). `sync_selection` narrows it then.
                         if let Some(i) = selected {
-                            if let Err(e) = engine.session.update_only_files(&handle, &HashSet::from([i])).await {
-                                warn!("update_only_files failed: {e:#}");
+                            match engine.session.update_only_files(&handle, &HashSet::from([i])).await {
+                                Ok(()) => entry.selection.store(SELECTION_WHOLE_FILE, Ordering::Relaxed),
+                                Err(e) => warn!("update_only_files failed: {e:#}"),
                             }
                         }
                         *entry.selected_file.write() = selected;
@@ -661,6 +703,22 @@ impl Engine {
         *entry.resolver.lock() = Some(task);
 
         Ok(StartStreamResponse { id: hex.clone(), url: self.url_for(&hex, req.file_idx), info_hash: hex })
+    }
+
+    /// Selects the played file in librqbit (`whole_file`) or nothing (only the open streams'
+    /// windows download). Called by the HTTP server for every request and by the streaming monitor
+    /// once a window has its first bytes. No-op when already in that state.
+    pub async fn sync_selection(&self, entry: &Entry, handle: &ManagedTorrentHandle, whole_file: bool) {
+        let want = if whole_file { SELECTION_WHOLE_FILE } else { SELECTION_STREAMS_ONLY };
+        if entry.selection.load(Ordering::Acquire) == want {
+            return;
+        }
+        let Some(file) = *entry.selected_file.read() else { return };
+        let set = if whole_file { HashSet::from([file]) } else { HashSet::new() };
+        match self.session.update_only_files(handle, &set).await {
+            Ok(()) => entry.selection.store(want, Ordering::Release),
+            Err(e) => warn!("update_only_files({set:?}) failed: {e:#}"),
+        }
     }
 
     pub fn status(&self, hex: &str) -> Result<TorrentStatus> {
@@ -708,10 +766,13 @@ impl Engine {
         let stats = handle.stats();
         st.total_bytes = stats.total_bytes;
         st.progress_bytes = stats.progress_bytes;
+        // With nothing selected (startup window, metered network) librqbit reports `finished`:
+        // only the played file being complete counts.
+        let file_done = selected_file_complete(&stats.file_progress, &handle, *entry.selected_file.read()).unwrap_or(stats.finished);
         st.state = match stats.state {
             TorrentStatsState::Initializing { .. } => "initializing",
             TorrentStatsState::Live => {
-                if stats.finished {
+                if file_done {
                     "finished"
                 } else {
                     "live"
@@ -903,7 +964,12 @@ impl Engine {
         let server = self.server.lock().take();
         let resolvers: Vec<_> = self.entries.read().values().filter_map(|e| e.resolver.lock().take()).collect();
         let probes = self.probes.take_tasks();
+        let background: Vec<_> = self.background.lock().drain(..).collect();
         self.runtime.block_on(async {
+            for t in background {
+                t.abort();
+                let _ = t.await;
+            }
             for t in probes {
                 t.abort();
                 let _ = t.await;
@@ -986,7 +1052,7 @@ mod tests {
         // No peer will ever answer for this hash: it stays in `Resolving`.
         let hex = "00112233445566778899aabbccddeeff00112233";
         engine
-            .start_stream(StartStreamRequest { info_hash: hex.into(), file_idx: None, sources: vec![], name: Some("x".into()) })
+            .start_stream(StartStreamRequest { info_hash: hex.into(), file_idx: None, sources: vec![], name: Some("x".into()), metered: false })
             .unwrap();
         let entry = engine.entry(hex).unwrap();
         assert!(matches!(&*entry.state.read(), EntryState::Resolving));
@@ -1010,6 +1076,16 @@ mod tests {
         assert_eq!(Arc::strong_count(&engine), 1, "server task gone: nothing else keeps the engine alive");
         assert!(std::net::TcpStream::connect(("127.0.0.1", port)).is_err(), "listener closed");
         drop(engine); // runtime shut down without blocking
+    }
+
+    #[test]
+    fn probes_get_the_public_trackers_too() {
+        let engine = test_engine("trackers");
+        // What `probe::run` announces to for a magnet without trackers: the public list.
+        let list = engine.torrent_trackers(&["dht:x".to_string()]);
+        assert_eq!(list.len(), crate::trackers::MAX_ADDED);
+        assert!(list.iter().all(|t| crate::trackers::PUBLIC_TRACKERS.contains(&t.as_str())));
+        engine.shutdown();
     }
 
     #[test]

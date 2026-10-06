@@ -29,6 +29,10 @@ pub mod server;
 pub mod streaming;
 pub mod trackers;
 
+/// Start-path timeline simulation (fake swarms), see the module docs.
+#[cfg(test)]
+mod startup_sim;
+
 #[cfg(target_os = "android")]
 pub mod jni_android;
 

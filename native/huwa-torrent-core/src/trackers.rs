@@ -16,6 +16,10 @@
 //!   librqbit to every torrent and this list is not used).
 //!
 //! Private torrents are not affected: librqbit only keeps their first tracker.
+//!
+//! `for_torrent` is the single entry point: the stream start (`Engine::start_stream`) and the swarm
+//! probes (`probe.rs`) announce to exactly the same list. Probes that only used the magnet's own
+//! trackers + a cold DHT used to mark popular torrents "dead" that the stream would have found.
 
 /// Open trackers with a long track record (ngosang/trackerslist "best" over several years).
 pub const PUBLIC_TRACKERS: &[&str] = &[
@@ -68,9 +72,35 @@ pub fn augment(mut trackers: Vec<String>) -> Vec<String> {
     trackers
 }
 
+/// Trackers announced for a torrent, from the addon `sources` (`tracker:udp://…`, plain URLs;
+/// `dht:` entries dropped): the torrent's own first, then public ones when it has few — unless the
+/// app configured `Config.defaultTrackers` (`app_trackers`), which librqbit adds to every torrent.
+pub fn for_torrent(sources: &[String], app_trackers: bool) -> Vec<String> {
+    let own = crate::engine::trackers_from_sources(sources);
+    if app_trackers {
+        own
+    } else {
+        augment(own)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn probes_and_streams_share_the_augmented_list() {
+        // A magnet without trackers (typical addon answer): public ones are added.
+        let out = for_torrent(&["dht:abc".to_string()], false);
+        assert_eq!(out.len(), MAX_ADDED);
+        assert_eq!(out[0], PUBLIC_TRACKERS[0]);
+        // Own trackers first, `tracker:` prefix stripped.
+        let out = for_torrent(&["tracker:udp://own.example:80/announce".to_string()], false);
+        assert_eq!(out[0], "udp://own.example:80/announce");
+        assert!(out.len() > 1);
+        // App-wide trackers configured: librqbit adds them itself, nothing appended here.
+        assert!(for_torrent(&[], true).is_empty());
+    }
 
     #[test]
     fn public_list_is_udp_or_https_only() {

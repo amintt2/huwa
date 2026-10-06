@@ -2,7 +2,8 @@
 //! the Swift / Kotlin glue minimal (and identical on both platforms).
 //!
 //! Methods (args → result):
-//! - `startStream` `{infoHash, fileIdx?, sources?, name?}` → `{id, url, infoHash}`
+//! - `startStream` `{infoHash, fileIdx?, sources?, name?, metered?}` → `{id, url, infoHash}`
+//!   (`metered`: cellular, only a ~60–90 s window is downloaded, see `streaming.rs`)
 //! - `status` `{id}` → `TorrentStatus`
 //! - `list` `{}` → `TorrentStatus[]`
 //! - `stats` `{}` → `EngineStats`

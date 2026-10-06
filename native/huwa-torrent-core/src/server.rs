@@ -89,6 +89,12 @@ pub fn mime_for(name: &str) -> &'static str {
     }
 }
 
+/// MP4 / MOV may keep their index (`moov`) at the end of the file, and the player needs it before
+/// the first frame. MKV / WebM Cues only serve seeking.
+pub fn index_before_first_frame(name: &str) -> bool {
+    matches!(mime_for(name), "video/mp4" | "video/quicktime")
+}
+
 /// Keeps `active_streams` accurate for the lifetime of a response body.
 struct StreamGuard {
     entry: Arc<Entry>,
@@ -209,8 +215,23 @@ async fn stream_file(
     let last_end = entry.last_served_end.load(Ordering::Relaxed);
     let intent = classify_request(start, to_send, len, first_byte_sent, (last_end > 0).then_some(last_end));
     let cache_limit = engine.config().cache_limit_bytes;
-    let playback = engine.streaming.on_request(&engine.runtime, &hex, &handle, file_idx, start, intent, cache_limit);
-    debug!(intent = intent.as_str(), start, to_send, "priority intent");
+    let metered = entry.metered.load(Ordering::Relaxed);
+    let playback = engine.streaming.on_request(
+        &engine.runtime,
+        &hex,
+        &handle,
+        file_idx,
+        start,
+        intent,
+        cache_limit,
+        metered,
+        index_before_first_frame(&file_name),
+    );
+    debug!(intent = intent.as_str(), start, to_send, metered, "priority intent");
+    // Our stream is registered (opened above): a new window narrows librqbit to the stream queues
+    // until its first bytes arrive; metered networks never select the whole file (see streaming.rs).
+    let settled = playback.as_ref().is_none_or(|(p, _)| p.settled());
+    engine.sync_selection(&entry, &handle, !metered && settled).await;
 
     if start > 0 {
         if let Err(e) = stream.seek(SeekFrom::Start(start)).await {
@@ -244,5 +265,11 @@ mod tests {
         assert_eq!(mime_for("Show.S01E01.mkv"), "video/x-matroska");
         assert_eq!(mime_for("a/b/c.MP4"), "video/mp4");
         assert_eq!(mime_for("noext"), "application/octet-stream");
+    }
+
+    #[test]
+    fn only_mp4_index_is_fetched_with_the_head() {
+        assert!(index_before_first_frame("a.mp4") && index_before_first_frame("b.MOV") && index_before_first_frame("c.m4v"));
+        assert!(!index_before_first_frame("Show - 01.mkv") && !index_before_first_frame("x.webm"));
     }
 }

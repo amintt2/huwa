@@ -23,7 +23,7 @@ import { useSettings } from '@/settings/settings';
 import { useRaceBudget, useTorrentProbeBudget } from '@/settings/network';
 import { resolveTorrent, resolveTorrentViaDebrid, useCachedHashes, useTorrentResolver } from '@/debrid/resolve';
 import { canProbeTorrents, useTorrentSettings } from '@/torrent';
-import { decidePeerRace, packKeys, peerLabel, probeTargets, unpackKeys, wrongTorrents, type PeerCandidate, type PeerProbe } from '@/torrent/peer-race';
+import { decidePeerRace, packKeys, peerLabel, probeTargets, shouldWiden, unpackKeys, wrongTorrents, type PeerCandidate, type PeerProbe } from '@/torrent/peer-race';
 import { peerClock, usePeerRace, type PeerTarget } from '@/torrent/use-peer-race';
 
 import { langScore } from './audio';
@@ -255,10 +255,16 @@ export function useSource(seriesId: string, episode: number, { enabled = true, p
   // ---- torrent race (on-device engine): uncached torrents probed in parallel ----
   const engineTorrent = (s: AddonStream) => isTorrent(s) && cachedOf(s) !== true;
   const peerWanted =
-    enabled && !preview && !manual && !lockedStream && torrentBudget > 0 && canProbeTorrents() && pool.some(engineTorrent) && !pool.some(safe);
+    enabled && !preview && !manual && !lockedStream && torrentBudget.base > 0 && canProbeTorrents() && pool.some(engineTorrent) && !pool.some(safe);
   const peerPool = peerWanted ? pool.filter(engineTorrent) : [];
+  // A new round whenever a source failed (e.g. the winner would not start): the next best
+  // torrents are probed again instead of being started blindly one by one.
+  const raceScope = `${peerScope}#${bad.length}`;
+  /** Round whose candidates all looked weak: it probes up to `torrentBudget.max` of them. */
+  const [widened, setWidened] = useState<string | null>(null);
+  const raceWidth = widened === raceScope ? torrentBudget.max : torrentBudget.base;
   // Stream keys contain the addon's multi-line name / title: packed as JSON, never joined on '\n'.
-  const peerKeys = packKeys(probeTargets(peerPool.map((s) => ({ key: streamKey(s) })), torrentBudget));
+  const peerKeys = packKeys(probeTargets(peerPool.map((s) => ({ key: streamKey(s) })), raceWidth));
   const peerTargets = useMemo<PeerTarget[]>(
     () =>
       peerKeys
@@ -278,13 +284,23 @@ export function useSource(seriesId: string, episode: number, { enabled = true, p
     peerPool.map((s) => ({ key: streamKey(s), lang: langOf(s), probe: probes[streamKey(s)] }));
   const decidePeers = (probes: Record<string, PeerProbe>, startedAt: number | null) =>
     decidePeerRace(peerCands(probes), startedAt != null ? peerClock() - startedAt : 0);
-  // A new round whenever a source failed (e.g. the winner would not start): the next best
-  // torrents are probed again instead of being started blindly one by one.
-  const peer = usePeerRace(`${peerScope}#${bad.length}`, peerTargets, peerOn, (probes, at) => {
+  const peer = usePeerRace(raceScope, peerTargets, peerOn, (probes, at) => {
     const d = decidePeers(probes, at);
     return d.key !== null || 'exhausted' in d;
   });
   const peerDecision = peerOn ? decidePeers(peer.probes, peer.startedAt) : null;
+  // Obscure title (only weak swarms so far): probe more candidates — packs, other qualities —
+  // within the budget, still committing by the race deadlines. Adjusted during render.
+  if (
+    peerOn &&
+    peer.active &&
+    widened !== raceScope &&
+    torrentBudget.max > torrentBudget.base &&
+    peer.startedAt != null &&
+    shouldWiden(Object.values(peer.probes), peerClock() - peer.startedAt)
+  ) {
+    setWidened(raceScope);
+  }
   const peerWaitMs = peerDecision && peerDecision.key === null && 'waitMs' in peerDecision ? peerDecision.waitMs : 0;
   useEffect(() => {
     if (!peerWaitMs) return;
