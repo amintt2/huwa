@@ -23,6 +23,7 @@ import type {
   CommunityStatsSums,
   Profile,
   PublicKey,
+  RestoreOptions,
   StatsContribution,
   Unsubscribe,
 } from './contract';
@@ -298,8 +299,8 @@ export class BareP2P implements P2P {
     this.migrate(r.profile).catch((err) => console.warn('[huwa] migration', err));
     return r;
   }
-  async restoreIdentity(phrase: string[]) {
-    this.meValue = await this.call<Profile>('restoreIdentity', [phrase]);
+  async restoreIdentity(phrase: string[], opts?: RestoreOptions) {
+    this.meValue = await this.call<Profile>('restoreIdentity', opts ? [phrase, opts] : [phrase]);
     return this.meValue;
   }
   async updateProfile(patch: Partial<Pick<Profile, 'name' | 'bio' | 'avatar'>>) {

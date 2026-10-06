@@ -136,7 +136,15 @@ test('AAGUID → password manager name', () => {
 
 // ---------- flows against a fake provider ----------
 
-type Provider = { largeBlob: boolean; prf: boolean; prfAtCreate: boolean; failAt?: 'register' | 'authenticate' | 'write'; write?: boolean };
+type Provider = {
+  largeBlob: boolean;
+  prf: boolean;
+  prfAtCreate: boolean;
+  failAt?: 'register' | 'authenticate' | 'write';
+  write?: boolean;
+  /** Both extensions in one assertion: 'drop-blob' answers PRF only, 'throw' fails after Face ID. */
+  combined?: 'drop-blob' | 'drop-prf' | 'throw';
+};
 
 function fakeNative(p: Provider) {
   const store = new Map<string, { blob?: Uint8Array; secret: Uint8Array; user: Uint8Array }>();
@@ -171,11 +179,13 @@ function fakeNative(p: Provider) {
       if (p.failAt === 'authenticate') throw cancel();
       const [id, c] = o.credentialId ? [o.credentialId, store.get(o.credentialId)!] : [...store.entries()].at(-1) ?? [];
       if (!id || !c) throw Object.assign(new Error('none'), { code: 'no-credentials' });
+      const both = o.readBlob && !!o.prfSalt;
+      if (both && p.combined === 'throw') throw Object.assign(new Error('The operation couldn’t be completed. (com.apple.AuthenticationServices.AuthorizationError error 1004.)'), { code: 'failed' });
       return {
         credentialId: id,
         userHandle: c.user,
-        blob: o.readBlob ? c.blob : undefined,
-        prfFirst: p.prf && o.prfSalt ? evalPrf(c.secret, o.prfSalt) : undefined,
+        blob: o.readBlob && !(both && p.combined === 'drop-blob') ? c.blob : undefined,
+        prfFirst: p.prf && o.prfSalt && !(both && p.combined === 'drop-prf') ? evalPrf(c.secret, o.prfSalt) : undefined,
       };
     },
   };
@@ -251,6 +261,40 @@ test('login on a passkey without a Huwa blob', async () => {
   const { native } = fakeNative({ largeBlob: true, prf: false, prfAtCreate: false, failAt: undefined });
   await native.register({ userName: 'x', displayName: 'x', userId: new Uint8Array(16), challenge: new Uint8Array(32), prfSalt: prfSalt() });
   await assert.rejects(loginWithPasskey(deps(native)), { code: 'no-blob' });
+});
+
+test('login when the provider does not answer blob and PRF in the same assertion', async () => {
+  for (const combined of ['drop-blob', 'drop-prf', 'throw'] as const) {
+    const { native, calls } = fakeNative({ largeBlob: true, prf: true, prfAtCreate: true, combined });
+    await setupPasskey(USER, PHRASE, deps(native));
+    calls.length = 0;
+    const login = await loginWithPasskey(deps(native)).catch((e) => {
+      throw new Error(`${combined}: ${e.code} ${e.trace}`);
+    });
+    // Without the quirk the same login is a single assertion.
+    assert.deepEqual(login.words, PHRASE, combined);
+    assert.equal(login.enc, 'prf-aes256gcm');
+    const expected = combined === 'drop-prf' ? ['read', 'unlock'] : combined === 'drop-blob' ? ['read', 'read'] : ['read', 'read', 'unlock'];
+    assert.deepEqual(calls, expected, combined);
+  }
+  const ok = fakeNative({ largeBlob: true, prf: true, prfAtCreate: true });
+  await setupPasskey(USER, PHRASE, deps(ok.native));
+  ok.calls.length = 0;
+  await loginWithPasskey(deps(ok.native));
+  assert.deepEqual(ok.calls, ['read'], 'one assertion when the provider answers both');
+});
+
+test('login errors carry the steps that led to them', async () => {
+  const { native } = fakeNative({ largeBlob: true, prf: false, prfAtCreate: false });
+  await native.register({ userName: 'x', displayName: 'x', userId: new Uint8Array(16), challenge: new Uint8Array(32), prfSalt: prfSalt() });
+  const logs: string[] = [];
+  const err = await loginWithPasskey({ ...deps(native), log: (m) => logs.push(m) }).catch((e) => e);
+  assert.equal(err.code, 'no-blob');
+  assert.equal(err.trace, 'combined:blob=0,prf=0 → blob-only:blob=0,prf=0 → error:no-blob');
+  assert.match(logs[0], /no-blob/);
+  const cancelled = await loginWithPasskey(deps(fakeNative({ largeBlob: true, prf: false, prfAtCreate: false, failAt: 'authenticate' }).native)).catch((e) => e);
+  assert.equal(cancelled.code, 'cancelled');
+  assert.equal(cancelled.trace, 'combined:cancelled → error:cancelled');
 });
 
 test('account hint parsing is defensive', () => {

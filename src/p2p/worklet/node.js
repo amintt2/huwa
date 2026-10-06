@@ -284,7 +284,16 @@ class HuwaNode {
       info = null
     }
     if (!info || toHex(info.identityPublicKey) !== m.id) return
-    if (this.secret && m.id === this.secret.identity) return
+    if (this.secret && m.id === this.secret.identity) {
+      // Restored without the old data (see restoreIdentity allowNewHome): an old device of the
+      // account came back with the original personal base. Not merged automatically; kept so a
+      // later version can offer to reconcile it.
+      if (this.secret.lostHomeAt && isKey(m.home) && m.home !== this.secret.home && !(await valueOf(this.local, 'restore/old-home'))) {
+        await this.local.put('restore/old-home', { home: m.home, seenAt: Date.now() })
+        this.log('restore: old personal base seen again', m.home.slice(0, 8))
+      }
+      return
+    }
     // A device revoked in its owner's personal base is not listened to (it still holds a valid proof).
     const peerHome = this.homes.get(m.id)
     if (peerHome && info.devicePublicKey && (await valueOf(peerHome.base.view, 'rev/' + toHex(info.devicePublicKey)))) return
@@ -385,9 +394,12 @@ class HuwaNode {
     const s = this.secret
     this.home = this._openHomeBase(s.identity, s.home ? fromHex(s.home) : null, 'home')
     await this.home.ready()
-    this.home.on('update', () => this._onHomeUpdate())
+    this.home.on('update', () => this._onHomeUpdate().catch((err) => this.log('home update', err.message)))
     this._join(this.home.discoveryKey)
-    this._join(idTopic(s.identity), { server: true, client: false })
+    // Restored without the old data: also look for the old devices on the identity topic, so one
+    // coming back is noticed (its hello is recorded, see _onhello).
+    const watchOld = !!s.lostHomeAt && !(await valueOf(this.local, 'restore/old-home'))
+    this._join(idTopic(s.identity), { server: true, client: watchOld })
     if (s.pointer) {
       this.pointer = this.store.get({ key: fromHex(s.pointer) })
       await this.pointer.ready()
@@ -565,7 +577,16 @@ class HuwaNode {
     return { profile, phrase: mnemonic.split(' ') }
   }
 
-  async _createFromMnemonic(mnemonic, name, existingHome) {
+  /**
+   * @param {string|null} existingHome  personal base to join, or null to create one
+   * @param {object} [opts]
+   * @param {boolean} [opts.lost]  new base for an account whose original base is unreachable: the
+   *   root-owned pointer is NOT appended (this device cannot see its real length: an append here
+   *   would sign a second, conflicting block at an existing index, and Hypercore freezes a core
+   *   with two signed versions on every peer that replicates it). The base is found through the
+   *   hello of this device on the identity topic instead; the old pointer key is recorded.
+   */
+  async _createFromMnemonic(mnemonic, name, existingHome, { lost = false } = {}) {
     const { ik, out } = await this._deriveRoot(mnemonic)
     const device = crypto.keyPair()
     const proof = await out.bootstrap(device.publicKey)
@@ -581,10 +602,11 @@ class HuwaNode {
       proof: toHex(proof),
       boxSeed: out.boxSeed,
       home: existingHome,
-      pointer: toHex(pointer.key),
+      pointer: lost ? null : toHex(pointer.key),
       deviceName: this.deviceName,
       phraseVerified: false,
-      createdAt: Date.now()
+      createdAt: Date.now(),
+      ...(lost ? { lostHomeAt: Date.now(), previousPointer: toHex(pointer.key) } : {})
     })
 
     if (existingHome) {
@@ -600,7 +622,7 @@ class HuwaNode {
       await this._openMyself()
       await this._appendHome('inception', { name, box: toHex(this._box().publicKey), device: this.deviceName })
       await this._appendHome('profile', { rot: toHex(out.rot.publicKey) })
-      await pointer.append(b4a.from(JSON.stringify({ home: this.secret.home })))
+      if (!lost) await pointer.append(b4a.from(JSON.stringify({ home: this.secret.home })))
     }
     await pointer.close()
     await this._onHomeUpdate()
@@ -622,20 +644,55 @@ class HuwaNode {
   }
 
   /**
-   * Joins the existing account of `phrase`. Never creates a personal base: when no device of the
-   * account answers in time, fails with code RESTORE_NOT_FOUND and leaves this device untouched
-   * (a new base appended to the root-owned pointer would make the real one unreachable forever).
+   * Joins the existing account of `phrase`. By default never creates a personal base: when no
+   * device of the account answers in time, fails with code RESTORE_NOT_FOUND and leaves this
+   * device untouched (a second base would split the account).
+   *
+   * `{ allowNewHome: true, name }` is the explicit, user-confirmed fallback for an account whose
+   * devices are all gone: the lookup runs once more (a base found meanwhile is joined as usual),
+   * then a new, empty personal base is created for the same identity (same key, same fingerprint).
+   * What lived only on the missing devices (profile, history, follows, devices) is not recovered.
+   * If an old device comes back later its base is not merged: it is recorded under
+   * `restore/old-home` (see _onhello) for a future reconciliation.
    */
-  async restoreIdentity(phrase) {
+  async restoreIdentity(phrase, opts = {}) {
     if (this.secret) throw new Error('Une identité existe déjà sur cet appareil')
+    if (this._restoring) throw new Error('Une restauration est déjà en cours')
     if (!Array.isArray(phrase) || phrase.length < 12 || phrase.length > 24 || !phrase.every((w) => typeof w === 'string')) {
       throw new Error('Phrase invalide')
     }
     const mnemonic = phrase.map((w) => w.trim().toLowerCase()).join(' ')
     if (!bip39.validateMnemonic(mnemonic)) throw new Error('Phrase invalide')
+    const allowNewHome = !!opts && opts.allowNewHome === true
+    let name = null
+    if (allowNewHome && typeof opts.name === 'string' && opts.name.trim()) {
+      name = opts.name.trim()
+      if (name.length > schema.LIMITS.name) throw new Error('Pseudo invalide')
+    }
 
-    const { ik, out } = await this._deriveRoot(mnemonic)
-    ik.clear()
+    this._restoring = true
+    try {
+      const { ik, out } = await this._deriveRoot(mnemonic)
+      ik.clear()
+      // Second chance before creating anything: a device that came online meanwhile wins.
+      const ms = allowNewHome ? Math.max(3000, Math.round(this.restoreLookupMs / 2)) : this.restoreLookupMs
+      const found = await this._findHome(out, ms)
+      if (this.secret) throw new Error('Une identité existe déjà sur cet appareil')
+      if (found) return await this._createFromMnemonic(mnemonic, null, found)
+      if (!allowNewHome) {
+        const err = new Error("Aucun de tes appareils n'a répondu. Réessaie quand un appareil connecté à ton compte est en ligne (app ouverte).")
+        err.code = 'RESTORE_NOT_FOUND'
+        throw err
+      }
+      this.log('restore: no device answered, new personal base for the same identity (user choice)')
+      return await this._createFromMnemonic(mnemonic, name || 'huwa-' + fingerprint(out.identity).slice(0, 4).toLowerCase(), null, { lost: true })
+    } finally {
+      this._restoring = false
+    }
+  }
+
+  /** Personal base of the account derived in `out`, from its pointer or a device's hello; null if none answers within `ms`. */
+  async _findHome(out, ms) {
     // Find the personal base through the pointer core owned by the root's discovery key.
     const pointer = this.store.get({ keyPair: out.pointer })
     await pointer.ready()
@@ -660,11 +717,10 @@ class HuwaNode {
       const p = this.peers.get(out.identity)
       return p && isKey(p.home) ? p.home : null
     }
-    let found = null
     try {
       // The root-signed pointer wins; a hello only counts after a short grace period for it.
-      const grace = Date.now() + Math.min(4000, this.restoreLookupMs / 3)
-      found = await this._waitFor(async () => (await fromPointer()) || (Date.now() > grace ? fromHello() : null), this.restoreLookupMs)
+      const grace = Date.now() + Math.min(4000, ms / 3)
+      return await this._waitFor(async () => (await fromPointer()) || (Date.now() > grace ? fromHello() : null), ms)
     } finally {
       if (discovery) await discovery.destroy().catch(noop)
       if (idDiscovery) await idDiscovery.destroy().catch(noop)
@@ -675,12 +731,6 @@ class HuwaNode {
         await this.local.del('peer/' + out.identity).catch(noop)
       }
     }
-    if (!found) {
-      const err = new Error("Aucun de tes appareils n'a répondu. Réessaie quand un appareil connecté à ton compte est en ligne (app ouverte).")
-      err.code = 'RESTORE_NOT_FOUND'
-      throw err
-    }
-    return this._createFromMnemonic(mnemonic, null, found)
   }
 
   me() {

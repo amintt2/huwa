@@ -37,6 +37,7 @@ import type {
   Profile,
   PublicKey,
 } from './contract';
+import { P2PError, RESTORE_NOT_FOUND } from './errors';
 import { DEMO_WELCOME, demoComments, demoFlags, demoJournal, demoKeyOf, demoLabels, demoMapping, demoProfile, demoReply, isDemoKey } from './demo';
 import { randomBytes, secure } from './secure';
 
@@ -331,7 +332,7 @@ export function createLocalP2P(): P2P {
       return { profile, phrase: words };
     },
 
-    async restoreIdentity(phrase) {
+    async restoreIdentity(phrase, opts) {
       await ready;
       const words = phrase.map((w) => w.trim().toLowerCase()).filter(Boolean);
       if (!isValidPhrase(words)) throw new Error('Phrase invalide : vérifie l’orthographe et l’ordre des 24 mots.');
@@ -351,9 +352,15 @@ export function createLocalP2P(): P2P {
         }
       }
       const known = db.profile?.key === publicKey ? db.profile : undefined;
+      // Single device: the account's data is on this device or nowhere. Same contract as the
+      // worklet: starting over without it is an explicit choice (allowNewHome).
+      if (!known && !opts?.allowNewHome) {
+        throw new P2PError('Aucune donnée de ce compte sur cet appareil.', RESTORE_NOT_FOUND);
+      }
+      const chosen = opts?.name?.trim() ? checkName(opts.name) : undefined;
       const profile: Profile = known ?? {
         key: publicKey,
-        name: legacyName(await AsyncStorage.getItem(LEGACY_KEY)) ?? `huwa-${fingerprint(publicKey).slice(0, 4)}`,
+        name: chosen ?? legacyName(await AsyncStorage.getItem(LEGACY_KEY)) ?? `huwa-${fingerprint(publicKey).slice(0, 4)}`,
         createdAt: Date.now(),
         fingerprint: fingerprint(publicKey),
       };

@@ -8,64 +8,74 @@ import { Screen } from '@/components/screen';
 import { DANGER, Field, Group, Row } from '@/components/social';
 import { Button, Txt } from '@/components/ui';
 import { cloudBackup, cloudBackupSupported } from '@/p2p/cloud-backup';
-import { isRestoreNotFound } from '@/p2p/errors';
+import { errorCode, isRestoreNotFound } from '@/p2p/errors';
 import { social } from '@/p2p/hooks';
-import { PasskeyError, passkeyMessage, passkeySupport, requestPasskeyOffer, restoreWithPasskey } from '@/p2p/passkey';
+import type { RestoreOptions } from '@/p2p/contract';
+import { PasskeyError, passkeyDetail, passkeyMessage, passkeySupport, readPasskeyAccount, requestPasskeyOffer, restoreFromPasskeyLogin, type PasskeyLogin } from '@/p2p/passkey';
+import type { AccountHint } from '@/p2p/passkey-core';
 import { PHRASE_WORDS, isValidPhrase, normalizePhraseInput, unknownWords } from '@/social/identity';
 import { C, S } from '@/theme/tokens';
+
+/** A restore that found no device of the account: what to retry, or restore without the old data. */
+type Pending = { words: string[]; hint?: AccountHint; login?: PasskeyLogin };
 
 export default function Restore() {
   const [text, setText] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();
-  /** None of the account's devices answered: how to try the same restore again. */
-  const [retry, setRetry] = useState<() => void>();
-
-  /** Shared failure path: no success haptic, no iCloud save, no passkey offer. */
-  const failed = (e: unknown, again: () => void) => {
-    requestPasskeyOffer(false);
-    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
-    setBusy(false);
-    if (isRestoreNotFound(e)) {
-      setRetry(() => again);
-      return true;
-    }
-    return false;
-  };
+  /** None of the account's devices answered (nothing was changed). */
+  const [pending, setPending] = useState<Pending>();
 
   const words = useMemo(() => normalizePhraseInput(text), [text]);
   const unknown = useMemo(() => unknownWords(words), [words]);
   const complete = words.length === PHRASE_WORDS;
   const valid = complete && isValidPhrase(words);
 
-  const restore = async () => {
-    if (busy || !valid) return;
+  /**
+   * Shared by the phrase, iCloud and passkey paths (the passkey is only asked once: its phrase is
+   * kept for retries). `opts.allowNewHome` only after the explicit choice in RestoreOfflineNotice.
+   */
+  const run = async (p: Pending, opts?: RestoreOptions) => {
     setBusy(true);
     setError(undefined);
-    setRetry(undefined);
     try {
-      requestPasskeyOffer();
-      await social.restoreIdentity(words);
+      if (!p.login) requestPasskeyOffer();
+      if (p.login) await restoreFromPasskeyLogin(p.login, opts);
+      else await social.restoreIdentity(p.words, opts);
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      // The protected stack switches to the app on its own.
     } catch (e) {
-      if (!failed(e, restore)) setError(e instanceof Error ? e.message : 'Restauration impossible.');
+      // No success haptic, no iCloud save, no passkey offer.
+      requestPasskeyOffer(false);
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+      console.warn('[huwa] restore failed', errorCode(e) ?? '', e instanceof Error ? e.message : e);
+      if (isRestoreNotFound(e)) {
+        setPending({ ...p, hint: p.hint ?? (await cloudBackup.hintFor(p.words).catch(() => undefined)) });
+      } else {
+        const message = e instanceof Error ? e.message : 'Restauration impossible.';
+        if (pending) Alert.alert('Restauration impossible', message);
+        else setError(message);
+      }
+      setBusy(false);
     }
+  };
+
+  const restore = () => {
+    if (busy || !valid) return;
+    setPending(undefined);
+    return run({ words });
   };
 
   const restoreFromPasskey = async (immediate = true): Promise<void> => {
     if (busy) return;
     setBusy(true);
     setError(undefined);
-    setRetry(undefined);
+    setPending(undefined);
+    let login: PasskeyLogin;
     try {
-      await restoreWithPasskey({ immediate });
-      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      login = await readPasskeyAccount({ immediate });
     } catch (e) {
       setBusy(false);
-      if (isRestoreNotFound(e)) {
-        failed(e, () => restoreFromPasskey(immediate));
-        return;
-      }
       if (e instanceof PasskeyError && e.code === 'no-credentials' && immediate) {
         // Nothing on this iPhone: the system sheet can still use a passkey from a phone nearby (QR).
         Alert.alert('Aucune clé d’accès sur cet appareil', 'Tu peux utiliser une clé d’accès enregistrée sur un autre appareil à proximité.', [
@@ -76,10 +86,14 @@ export default function Restore() {
       }
       const message = passkeyMessage(e);
       if (message) {
+        const detail = passkeyDetail(e);
+        console.warn('[huwa] passkey restore', detail);
         Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
-        Alert.alert('Clé d’accès', message);
+        Alert.alert('Clé d’accès', detail ? `${message}\n\nDétail : ${detail}` : message);
       }
+      return;
     }
+    await run({ words: login.words, login });
   };
 
   const restoreFromCloud = async () => {
@@ -93,15 +107,8 @@ export default function Restore() {
       );
       return;
     }
-    setBusy(true);
-    setRetry(undefined);
-    try {
-      requestPasskeyOffer();
-      await social.restoreIdentity(saved);
-      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-    } catch (e) {
-      if (!failed(e, restoreFromCloud)) setError(e instanceof Error ? e.message : 'Restauration impossible.');
-    }
+    setPending(undefined);
+    await run({ words: saved, hint: await cloudBackup.loadHint().catch(() => undefined) });
   };
 
   const hint = unknown.length
@@ -112,10 +119,12 @@ export default function Restore() {
 
   return (
     <Screen title="J’ai déjà un compte">
-        {retry ? (
+        {pending ? (
           <RestoreOfflineNotice
             busy={busy}
-            onRetry={retry}
+            hint={pending.hint}
+            onRetry={() => run(pending)}
+            onRestoreWithoutData={(name) => run(pending, { allowNewHome: true, name })}
             onNewAccount={() => (router.canGoBack() ? router.back() : router.replace('/onboarding'))}
           />
         ) : null}

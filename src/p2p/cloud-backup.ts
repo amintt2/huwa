@@ -104,6 +104,15 @@ export const cloudBackup = {
     if (!cloudBackupSupported) return undefined;
     return parseHint(await HuwaKeychain!.get(HINT).catch(() => null));
   },
+  /**
+   * The hint of `words` when they are the phrase saved in iCloud Keychain (the hint is written
+   * next to that phrase, whatever path the words came from: typed, passkey or iCloud).
+   */
+  async hintFor(words: string[]): Promise<AccountHint | undefined> {
+    const saved = await cloudBackup.load().catch(() => undefined);
+    if (!saved || saved.join(' ').toLowerCase() !== words.map((w) => w.trim().toLowerCase()).join(' ')) return undefined;
+    return cloudBackup.loadHint().catch(() => undefined);
+  },
   /** Keeps the hint in step with the profile (name change, passkey created). No-op when the backup is off. */
   async syncHint(patch: HintPatch) {
     await hydrate();
