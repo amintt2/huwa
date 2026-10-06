@@ -125,18 +125,26 @@ pub fn summarize(runs: &[RunResult]) -> Vec<ScenarioSummary> {
         }
         let seeks_total = rs.iter().map(|r| r.player.seeks.len()).sum();
         let seek_timeouts = rs.iter().flat_map(|r| &r.player.seeks).filter(|s| s.ready_s.is_none()).count();
-        let mut errors: Vec<String> = rs
-            .iter()
-            .filter_map(|r| {
-                let first = r.player.first_error.as_ref().map(|e| format!("first HTTP error {e}"));
-                match (&r.error, first) {
-                    (Some(e), Some(f)) => Some(format!("rep {}: {e} ({f})", r.rep)),
-                    (Some(e), None) => Some(format!("rep {}: {e}", r.rep)),
-                    (None, Some(f)) => Some(format!("rep {}: {f}", r.rep)),
-                    (None, None) => None,
-                }
-            })
-            .collect();
+        // Same error text across repetitions is reported once, with its count.
+        let mut counts: BTreeMap<String, usize> = BTreeMap::new();
+        for r in rs {
+            let mut msgs: Vec<String> = Vec::new();
+            if let Some(e) = &r.error {
+                msgs.push(e.clone());
+            }
+            if let Some(f) = &r.player.first_error {
+                msgs.push(format!("first HTTP error {f}"));
+            }
+            for m in msgs {
+                let norm: String = m
+                    .split_whitespace()
+                    .map(|w| if w.starts_with("t=") && w.ends_with("s") { "t=…" } else { w })
+                    .collect::<Vec<_>>()
+                    .join(" ");
+                *counts.entry(norm).or_default() += 1;
+            }
+        }
+        let mut errors: Vec<String> = counts.into_iter().map(|(m, c)| format!("{c}/{} runs: {m}", rs.len())).collect();
         errors.truncate(6);
         out.push(ScenarioSummary {
             scenario: name.clone(),
