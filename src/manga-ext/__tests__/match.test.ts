@@ -8,8 +8,10 @@ import {
   candidateScore,
   chapterPlausibility,
   normalizeForMatch,
+  pickCatalogMatch,
   rankCandidates,
   searchQueries,
+  splitAltTitles,
   titleSimilarity,
   type SeriesTitles,
 } from '../match';
@@ -88,7 +90,6 @@ test('search queries: distinct, latin first, bounded', () => {
 
 // ---------- source title → catalog entry ----------
 
-import { pickCatalogMatch, splitAltTitles } from '../match';
 
 test('alternative titles listed in one string are split, odd titles kept whole', () => {
   const t = splitAltTitles(['SSM, The Lone Sword Master, 나 혼자 소드마스터']);

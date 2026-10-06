@@ -137,10 +137,11 @@ test('network: forced User-Agent on cleared hosts, challenge reported', async ()
   const fetcher: RawFetch = async (url, init) => {
     seen.push(init.headers);
     const blocked = url.includes('/blocked');
+    const headers: Record<string, string> = blocked ? { server: 'cloudflare', 'cf-ray': '1' } : { 'content-type': 'text/html' };
     return {
       url,
       status: blocked ? 403 : 200,
-      headers: blocked ? { server: 'cloudflare', 'cf-ray': '1' } : { 'content-type': 'text/html' },
+      headers,
       setCookies: [],
       body: new TextEncoder().encode(blocked ? CHALLENGE_PAGE : 'ok'),
     };
