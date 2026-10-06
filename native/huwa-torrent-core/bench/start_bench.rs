@@ -269,7 +269,15 @@ async fn proxy_conn(client: TcpStream, upstream: SocketAddr, link: Link, downlin
     let _ = client.set_nodelay(true);
     // TCP handshake of a real link: one RTT before the first byte can go out.
     tokio::time::sleep(link.one_way * 2).await;
-    let Ok(up) = TcpStream::connect(upstream).await else { return };
+    let t0 = Instant::now();
+    let up = match TcpStream::connect(upstream).await {
+        Ok(up) => up,
+        Err(e) => {
+            tracing::debug!(target: "bench::proxy", "upstream connect failed: {e}");
+            return;
+        }
+    };
+    tracing::debug!(target: "bench::proxy", ms = t0.elapsed().as_millis() as u64, peer = ?client.peer_addr().ok(), "proxied");
     let _ = up.set_nodelay(true);
     stats.conns.fetch_add(1, Ordering::Relaxed);
     let (mut cr, mut cw) = client.into_split();
@@ -308,10 +316,15 @@ async fn proxy_conn(client: TcpStream, upstream: SocketAddr, link: Link, downlin
     let uplink = link.uplink_free.clone();
     let dn_reader = tokio::spawn(async move {
         let mut buf = vec![0u8; 16 * 1024];
+        let mut first = true;
         loop {
             match ur.read(&mut buf).await {
                 Ok(0) | Err(_) => break,
                 Ok(n) => {
+                    if first {
+                        first = false;
+                        tracing::debug!(target: "bench::proxy", n, "first bytes from the seeder");
+                    }
                     let now = tokio::time::Instant::now();
                     let sent = {
                         let mut free = uplink.lock();
@@ -840,8 +853,10 @@ struct Bench {
     rt: tokio::runtime::Runtime,
     tracker_url: String,
     table: PeerTable,
-    seeder: Arc<Session>,
-    seeder_addr: SocketAddr,
+    /// The seeding session, renewed for every run (`fresh_seeder`): a seeder that lived through
+    /// earlier runs had learned their proxies' addresses (PEX from the leechers) and kept dialing
+    /// them — ports the OS hands out again to the next runs' proxies — and the next swarms broke.
+    seeder: Mutex<(Arc<Session>, SocketAddr)>,
     seed_dir: PathBuf,
     downlink: Option<Arc<Downlink>>,
     net: Arc<NetStats>,
@@ -872,8 +887,7 @@ impl Bench {
             rt,
             tracker_url,
             table,
-            seeder,
-            seeder_addr,
+            seeder: Mutex::new((seeder, seeder_addr)),
             seed_dir,
             downlink,
             net: Default::default(),
@@ -881,6 +895,22 @@ impl Bench {
             fixtures: Default::default(),
             run_id: AtomicUsize::new(0),
         }
+    }
+
+    /// A new seeding session (same torrents, restored from its fastresume state: no re-hash).
+    fn fresh_seeder(&self) {
+        let old = self.seeder.lock().0.clone();
+        let (session, addr) = self.rt.block_on(async {
+            old.stop().await;
+            drop(old);
+            let (s, a) = seeder_session(&self.args, &self.seed_dir).await;
+            // Restored torrents must be live before the swarm proxies point at the session.
+            for f in self.fixtures.lock().values().cloned().collect::<Vec<_>>() {
+                seed(&s, &f, &self.seed_dir).await;
+            }
+            (s, a)
+        });
+        *self.seeder.lock() = (session, addr);
     }
 
     /// Torrent for fixture `file` under the name `alias` (a hard link: a distinct info hash for
@@ -896,7 +926,8 @@ impl Bench {
         }
         let f = self.rt.block_on(async {
             let f = torrent_for(&self.args, &link).await;
-            seed(&self.seeder, &f, &self.seed_dir).await;
+            let seeder = self.seeder.lock().0.clone();
+            seed(&seeder, &f, &self.seed_dir).await;
             f
         });
         self.fixtures.lock().insert(alias.to_string(), f.clone());
@@ -905,7 +936,8 @@ impl Bench {
 
     fn swarm_for(&self, f: &Fixture, p: &Profile) -> Swarm {
         let mut rng = Rng(self.rng.lock().next() | 1);
-        let swarm = self.rt.block_on(spawn_swarm(p, self.seeder_addr, self.downlink.clone(), self.net.clone(), &mut rng));
+        let addr = self.seeder.lock().1;
+        let swarm = self.rt.block_on(spawn_swarm(p, addr, self.downlink.clone(), self.net.clone(), &mut rng));
         self.table.lock().insert(f.hex.clone(), swarm.peers.clone());
         swarm
     }
@@ -980,6 +1012,7 @@ impl Bench {
     /// One start / resume / seek / play run on a fresh engine.
     fn run_one(&self, profile_name: &str, file: &str, scenario: &str, rep: usize) -> RunResult {
         let p = profile(profile_name);
+        self.fresh_seeder();
         let f = self.fixture(file, file);
         let _swarm = self.swarm_for(&f, &p);
         let dir = self.fresh_dir("run");
@@ -992,7 +1025,7 @@ impl Bench {
         let engine = self.engine(&dir);
         let mut r = RunResult { profile: p.name.clone(), file: file.into(), scenario: scenario.into(), rep, ..Default::default() };
         r.net_conns_before = self.net.conns.load(Ordering::Relaxed);
-        r.seeder_peers_before = self.seeder.with_torrents(|it| it.map(|(_, h)| h.stats().live.map(|l| l.snapshot.peer_stats.live).unwrap_or(0)).sum());
+        r.seeder_peers_before = self.seeder.lock().0.with_torrents(|it| it.map(|(_, h)| h.stats().live.map(|l| l.snapshot.peer_stats.live).unwrap_or(0)).sum());
         r.launch_ms = t_launch.elapsed().as_millis() as u64;
         r.disk_before_mib = disk_before;
 
@@ -1456,6 +1489,7 @@ fn storm(b: &Bench, _results: &mut Vec<RunResult>, mut out: Option<&mut std::fs:
         plan.push((format!("storm{i:02}-{file}"), file, prof));
     }
     plan.push(plan[0].clone());
+    b.fresh_seeder();
     // Fixtures and swarms before the clock starts.
     let mut swarms = Vec::new();
     for (alias, file, prof) in &plan {
