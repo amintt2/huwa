@@ -21,7 +21,7 @@ use tracing::{debug, warn};
 
 use crate::{
     engine::{Engine, Entry, ServerHandle},
-    priorities::classify_request,
+    priorities::{classify_request, ContainerIndex, PlaybackIntent},
     range::{parse_range, RangeSpec},
     streaming::TrackedReader,
 };
@@ -89,10 +89,23 @@ pub fn mime_for(name: &str) -> &'static str {
     }
 }
 
-/// MP4 / MOV may keep their index (`moov`) at the end of the file, and the player needs it before
-/// the first frame. MKV / WebM Cues only serve seeking.
-pub fn index_before_first_frame(name: &str) -> bool {
-    matches!(mime_for(name), "video/mp4" | "video/quicktime")
+/// What the player reads at the end of the file before its first frame (see `ContainerIndex`).
+pub fn container_index(name: &str) -> ContainerIndex {
+    match mime_for(name) {
+        "video/mp4" | "video/quicktime" => ContainerIndex::MoovAtEnd,
+        "video/x-matroska" | "video/webm" => ContainerIndex::MatroskaTail,
+        _ => ContainerIndex::Other,
+    }
+}
+
+/// The `{file}` path segment: `3`, `3.mkv`, `auto` or `auto.mkv` (the extension only informs the
+/// app's player choice, see `Engine::url_for`). `Some(None)` = auto, `None` = malformed.
+pub fn parse_file(segment: &str) -> Option<Option<usize>> {
+    let idx = segment.split_once('.').map_or(segment, |(i, _)| i);
+    if idx == "auto" {
+        return Some(None);
+    }
+    idx.parse::<usize>().ok().map(Some)
 }
 
 /// Keeps `active_streams` accurate for the lifetime of a response body.
@@ -121,7 +134,16 @@ impl<R: AsyncRead + Unpin> AsyncRead for GuardedReader<R> {
         cx: &mut std::task::Context<'_>,
         buf: &mut tokio::io::ReadBuf<'_>,
     ) -> std::task::Poll<std::io::Result<()>> {
-        std::pin::Pin::new(&mut self.inner).poll_read(cx, buf)
+        let before = buf.filled().len();
+        let res = std::pin::Pin::new(&mut self.inner).poll_read(cx, buf);
+        let n = (buf.filled().len() - before) as u64;
+        let entry = &self._guard.entry;
+        if entry.timeline.on_bytes(n) {
+            // First bytes of this start: how many peers were sending by then.
+            let peers = entry.handle().and_then(|h| h.stats().live.map(|l| l.snapshot.peer_stats.live)).unwrap_or(0);
+            entry.timeline.set_peers_at_first_byte(peers);
+        }
+        res
     }
 }
 
@@ -135,6 +157,7 @@ async fn stream_file(
         return text(StatusCode::NOT_FOUND, "unknown torrent");
     };
     entry.touch();
+    entry.timeline.on_request();
 
     let timeout = Duration::from_secs(engine.config().resolve_timeout_secs);
     let deadline = tokio::time::Instant::now() + timeout;
@@ -154,16 +177,13 @@ async fn stream_file(
     }
 
     // Resolve the file index.
-    let file_idx = if file == "auto" {
-        match *entry.selected_file.read() {
+    let file_idx = match parse_file(&file) {
+        Some(Some(i)) => i,
+        Some(None) => match *entry.selected_file.read() {
             Some(i) => i,
             None => return text(StatusCode::NOT_FOUND, "no playable file in torrent"),
-        }
-    } else {
-        match file.parse::<usize>() {
-            Ok(i) => i,
-            Err(_) => return text(StatusCode::BAD_REQUEST, "bad file index"),
-        }
+        },
+        None => return text(StatusCode::BAD_REQUEST, "bad file index"),
     };
 
     let file_name = handle
@@ -214,6 +234,9 @@ async fn stream_file(
     let first_byte_sent = entry.first_byte_sent.load(Ordering::Relaxed);
     let last_end = entry.last_served_end.load(Ordering::Relaxed);
     let intent = classify_request(start, to_send, len, first_byte_sent, (last_end > 0).then_some(last_end));
+    if intent == PlaybackIntent::ContainerMetadata {
+        entry.timeline.on_tail_request();
+    }
     let cache_limit = engine.config().cache_limit_bytes;
     let metered = entry.metered.load(Ordering::Relaxed);
     let playback = engine.streaming.on_request(
@@ -225,7 +248,7 @@ async fn stream_file(
         intent,
         cache_limit,
         metered,
-        index_before_first_frame(&file_name),
+        container_index(&file_name),
     );
     debug!(intent = intent.as_str(), start, to_send, metered, "priority intent");
     // Our stream is registered (opened above): a new window narrows librqbit to the stream queues
@@ -268,8 +291,38 @@ mod tests {
     }
 
     #[test]
-    fn only_mp4_index_is_fetched_with_the_head() {
-        assert!(index_before_first_frame("a.mp4") && index_before_first_frame("b.MOV") && index_before_first_frame("c.m4v"));
-        assert!(!index_before_first_frame("Show - 01.mkv") && !index_before_first_frame("x.webm"));
+    fn container_index_read_before_the_first_frame() {
+        for n in ["a.mp4", "b.MOV", "c.m4v"] {
+            assert_eq!(container_index(n), ContainerIndex::MoovAtEnd, "{n}");
+        }
+        // mpv reads an mkvmerge file's Cues + Tags (after the last cluster) before playing.
+        assert_eq!(container_index("Show - 01.mkv"), ContainerIndex::MatroskaTail);
+        assert_eq!(container_index("x.webm"), ContainerIndex::MatroskaTail);
+        assert_eq!(container_index("y.avi"), ContainerIndex::Other);
+    }
+
+    #[test]
+    fn file_segment_with_or_without_extension() {
+        assert_eq!(parse_file("3"), Some(Some(3)));
+        assert_eq!(parse_file("3.mkv"), Some(Some(3)));
+        assert_eq!(parse_file("auto"), Some(None));
+        assert_eq!(parse_file("auto.mp4"), Some(None));
+        assert_eq!(parse_file("x.mkv"), None);
+        assert_eq!(parse_file(""), None);
+    }
+
+    #[test]
+    fn stream_urls_carry_the_extension_when_known() {
+        let h = "0123456789abcdef0123456789abcdef01234567";
+        assert_eq!(crate::engine::url_of(8080, h, Some(2), Some("mkv")), format!("http://127.0.0.1:8080/{h}/2.mkv"));
+        assert_eq!(crate::engine::url_of(8080, h, None, None), format!("http://127.0.0.1:8080/{h}/auto"));
+        assert_eq!(crate::engine::video_ext("[Grp] Show - 01 [1080p].MKV"), Some("mkv"));
+        assert_eq!(crate::engine::video_ext("readme.txt"), None);
+        // Every URL the engine builds is understood by the route.
+        for (file, ext) in [(Some(2), Some("mkv")), (Some(0), None), (None, Some("mp4")), (None, None)] {
+            let url = crate::engine::url_of(1, h, file, ext);
+            let seg = url.rsplit('/').next().unwrap();
+            assert_eq!(parse_file(seg), Some(file), "{url}");
+        }
     }
 }

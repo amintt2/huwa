@@ -237,6 +237,40 @@ fn selection_follows_the_window_and_the_network() {
     assert_eq!(f.engine.status(&f.hex).unwrap().state, "finished");
 }
 
+/// The start timeline (status `start`) follows the request path, and a replay is a new start.
+#[test]
+fn start_timeline_is_reported_and_reset_by_a_replay() {
+    let f = fixture("timeline", 8 * MIB);
+    assert!(f.path.ends_with("/0.mkv"), "URL carries the container: {}", f.path);
+    let mut c = connect(f.port);
+    let r = request(&mut c, &f.path, Some("bytes=0-4095"));
+    assert_eq!((r.status, r.body.len()), (206, 4096));
+    let tail = format!("bytes={}-{}", f.data.len() - 1024, f.data.len() - 1);
+    assert_eq!(request(&mut c, &f.path, Some(&tail)).status, 206);
+
+    let st = f.engine.status(&f.hex).unwrap();
+    let t = &st.start;
+    assert_eq!(t.meta_from, "probe");
+    assert!(t.meta_ms.is_some() && t.first_request_ms.is_some() && t.first_byte_ms.is_some(), "{t:?}");
+    assert!(t.first_request_ms.unwrap() <= t.first_byte_ms.unwrap());
+    assert_eq!((t.requests, t.tail_requests), (2, 1));
+    assert_eq!(t.bytes_served, 4096 + 1024);
+    assert!(t.started_at > 0);
+    let json = serde_json::to_value(&st).unwrap();
+    assert!(json["start"]["firstByteMs"].is_u64() && json["start"]["metaFrom"] == "probe", "{json}");
+
+    // Played again: same torrent, new start.
+    let resp = f
+        .engine
+        .start_stream(StartStreamRequest { info_hash: f.hex.clone(), file_idx: None, sources: vec![], name: None, metered: false })
+        .unwrap();
+    assert!(resp.url.ends_with("/0.mkv"), "{}", resp.url);
+    let t = f.engine.status(&f.hex).unwrap().start;
+    assert_eq!((t.meta_from, t.meta_ms, t.bytes_served, t.requests, t.first_byte_ms), ("engine", Some(t.meta_ms.unwrap()), 0, 0, None));
+    assert!(request(&mut c, &f.path, Some("bytes=0-1")).status == 206);
+    assert_eq!(f.engine.status(&f.hex).unwrap().start.bytes_served, 2);
+}
+
 /// Loopback throughput of a fully available file (body chunking / `FileStream` read path).
 /// `cargo test --release --test local_stream -- --ignored --nocapture`
 #[test]

@@ -10,7 +10,9 @@
 //! - `engine`: session, torrent registry, cache quota, persistence of our own metadata.
 //! - `probe`: parallel swarm probes (metadata + answering peers, no piece downloaded).
 //! - `server`: axum router bound to 127.0.0.1:<random port>.
-//! - `streaming`: read-ahead walker, container-index prefetch, stall detection and recovery.
+//! - `streaming`: read-ahead walker, anchor stream, container-index prefetch, stall detection and
+//!   recovery.
+//! - `timeline`: start timeline measured on the device (metadata, first peer / piece / byte…).
 //! - `trackers`: public UDP/HTTPS trackers added to magnets that carry few.
 //! - `api`: JSON dispatch used by both FFI flavours.
 //! - `ffi`: C ABI (iOS / static library). `jni_android`: JNI exports (Android).
@@ -27,6 +29,7 @@ pub mod probe;
 pub mod range;
 pub mod server;
 pub mod streaming;
+pub mod timeline;
 pub mod trackers;
 
 /// Start-path timeline simulation (fake swarms), see the module docs.
