@@ -5,8 +5,9 @@ import { ActivityIndicator, Alert, FlatList, ScrollView, StyleSheet, TextInput, 
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { SourceResultsRail } from '@/components/paperback';
-import { ErrorState, FilterChip, LoadingView, ScreenHeader, StateView } from '@/components/states';
-import { Cover, Press, TypeBadge, Txt } from '@/components/ui';
+import { SkeletonPosters } from '@/components/feedback';
+import { ErrorState, FilterChip, StateView } from '@/components/states';
+import { Cover, IconButton, Press, TypeBadge, Txt } from '@/components/ui';
 import { palette } from '@/data/anilist';
 import {
   GENRES,
@@ -95,13 +96,17 @@ export default function Search() {
 
   const header = (
     <View style={{ gap: S.md, paddingBottom: S.md }}>
+      <View style={styles.searchRow}>
+      <IconButton icon="chevron-back" label={t('common.back')} size={40} onPress={() => router.back()} />
       <View style={styles.inputWrap}>
         <Ionicons name="search" size={18} color={C.text2} />
         <TextInput
           value={params.query}
           onChangeText={(query) => update({ query })}
           placeholder={t('search.placeholder')}
-          placeholderTextColor={C.text2}
+          placeholderTextColor={C.text3}
+          selectionColor={C.accentText}
+          keyboardAppearance="dark"
           autoFocus
           autoCorrect={false}
           returnKeyType="search"
@@ -110,6 +115,7 @@ export default function Search() {
           style={styles.input}
         />
         {loading && results !== null && <ActivityIndicator size="small" color={C.text2} />}
+      </View>
       </View>
 
       <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.chips} keyboardShouldPersistTaps="handled">
@@ -166,8 +172,7 @@ export default function Search() {
   );
 
   return (
-    <View style={{ flex: 1, backgroundColor: C.bg, paddingTop: insets.top + S.sm }}>
-      <ScreenHeader title={t('search.title')} />
+    <View style={{ flex: 1, backgroundColor: C.bg, paddingTop: insets.top + S.xs }}>
       <FlatList
         data={failed ? [] : (results ?? [])}
         keyExtractor={(m) => `${m.type}-${m.anilistId}`}
@@ -181,7 +186,9 @@ export default function Search() {
           failed ? (
             <ErrorState onRetry={() => setAttempt((n) => n + 1)} />
           ) : loading ? (
-            <LoadingView />
+            <View style={{ paddingHorizontal: S.lg }}>
+              <SkeletonPosters count={9} width={cardW} height={Math.round(cardW * 1.42)} />
+            </View>
           ) : (
             <StateView icon="search-outline" title={t('search.empty')} body={t('search.emptyBody')} />
           )
@@ -202,13 +209,13 @@ export default function Search() {
               )}
               {m.score ? (
                 <View style={styles.score}>
-                  <Ionicons name="star" size={9} color={C.accentText} />
-                  <Txt v="caption" color={C.text} style={{ fontSize: 10 }}>{(m.score / 10).toFixed(1)}</Txt>
+                  <Ionicons name="star" size={9} color={C.star} />
+                  <Txt v="footnote" color={C.text} tabular style={{ fontSize: 11, fontWeight: '700' }}>{(m.score / 10).toFixed(1)}</Txt>
                 </View>
               ) : null}
             </Cover>
-            <Txt v="caption" color={C.text} numberOfLines={2} style={{ fontSize: 11, lineHeight: 14, letterSpacing: 0.3 }}>{m.title}</Txt>
-            <Txt v="small" numberOfLines={1} style={{ fontSize: 11 }}>
+            <Txt v="label" numberOfLines={2} style={{ fontSize: 13, lineHeight: 16 }}>{m.title}</Txt>
+            <Txt v="footnote" color={C.text3} tabular numberOfLines={1}>
               {m.unavailable ? t('search.notAired') : [m.year, m.status ? t(`media.${m.status}`) : null].filter(Boolean).join(' · ')}
             </Txt>
           </Press>
@@ -219,14 +226,15 @@ export default function Search() {
 }
 
 const styles = StyleSheet.create({
+  searchRow: { flexDirection: 'row', alignItems: 'center', gap: S.sm, paddingHorizontal: S.lg },
   inputWrap: {
-    marginHorizontal: S.lg, flexDirection: 'row', alignItems: 'center', gap: S.sm, minHeight: 48,
-    paddingHorizontal: 14, borderRadius: R.card, borderCurve: 'continuous', backgroundColor: C.surface,
-    borderWidth: 1, borderColor: C.border,
+    flex: 1, flexDirection: 'row', alignItems: 'center', gap: S.sm, minHeight: 44,
+    paddingHorizontal: 14, borderRadius: R.pill, borderCurve: 'continuous', backgroundColor: C.surface,
+    borderWidth: 1, borderColor: C.border, boxShadow: 'inset 0px 1px 2px rgba(0,0,0,0.35)',
   },
   input: { flex: 1, color: C.text, fontSize: 16, ...F.medium, paddingVertical: 10 },
   chips: { paddingHorizontal: S.lg, gap: S.sm, alignItems: 'center' },
-  rowLabel: { fontSize: 10, marginRight: 2 },
+  rowLabel: { marginRight: 2 },
   sep: { width: 1, height: 20, backgroundColor: C.border, marginHorizontal: 2 },
   opening: { backgroundColor: 'rgba(5,7,13,0.55)', alignItems: 'center', justifyContent: 'center' },
   score: {
