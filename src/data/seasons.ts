@@ -519,7 +519,7 @@ export type Composed = {
   mappings: Record<string, Mapping>;
   /** Why an entry got no titles (debug, tests). */
   rejected: Record<string, string>;
-  /** The current entry's absolute numbering does not line up: the anime-kitsu table may fix it. */
+  /** The current entry uses absolute numbering: the anime-kitsu table is checked first. */
   wantPairs: boolean;
 };
 
@@ -547,6 +547,15 @@ export function composeSeasons({ entries, currentId, shows, pairs, today }: Comp
       rejected[e.id] = 'shared';
       continue;
     }
+    // The anime-kitsu table first (the numbering Torrentio reads): an absolute listing can line
+    // up by chance (AniList one episode behind while one episode sits in TheTVDB's specials).
+    if (e.id === currentId) {
+      wantPairs = true;
+      if (pairs?.length && verifyPairs(pairs, show, e.episodes)) {
+        mappings[e.id] = { runs: runsFromPairs(pairs, e.episodes), source: 'pairs' };
+        continue;
+      }
+    }
     const runs = cumulativeRuns(show, e.episodes);
     const v = verifyRuns(e, runs, show, { today, absolute: true });
     if (v.ok) {
@@ -554,12 +563,6 @@ export function composeSeasons({ entries, currentId, shows, pairs, today }: Comp
       continue;
     }
     rejected[e.id] = v.reason ?? 'mismatch';
-    if (v.reason !== 'count' || e.id !== currentId) continue;
-    wantPairs = true;
-    if (pairs?.length && verifyPairs(pairs, show, e.episodes)) {
-      mappings[e.id] = { runs: runsFromPairs(pairs, e.episodes), source: 'pairs' };
-      delete rejected[e.id];
-    }
   }
   // Two entries on the same TheTVDB episodes: at least one is wrong, neither is trusted.
   const owner = new Map<string, string>();

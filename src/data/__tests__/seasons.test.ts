@@ -293,7 +293,8 @@ test('Detective Conan / Naruto Shippuden: exact absolute listing → sub-seasons
   const e = entry('al235', 'Detective Conan', 134, { imdb: 'tt0131179' }, '1996-01-08', true);
   const out = composeSeasons({ entries: [e], currentId: 'al235', shows: { tt0131179: conan.eps }, today: TODAY });
   assert.equal(out.mappings.al235?.source, 'absolute');
-  assert.equal(out.wantPairs, false);
+  // The anime-kitsu table is still asked for (checked first once loaded); absolute meanwhile.
+  assert.equal(out.wantPairs, true);
   assert.deepEqual(out.seasons.map((s) => [s.label, s.parts[0].from, s.parts[0].to]), [
     ['Saison 1', 1, 28], ['Saison 2', 29, 54], ['Saison 3', 55, 82], ['Saison 4', 83, 106], ['Saison 5', 107, 134],
   ]);
