@@ -10,7 +10,8 @@ import { useAddons } from '@/addons/registry';
 import { closeSheet } from '@/components/addon-install';
 import { useInstallParam } from '@/components/install-target';
 import { CheckGroup, CheckRow, Notice, type RowStatus } from '@/components/pack-rows';
-import { Button, IconButton, Txt } from '@/components/ui';
+import { SheetTitle } from '@/components/screen';
+import { Button, Txt } from '@/components/ui';
 import { extensionsSupported, useMangaExt } from '@/manga-ext/registry';
 import type { Pack, PackRef } from '@/packs/format';
 import { hostOf, installManga, installVideo, loadPack, mangaInstalled, PACK_NOTICE, videoInstalled } from '@/packs/install';
@@ -81,9 +82,8 @@ export default function PackScreen() {
   return (
     <View style={{ flex: 1, backgroundColor: C.surface }}>
       <ScrollView contentContainerStyle={[styles.wrap, { paddingBottom: S.xxl + insets.bottom }]} keyboardShouldPersistTaps="handled">
-        <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-          <Txt v="section" style={{ flex: 1 }}>Pack d’extensions</Txt>
-          <IconButton icon="close" label="Fermer" tone="solid" onPress={closeSheet} />
+        <View style={{ marginHorizontal: -S.lg, marginTop: -S.lg }}>
+          <SheetTitle title="Pack d’extensions" onClose={closeSheet} />
         </View>
 
         {!ref && (

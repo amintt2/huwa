@@ -17,7 +17,8 @@ import { closeSheet } from '@/components/addon-install';
 import { capabilities, Card, hostOf, installedWhat, LinkRow, logoOf, PreviewCard, TrustNote, type PreviewLine } from '@/components/extension-ui';
 import { Scanner } from '@/components/link-prompt';
 import { RecommendedExtensions } from '@/components/recommended-extensions';
-import { Button, IconButton, Press, Txt } from '@/components/ui';
+import { SheetTitle } from '@/components/screen';
+import { Button, Press, Txt } from '@/components/ui';
 import { fetchRepo, type RepoEntry } from '@/manga-ext/registry';
 import { classifyLink, type Pack, type PastedLink } from '@/packs/format';
 import { loadPack } from '@/packs/install';
@@ -131,9 +132,8 @@ export default function ExtensionAdd() {
   return (
     <View style={styles.screen}>
       <ScrollView contentContainerStyle={[styles.wrap, { paddingBottom: insets.bottom + S.xxl }]} keyboardShouldPersistTaps="handled">
-        <View style={{ flexDirection: 'row', alignItems: 'center', gap: S.md }}>
-          <Txt v="title" style={{ flex: 1, fontSize: 22 }} accessibilityRole="header">Ajouter une extension</Txt>
-          <IconButton icon="close" label="Fermer" tone="solid" onPress={closeSheet} />
+        <View style={{ marginHorizontal: -S.lg, marginTop: -S.lg }}>
+          <SheetTitle title="Ajouter une extension" onClose={closeSheet} />
         </View>
         <Txt v="small" style={{ lineHeight: 19, marginTop: -S.sm }}>
           Colle n’importe quel lien : addon Stremio, dépôt Paperback ou pack d’extensions. Huwa reconnaît ce que c’est et te le montre avant d’installer.
@@ -242,7 +242,7 @@ export default function ExtensionAdd() {
 
             {!manga && (
               <View style={{ gap: S.sm }}>
-                <Txt v="caption" style={{ paddingHorizontal: S.xs }}>Recommandées</Txt>
+                <Txt v="caption" accessibilityRole="header" style={{ paddingHorizontal: S.md }}>Recommandées</Txt>
                 <RecommendedExtensions />
                 <Txt v="small" style={{ paddingHorizontal: S.xs, lineHeight: 18 }}>Sous-titres, catalogues et fiches : elles ne fournissent aucune vidéo.</Txt>
               </View>
@@ -299,12 +299,16 @@ const styles = StyleSheet.create({
   wrap: { padding: S.lg, gap: S.lg },
   field: {
     flexDirection: 'row', alignItems: 'center', gap: S.sm, minHeight: 54, paddingHorizontal: S.md,
-    borderRadius: R.card, borderCurve: 'continuous', backgroundColor: C.elevated, borderWidth: 1, borderColor: C.borderStrong,
+    borderRadius: R.control, borderCurve: 'continuous', backgroundColor: C.elevated, borderWidth: 1, borderColor: C.borderStrong,
+    boxShadow: 'inset 0px 1px 2px rgba(0,0,0,0.35)',
   },
   input: { flex: 1, minHeight: 52, color: C.text, ...F.medium, fontSize: 16 },
   status: {
     flexDirection: 'row', alignItems: 'center', gap: S.sm, padding: S.md, borderRadius: R.card, borderCurve: 'continuous',
     backgroundColor: C.elevated, borderWidth: 1, borderColor: C.border,
   },
-  doneIcon: { width: 72, height: 72, borderRadius: 36, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(61,220,151,0.14)' },
+  doneIcon: {
+    width: 72, height: 72, borderRadius: 36, alignItems: 'center', justifyContent: 'center', backgroundColor: C.elevated,
+    borderWidth: 1, borderColor: 'rgba(61,220,151,0.35)', boxShadow: '0px 0px 0px 10px rgba(61,220,151,0.10)', marginBottom: S.sm,
+  },
 });

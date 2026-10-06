@@ -2,10 +2,10 @@ import Ionicons from '@expo/vector-icons/Ionicons';
 import * as Haptics from 'expo-haptics';
 import { router } from 'expo-router';
 import { useEffect, useMemo, useState } from 'react';
-import { Pressable, ScrollView, StyleSheet, View } from 'react-native';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { Pressable, StyleSheet, View } from 'react-native';
 
-import { DANGER, Empty, Loading, ScreenHeader, WARN } from '@/components/social';
+import { DANGER, Empty, Loading, WARN } from '@/components/social';
+import { Screen } from '@/components/screen';
 import { Button, Txt } from '@/components/ui';
 import { social } from '@/p2p/hooks';
 import { recoveryPhrase } from '@/p2p/phrase';
@@ -33,7 +33,6 @@ function quiz(words: string[]) {
 }
 
 export default function Phrase() {
-  const insets = useSafeAreaInsets();
   const [words, setWords] = useState<string[] | null>();
   const [step, setStep] = useState<Step>('intro');
   const [revealed, setRevealed] = useState(false);
@@ -155,9 +154,7 @@ export default function Phrase() {
     );
 
   return (
-    <View style={{ flex: 1, backgroundColor: C.bg }}>
-      <ScreenHeader title="Phrase de récupération" />
-      <ScrollView contentContainerStyle={{ paddingHorizontal: S.lg, paddingBottom: insets.bottom + S.xxl, gap: S.xl }}>
+    <Screen title="Phrase de récupération">
         {step !== 'done' && words && (
           <View style={styles.warn}>
             <Ionicons name="warning-outline" size={16} color={WARN} />
@@ -165,8 +162,7 @@ export default function Phrase() {
           </View>
         )}
         {body}
-      </ScrollView>
-    </View>
+      </Screen>
   );
 }
 

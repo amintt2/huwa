@@ -1,19 +1,21 @@
-import Ionicons from '@expo/vector-icons/Ionicons';
 import * as Haptics from 'expo-haptics';
 import { router, useLocalSearchParams } from 'expo-router';
 import { useMemo } from 'react';
-import { ActionSheetIOS, Alert, Platform, ScrollView, Share, StyleSheet, View } from 'react-native';
+import { ActionSheetIOS, Alert, Platform, Share, StyleSheet, View } from 'react-native';
 import QRCode from 'react-native-qrcode-svg';
+import Animated from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { HistoryRow } from '@/components/history';
 import { reportAccount } from '@/components/report';
-import { Avatar, BadgeGrid, Empty, Loading, RankCard, ScreenHeader, profileLink, shortKey } from '@/components/social';
+import { Callout } from '@/components/feedback';
+import { BAR_H, NavBar, useScreenScroll } from '@/components/screen';
+import { Avatar, BadgeGrid, Empty, Loading, RankCard, profileLink, shortKey } from '@/components/social';
 import { Button, Chip, IconButton, Txt } from '@/components/ui';
 import { social, useBlocked, useMe, useProfile, useRank } from '@/p2p/hooks';
 import { setPrefs, usePrefs } from '@/p2p/prefs';
 import { fingerprint, isPublicKey } from '@/social/identity';
-import { C, R, S } from '@/theme/tokens';
+import { C, R, S, SHADOW } from '@/theme/tokens';
 
 const since = (t: number) => (t ? new Date(t).toLocaleDateString('fr-FR', { month: 'long', year: 'numeric' }) : undefined);
 
@@ -21,6 +23,7 @@ export default function PublicProfile() {
   const { key: raw } = useLocalSearchParams<{ key: string }>();
   const key = (raw ?? '').toLowerCase();
   const insets = useSafeAreaInsets();
+  const { y, onScroll } = useScreenScroll();
   const me = useMe();
   const { profile, loading } = useProfile(key);
   const r = useRank(key);
@@ -77,9 +80,9 @@ export default function PublicProfile() {
 
   if (!valid)
     return (
-      <View style={{ flex: 1, backgroundColor: C.bg }}>
-        <ScreenHeader title="Profil" />
+      <View style={{ flex: 1, backgroundColor: C.bg, paddingTop: insets.top + BAR_H, justifyContent: 'center', paddingBottom: 120 }}>
         <Empty icon="help-circle-outline" title="Lien de profil invalide" text="Ce lien ne contient pas de clé Huwa valide." />
+        <NavBar alwaysSolid />
       </View>
     );
 
@@ -87,24 +90,20 @@ export default function PublicProfile() {
 
   return (
     <View style={{ flex: 1, backgroundColor: C.bg }}>
-      <ScreenHeader
-        title=""
-        right={
-          <View style={{ flexDirection: 'row', gap: S.sm }}>
-            <IconButton icon="share-outline" label="Partager le profil" onPress={share} />
-            {!isMe && <IconButton icon="ellipsis-horizontal" label="Plus d’actions" onPress={more} />}
-          </View>
-        }
-      />
-      <ScrollView contentContainerStyle={{ paddingHorizontal: S.lg, paddingBottom: insets.bottom + S.xxl, gap: S.xl }}>
+      <Animated.ScrollView
+        onScroll={onScroll}
+        scrollEventThrottle={16}
+        contentContainerStyle={{ paddingTop: insets.top + BAR_H, paddingHorizontal: S.lg, paddingBottom: insets.bottom + S.xxl, gap: S.xl }}>
         <View style={{ alignItems: 'center', gap: S.sm }}>
-          <Avatar seed={key} name={name} size={88} />
-          <Txt v="title" style={{ textAlign: 'center' }}>{name}</Txt>
+          <View style={styles.avatarRing}>
+            <Avatar seed={key} name={name} size={92} />
+          </View>
+          <Txt v="title" accessibilityRole="header" style={{ textAlign: 'center', marginTop: S.xs }}>{name}</Txt>
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: S.sm, flexWrap: 'wrap', justifyContent: 'center' }}>
             <Txt v="small" style={{ fontVariant: ['tabular-nums'] }}>{fp}</Txt>
             {petname && profile?.name && <Txt v="small">{`· se fait appeler ${profile.name}`}</Txt>}
-            {isMe && <Chip kind="accent" label="TOI" />}
-            {following && <Chip kind="accent" label="SUIVI" />}
+            {isMe && <Chip kind="accent" label="Toi" />}
+            {following && <Chip kind="accent" label="Suivi" />}
           </View>
           {profile?.bio ? <Txt v="body" style={{ textAlign: 'center' }}>{profile.bio}</Txt> : null}
           {since(profile?.createdAt ?? 0) ? <Txt v="small">{`Sur Huwa depuis ${since(profile!.createdAt)}`}</Txt> : null}
@@ -114,10 +113,7 @@ export default function PublicProfile() {
         </View>
 
         {blocked && (
-          <View style={styles.blocked}>
-            <Ionicons name="ban" size={16} color="#FF6B6B" />
-            <Txt v="small" style={{ flex: 1 }}>Tu as bloqué ce compte. Ses commentaires sont masqués.</Txt>
-          </View>
+          <Callout icon="ban" tone="danger">Tu as bloqué ce compte. Ses commentaires sont masqués.</Callout>
         )}
 
         {isMe ? (
@@ -181,13 +177,23 @@ export default function PublicProfile() {
             </View>
           </View>
         )}
-      </ScrollView>
+      </Animated.ScrollView>
+      <NavBar
+        title={name}
+        y={y}
+        right={
+          <>
+            <IconButton icon="share-outline" label="Partager le profil" size={40} onPress={share} />
+            {!isMe && <IconButton icon="ellipsis-horizontal" label="Plus d’actions" size={40} onPress={more} />}
+          </>
+        }
+      />
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  blocked: { flexDirection: 'row', alignItems: 'center', gap: S.sm, padding: S.md, borderRadius: R.control, backgroundColor: 'rgba(255,107,107,0.10)' },
-  qrCard: { flexDirection: 'row', alignItems: 'center', gap: S.lg, padding: S.md, borderRadius: R.card, backgroundColor: C.surface, borderWidth: 1, borderColor: C.border },
+  avatarRing: { padding: 4, borderRadius: 52, backgroundColor: C.surface, borderWidth: 1, borderColor: C.border, boxShadow: `${SHADOW.raised}, 0px 0px 0px 8px rgba(47,107,235,0.08)` },
+  qrCard: { flexDirection: 'row', alignItems: 'center', gap: S.lg, padding: S.md, borderRadius: R.card, borderCurve: 'continuous', backgroundColor: C.surface, borderWidth: 1, borderColor: C.border, boxShadow: `${SHADOW.raised}, ${SHADOW.inset}` },
   qr: { borderRadius: R.control, overflow: 'hidden' },
 });

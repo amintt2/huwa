@@ -11,13 +11,13 @@ import { EXTENSIONS_SITE } from '@/addons/recommended';
 import { isStoreBuild } from '@/config/channel';
 import { useT, type Key } from '@/i18n';
 import { setSetting, useSettings } from '@/settings/settings';
-import { BRIDGE, C, S } from '@/theme/tokens';
+import { BRIDGE, C, S, SHADOW } from '@/theme/tokens';
 
 import { LanguagePrefs } from './language-prefs';
 import { LinkPrompt } from './link-prompt';
 import { RecommendedExtensions } from './recommended-extensions';
 import { StatsOptIn } from './stats-opt-in';
-import { FilterChip } from './states';
+import { Segmented } from './states';
 import { Button, Txt, type IconName } from './ui';
 
 type Page = { icon: IconName; title: Key; body: Key; extensions?: boolean; prefs?: boolean; stats?: boolean };
@@ -50,11 +50,14 @@ export function Onboarding() {
     <View style={{ flex: 1, backgroundColor: C.bg }}>
       <LinearGradient colors={['#0F1A33', C.bg]} style={StyleSheet.absoluteFill} />
       <View style={[styles.top, { paddingTop: insets.top + S.sm }]}>
-        <View style={{ flexDirection: 'row', gap: S.sm }}>
-          <FilterChip label="FR" selected={lang === 'fr'} onPress={() => setSetting('lang', 'fr')} />
-          <FilterChip label="EN" selected={lang === 'en'} onPress={() => setSetting('lang', 'en')} />
-        </View>
-        {page < PAGES.length - 1 && <Button small variant="ghost" label={t('onb.skip')} onPress={done} />}
+        <Segmented
+          accessibilityLabel="Langue"
+          style={{ width: 104 }}
+          value={lang}
+          onChange={(v) => setSetting('lang', v)}
+          options={[{ value: 'fr', label: 'FR' }, { value: 'en', label: 'EN' }]}
+        />
+        {page < PAGES.length - 1 && <Button small variant="plain" label={t('onb.skip')} onPress={done} />}
       </View>
 
       <ScrollView
@@ -120,7 +123,10 @@ const styles = StyleSheet.create({
   prefsPage: { paddingHorizontal: S.xl, paddingTop: S.xl, paddingBottom: S.xxl, gap: S.lg },
   page: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: S.lg, paddingHorizontal: S.xl },
   extPage: { flexGrow: 1, alignItems: 'center', justifyContent: 'center', gap: S.lg, paddingHorizontal: S.xl, paddingVertical: S.xl },
-  badge: { width: 104, height: 104, borderRadius: 32, borderCurve: 'continuous', alignItems: 'center', justifyContent: 'center', marginBottom: S.md },
+  badge: {
+    width: 104, height: 104, borderRadius: 32, borderCurve: 'continuous', alignItems: 'center', justifyContent: 'center', marginBottom: S.md,
+    boxShadow: `0px 0px 0px 10px rgba(47,107,235,0.10), 0px 18px 40px -12px rgba(47,107,235,0.55), ${SHADOW.insetStrong}`,
+  },
   badgeSmall: { width: 80, height: 80, borderRadius: 24, marginBottom: 0 },
   bottom: { paddingHorizontal: S.lg, gap: S.lg },
   dots: { flexDirection: 'row', justifyContent: 'center', gap: 6 },

@@ -1,36 +1,39 @@
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { router } from 'expo-router';
 import { useState } from 'react';
-import { Pressable, ScrollView, StyleSheet, View } from 'react-native';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { Pressable, StyleSheet, View } from 'react-native';
 
 import { ago } from '@/components/comments';
-import { Avatar, CountBadge, Empty, Group, Row, ScreenHeader, shortKey } from '@/components/social';
+import { Screen } from '@/components/screen';
+import { Avatar, CountBadge, Empty, Group, Row, shortKey } from '@/components/social';
+import { Segmented } from '@/components/states';
 import { IconButton, Txt } from '@/components/ui';
 import type { Conversation } from '@/p2p/contract';
 import { useConversations, useMe, useP2PStatus, usePetname, useProfile } from '@/p2p/hooks';
 import { usePrefs } from '@/p2p/prefs';
-import { C, F, R, S } from '@/theme/tokens';
+import { C, F, S } from '@/theme/tokens';
 
-function ConversationRow({ c }: { c: Conversation }) {
+function ConversationRow({ c, last }: { c: Conversation; last?: boolean }) {
   const name = usePetname(c.peer, c.peerName);
   return (
     <Pressable
       onPress={() => router.push(`/dm/${c.peer}`)}
       accessibilityRole="button"
       accessibilityLabel={`${name}, ${c.unread ? `${c.unread} non lus, ` : ''}${c.lastText}`}
-      style={({ pressed }) => [styles.conv, pressed && { backgroundColor: 'rgba(120,140,180,0.08)' }]}>
-      <Avatar seed={c.peer} name={name} size={48} />
+      style={({ pressed }) => [styles.conv, pressed && { backgroundColor: 'rgba(255,255,255,0.05)' }]}>
+      {c.unread ? <View style={styles.unreadDot} /> : null}
+      <Avatar seed={c.peer} name={name} size={50} />
       <View style={{ flex: 1, gap: 3 }}>
         <View style={{ flexDirection: 'row', alignItems: 'baseline', gap: S.sm }}>
           <Txt v="label" numberOfLines={1} style={{ flex: 1, ...(c.unread ? F.heavy : null) }}>{name}</Txt>
-          <Txt v="small" style={{ fontSize: 12 }}>{ago(c.lastAt)}</Txt>
+          <Txt v="footnote" tabular color={c.unread ? C.accentText : C.text3}>{ago(c.lastAt)}</Txt>
         </View>
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: S.sm }}>
           <Txt v="small" numberOfLines={2} color={c.unread ? C.body : C.text2} style={{ flex: 1 }}>{c.lastText}</Txt>
           <CountBadge n={c.unread} />
         </View>
       </View>
+      {!last && <View style={styles.convLine} />}
     </Pressable>
   );
 }
@@ -42,7 +45,6 @@ function FollowRow({ k, last }: { k: string; last?: boolean }) {
 }
 
 export default function Messages() {
-  const insets = useSafeAreaInsets();
   const me = useMe();
   const { conversations, requests } = useConversations();
   const follows = usePrefs((p) => p.follows);
@@ -53,12 +55,11 @@ export default function Messages() {
   const list = tab === 'inbox' ? conversations : requests;
 
   return (
-    <View style={{ flex: 1, backgroundColor: C.bg }}>
-      <ScreenHeader
-        title="Messages"
-        right={<IconButton icon={compose ? 'close' : 'create-outline'} label={compose ? 'Fermer' : 'Nouveau message'} onPress={() => setCompose((v) => !v)} />}
-      />
-      <ScrollView contentContainerStyle={{ paddingBottom: insets.bottom + S.xxl, gap: S.lg }}>
+    <Screen
+      title="Messages"
+      padded={false}
+      gap={S.lg}
+      barRight={<IconButton icon={compose ? 'close' : 'create-outline'} label={compose ? 'Fermer' : 'Nouveau message'} size={40} onPress={() => setCompose((v) => !v)} />}>
         {compose && (
           <View style={{ paddingHorizontal: S.lg }}>
             <Group title="Nouveau message" footer={follows.length ? undefined : 'Suis quelqu’un depuis son profil pour lui écrire d’ici, ou ouvre son profil et touche « Message ».'}>
@@ -68,18 +69,15 @@ export default function Messages() {
           </View>
         )}
 
-        <View style={styles.segment} accessibilityRole="tablist">
-          {(['inbox', 'requests'] as const).map((t) => {
-            const on = tab === t;
-            return (
-              <Pressable key={t} onPress={() => setTab(t)} accessibilityRole="tab" accessibilityState={{ selected: on }} style={[styles.segItem, on && styles.segOn]}>
-                <Txt v="small" color={on ? C.text : C.text2} style={F.semibold}>
-                  {t === 'inbox' ? 'Conversations' : `Demandes${requests.length ? ` (${requests.length})` : ''}`}
-                </Txt>
-              </Pressable>
-            );
-          })}
-        </View>
+        <Segmented
+          style={{ marginHorizontal: S.lg }}
+          value={tab}
+          onChange={setTab}
+          options={[
+            { value: 'inbox', label: 'Conversations' },
+            { value: 'requests', label: `Demandes${requests.length ? ` (${requests.length})` : ''}` },
+          ]}
+        />
 
         {tab === 'requests' && requests.length > 0 && (
           <Txt v="small" style={{ paddingHorizontal: S.lg, lineHeight: 18 }}>
@@ -88,7 +86,7 @@ export default function Messages() {
         )}
 
         {list.length ? (
-          <View>{list.map((c) => <ConversationRow key={c.peer} c={c} />)}</View>
+          <View>{list.map((c, i) => <ConversationRow key={c.peer} c={c} last={i === list.length - 1} />)}</View>
         ) : tab === 'inbox' ? (
           <Empty
             icon="chatbubbles-outline"
@@ -106,15 +104,13 @@ export default function Messages() {
             {local ? 'Mode local : aucun pair connecté, les envois partiront avec le réseau P2P' : 'Chiffrement de bout en bout · aucun serveur'}
           </Txt>
         </View>
-      </ScrollView>
-    </View>
+    </Screen>
   );
 }
 
 const styles = StyleSheet.create({
   conv: { flexDirection: 'row', alignItems: 'center', gap: S.md, paddingHorizontal: S.lg, paddingVertical: S.md },
-  segment: { flexDirection: 'row', marginHorizontal: S.lg, padding: 3, borderRadius: R.control, backgroundColor: C.surface, borderWidth: 1, borderColor: C.border },
-  segItem: { flex: 1, minHeight: 36, alignItems: 'center', justifyContent: 'center', borderRadius: 8 },
-  segOn: { backgroundColor: C.elevated },
+  convLine: { position: 'absolute', left: S.lg + 50 + S.md, right: 0, bottom: 0, height: StyleSheet.hairlineWidth, backgroundColor: C.hairline },
+  unreadDot: { position: 'absolute', left: 6, width: 6, height: 6, borderRadius: 3, backgroundColor: C.accentText },
   lock: { flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'center', gap: 6, paddingTop: S.md, paddingHorizontal: S.lg },
 });

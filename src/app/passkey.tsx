@@ -6,11 +6,12 @@ import { useState } from 'react';
 import { ActivityIndicator, ScrollView, StyleSheet, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { DANGER, ScreenHeader, WARN } from '@/components/social';
+import { CloseButton } from '@/components/screen';
+import { DANGER, WARN } from '@/components/social';
 import { Button, Txt, type IconName } from '@/components/ui';
 import { useMe } from '@/p2p/hooks';
 import { PasskeyError, createPasskey, passkeyMessage, type PasskeyRecord, type SetupStep } from '@/p2p/passkey';
-import { C, R, S } from '@/theme/tokens';
+import { C, S, SHADOW } from '@/theme/tokens';
 
 type Phase =
   | { k: 'intro' }
@@ -123,12 +124,13 @@ export default function PasskeySetup() {
   }
 
   return (
-    <View style={{ flex: 1, backgroundColor: C.surface }}>
-      <ScreenHeader title="" close />
-      <ScrollView contentContainerStyle={{ paddingHorizontal: S.xl, paddingBottom: insets.bottom + S.xl, gap: S.md }}>
-        {body}
-      </ScrollView>
-    </View>
+    // Form sheet: everything, close button included, lives inside the ScrollView.
+    <ScrollView style={{ flex: 1, backgroundColor: C.surface }} contentContainerStyle={{ paddingHorizontal: S.xl, paddingTop: S.xl, paddingBottom: insets.bottom + S.xl, gap: S.md }}>
+      <View style={styles.closeRow}>
+        <CloseButton onPress={() => router.back()} />
+      </View>
+      {body}
+    </ScrollView>
   );
 }
 
@@ -141,8 +143,12 @@ function Badge({ icon, color = C.accentText }: { icon: IconName; color?: string 
 }
 
 const styles = StyleSheet.create({
-  badge: { width: 60, height: 60, borderRadius: R.card, borderCurve: 'continuous', backgroundColor: C.accentSoft, alignItems: 'center', justifyContent: 'center', marginBottom: S.xs },
-  title: { fontSize: 26 },
+  closeRow: { position: 'absolute', top: S.lg, right: S.lg, zIndex: 1 },
+  badge: {
+    width: 64, height: 64, borderRadius: 32, backgroundColor: C.elevated, alignItems: 'center', justifyContent: 'center', marginBottom: S.xs,
+    borderWidth: 1, borderColor: C.accentLine, boxShadow: `0px 0px 0px 8px rgba(47,107,235,0.10), ${SHADOW.inset}`,
+  },
+  title: { fontSize: 26, lineHeight: 31, marginTop: S.sm },
   text: { fontSize: 16, lineHeight: 23 },
   note: { lineHeight: 18 },
   actions: { gap: S.sm, marginTop: S.md },

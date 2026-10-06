@@ -6,8 +6,7 @@ import Ionicons from '@expo/vector-icons/Ionicons';
 import { router, type Href } from 'expo-router';
 import * as WebBrowser from 'expo-web-browser';
 import { useState } from 'react';
-import { ScrollView, StyleSheet, Switch, View } from 'react-native';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { StyleSheet, Switch, View } from 'react-native';
 
 import { hasResource } from '@/addons/protocol';
 import { QUALITIES, type Quality } from '@/addons/quality';
@@ -15,6 +14,8 @@ import { EXTENSIONS_SITE } from '@/addons/recommended';
 import { BUILTIN_ID, moveAddon, setPrefs, toggleAddon, useAddonPrefs, useAddons, type InstalledAddon } from '@/addons/registry';
 import { capabilities, CapChips, Card, EmptyCard, ExtLogo, LinkRow, logoOf, SectionTitle, TrustNote } from '@/components/extension-ui';
 import { SourceIcon } from '@/components/paperback';
+import { Screen } from '@/components/screen';
+import { Segmented } from '@/components/states';
 import { Button, IconButton, Press, Txt } from '@/components/ui';
 import { useDebrid } from '@/debrid/store';
 import { extensionsSupported, toggleSource, useMangaExt } from '@/manga-ext/registry';
@@ -25,7 +26,6 @@ const MAX_SOURCES = 5;
 const openAdd = (kind?: 'video' | 'manga') => router.push({ pathname: '/extension-add', params: kind ? { kind } : {} } as unknown as Href);
 
 export default function Extensions() {
-  const insets = useSafeAreaInsets();
   const addons = useAddons();
   const prefs = useAddonPrefs();
   const { provider } = useDebrid();
@@ -37,18 +37,8 @@ export default function Extensions() {
     .flatMap((a) => (a.manifest.addonCatalogs ?? []).map((c) => ({ a, c })));
 
   return (
-    <ScrollView
-      style={{ flex: 1, backgroundColor: C.bg }}
-      contentContainerStyle={{ paddingTop: insets.top + S.sm, paddingHorizontal: S.lg, gap: S.xl, paddingBottom: S.xxl + insets.bottom }}>
-      <View style={{ flexDirection: 'row', alignItems: 'center', gap: S.md }}>
-        <IconButton icon="chevron-back" label="Retour" onPress={() => router.back()} />
-        <Txt v="display" style={{ fontSize: 28, flexShrink: 1 }} numberOfLines={1} accessibilityRole="header">Extensions</Txt>
-      </View>
-
+    <Screen title="Extensions" subtitle="Les extensions apportent à Huwa les vidéos, sous-titres et chapitres. Tu choisis celles que tu ajoutes.">
       <View style={{ gap: S.md }}>
-        <Txt v="body" style={{ color: C.body }}>
-          Les extensions apportent à Huwa les vidéos, sous-titres et chapitres. Tu choisis celles que tu ajoutes.
-        </Txt>
         <Button label="Ajouter une extension" icon="add" onPress={() => openAdd()} />
         <TrustNote />
       </View>
@@ -98,25 +88,14 @@ export default function Extensions() {
         </Card>
 
         <View style={{ gap: S.sm }}>
-          <Txt v="caption" style={{ paddingHorizontal: S.xs }}>Qualité préférée</Txt>
-          <View style={{ flexDirection: 'row', gap: S.sm, flexWrap: 'wrap' }}>
-            {(['auto', ...QUALITIES] as (Quality | 'auto')[]).map((q) => {
-              const on = prefs.preferredQuality === q;
-              return (
-                <Press
-                  key={q}
-                  onPress={() => setPrefs({ preferredQuality: q })}
-                  accessibilityRole="button"
-                  accessibilityState={{ selected: on }}
-                  style={[styles.qual, on && { backgroundColor: C.accentSoft, borderColor: C.accentLine }]}>
-                  <Txt v="label" color={on ? C.accentText : C.text} style={{ fontSize: 14 }}>
-                    {q === 'auto' ? 'Auto' : q === 2160 ? '4K' : `${q}p`}
-                  </Txt>
-                </Press>
-              );
-            })}
-          </View>
-          <Txt v="small" style={{ paddingHorizontal: S.xs, lineHeight: 18 }}>Si une source échoue, Huwa passe automatiquement à la suivante.</Txt>
+          <Txt v="caption" accessibilityRole="header" style={{ paddingHorizontal: S.md }}>Qualité préférée</Txt>
+          <Segmented
+            accessibilityLabel="Qualité préférée"
+            value={String(prefs.preferredQuality)}
+            onChange={(v) => setPrefs({ preferredQuality: v === 'auto' ? 'auto' : (Number(v) as Quality) })}
+            options={(['auto', ...QUALITIES] as (Quality | 'auto')[]).map((q) => ({ value: String(q), label: q === 'auto' ? 'Auto' : q === 2160 ? '4K' : `${q}p` }))}
+          />
+          <Txt v="footnote" color={C.text3} style={{ paddingHorizontal: S.md, lineHeight: 17 }}>Si une source échoue, Huwa passe automatiquement à la suivante.</Txt>
         </View>
       </View>
 
@@ -164,14 +143,14 @@ export default function Extensions() {
 
       {/* ---------- More ---------- */}
       <View style={{ gap: S.sm }}>
-        <Txt v="caption" style={{ paddingHorizontal: S.xs }}>Plus</Txt>
+        <Txt v="caption" accessibilityRole="header" style={{ paddingHorizontal: S.md }}>Plus</Txt>
         <Card>
           <LinkRow icon="share-social-outline" label="Partager mes extensions" hint="Un pack (lien + QR) pour qu’un ami installe les mêmes en un geste." onPress={() => router.push('/pack-create' as Href)} />
           <LinkRow icon="download-outline" label="Importer depuis Stremio ou anime-sama" hint="Reprends ta liste et tes addons sans repartir de zéro." onPress={() => router.push('/import' as Href)} />
           <LinkRow icon="globe-outline" label="Site des extensions" hint="huwa.mciut.fr : bouton « Ajouter à Huwa » et QR pour n’importe quel addon." external last onPress={() => WebBrowser.openBrowserAsync(EXTENSIONS_SITE)} />
         </Card>
       </View>
-    </ScrollView>
+    </Screen>
   );
 }
 
@@ -182,7 +161,7 @@ function AddonRow({ a, index, count, reorder, last }: { a: InstalledAddon; index
   return (
     <Press
       onPress={() => router.push({ pathname: '/extension', params: { url: a.baseUrl } } as unknown as Href)}
-      scaleTo={0.99}
+      scaleTo={1}
       accessibilityRole="button"
       accessibilityLabel={`${m.name}, priorité ${index + 1}, ${a.enabled ? 'activée' : 'désactivée'}`}
       accessibilityHint="Ouvre le détail de l’extension"
@@ -212,7 +191,7 @@ function AddonRow({ a, index, count, reorder, last }: { a: InstalledAddon; index
 
 const styles = StyleSheet.create({
   row: { flexDirection: 'row', alignItems: 'center', gap: S.md, padding: S.md },
-  line: { borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: C.borderStrong },
+  line: { borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: C.hairline },
   reorder: {
     flexDirection: 'row', alignItems: 'center', gap: 4, minHeight: 32, paddingHorizontal: 10, borderRadius: R.pill,
     borderWidth: 1, borderColor: C.border, backgroundColor: C.surface,

@@ -46,8 +46,12 @@ test('identity: create, reload from storage, restore from phrase', async () => {
   // Fresh device: restoring the phrase yields the same key and counts as verified.
   await AsyncStorage.clear();
   const c = createLocalP2P();
-  const restored = await c.restoreIdentity(phrase);
+  // Nothing of this account here: refused unless starting over is chosen explicitly.
+  await assert.rejects(c.restoreIdentity(phrase), (e: unknown) => (e as { code?: string }).code === 'RESTORE_NOT_FOUND');
+  assert.equal(c.me(), undefined);
+  const restored = await c.restoreIdentity(phrase, { allowNewHome: true, name: ' tahar ' });
   assert.equal(restored.key, profile.key);
+  assert.equal(restored.name, 'tahar');
   assert.equal((await c.backupState()).phraseVerified, true);
   await assert.rejects(c.restoreIdentity([...phrase].reverse()));
 });

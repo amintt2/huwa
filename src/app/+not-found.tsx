@@ -9,7 +9,7 @@ export default function NotFound() {
   const t = useT();
   return (
     <View style={{ flex: 1, justifyContent: 'center', backgroundColor: C.bg }}>
-      <StateView icon="compass-outline" title={t('error.notFound')} body={t('error.notFoundBody')} action={t('error.home')} onAction={() => router.replace('/')} />
+      <StateView icon="compass-outline" title={t('error.notFound')} body={t('error.notFoundBody')} action={t('error.home')} actionIcon="home-outline" onAction={() => router.replace('/')} />
     </View>
   );
 }

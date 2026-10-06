@@ -90,6 +90,14 @@ export type MappingProposal = {
 
 export type Unsubscribe = () => void;
 
+/**
+ * Restore from the recovery phrase. By default only joins the account's existing data and fails
+ * with RESTORE_NOT_FOUND (src/p2p/errors.ts) when none of its devices answers. `allowNewHome` is
+ * the explicit, user-confirmed fallback when every device is gone: same identity (key,
+ * fingerprint), fresh profile named `name`, without the data that lived on the missing devices.
+ */
+export type RestoreOptions = { allowNewHome?: boolean; name?: string };
+
 export interface P2P {
   status(): P2PStatus;
   onStatus(cb: (s: P2PStatus) => void): Unsubscribe;
@@ -97,7 +105,7 @@ export interface P2P {
   // Identity (phase 2)
   me(): Profile | undefined;
   createIdentity(name: string): Promise<{ profile: Profile; phrase: string[] }>;
-  restoreIdentity(phrase: string[]): Promise<Profile>;
+  restoreIdentity(phrase: string[], opts?: RestoreOptions): Promise<Profile>;
   updateProfile(patch: Partial<Pick<Profile, 'name' | 'bio' | 'avatar'>>): Promise<Profile>;
   getProfile(key: PublicKey): Promise<Profile | undefined>;
   backupState(): Promise<BackupState>;

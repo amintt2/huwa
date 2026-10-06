@@ -4,12 +4,13 @@
 export const RESTORE_NOT_FOUND = 'RESTORE_NOT_FOUND';
 
 export class P2PError extends Error {
-  constructor(
-    message: string,
-    readonly code?: string,
-  ) {
+  // Plain field (no parameter property): this file is also loaded by the node test runner,
+  // whose type stripping does not support parameter properties.
+  readonly code?: string;
+  constructor(message: string, code?: string) {
     super(message);
     this.name = 'P2PError';
+    this.code = code;
   }
 }
 

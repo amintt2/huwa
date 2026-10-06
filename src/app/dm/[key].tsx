@@ -12,7 +12,7 @@ import type { DirectMessage } from '@/p2p/contract';
 import { social, useBlocked, useMe, useMessages, useP2PStatus, usePetname, useProfile } from '@/p2p/hooks';
 import { usePrefs } from '@/p2p/prefs';
 import { isPublicKey } from '@/social/identity';
-import { C, F, S } from '@/theme/tokens';
+import { C, F, R, S, SHADOW } from '@/theme/tokens';
 
 const time = (t: number) => new Date(t).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
 const day = (t: number) => new Date(t).toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long' });
@@ -99,7 +99,7 @@ export default function Conversation() {
   return (
     <KeyboardAvoidingView style={{ flex: 1, backgroundColor: C.bg }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
       <View style={[styles.header, { paddingTop: insets.top + S.sm }]}>
-        <IconButton icon="chevron-back" label="Retour" onPress={() => router.back()} />
+        <IconButton icon="chevron-back" label="Retour" size={40} onPress={() => router.back()} />
         <Pressable
           onPress={() => router.push(`/u/${peer}`)}
           accessibilityRole="button"
@@ -108,10 +108,10 @@ export default function Conversation() {
           <Avatar seed={peer} name={name} size={36} />
           <View style={{ flex: 1 }}>
             <Txt v="label" numberOfLines={1}>{name}</Txt>
-            <Txt v="small" style={{ fontSize: 11 }}>{self ? 'Visible seulement par toi' : profile?.fingerprint ?? ''}</Txt>
+            <Txt v="footnote" color={C.text3} numberOfLines={1}>{self ? 'Visible seulement par toi' : profile?.fingerprint ?? ''}</Txt>
           </View>
         </Pressable>
-        {!self && <IconButton icon="ellipsis-horizontal" label="Plus d’options : signaler, bloquer" onPress={more} />}
+        {!self && <IconButton icon="ellipsis-horizontal" label="Plus d’options : signaler, bloquer" size={40} onPress={more} />}
       </View>
 
       <FlatList
@@ -135,7 +135,7 @@ export default function Conversation() {
         }
         renderItem={({ item }) =>
           item.kind === 'day' ? (
-            <Txt v="caption" style={{ textAlign: 'center', paddingVertical: S.md, fontSize: 10 }}>{item.label}</Txt>
+            <View style={styles.day}><Txt v="footnote" color={C.text2} style={{ fontWeight: '600' }}>{item.label}</Txt></View>
           ) : (
             <View style={{ alignItems: item.mine ? 'flex-end' : 'flex-start', marginBottom: item.tail ? S.sm : 0 }}>
               <View
@@ -148,7 +148,7 @@ export default function Conversation() {
               </View>
               {item.tail && (
                 <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 3, paddingHorizontal: 6 }}>
-                  <Txt v="small" style={{ fontSize: 11 }}>{time(item.m.createdAt)}</Txt>
+                  <Txt v="footnote" tabular color={C.text3} style={{ fontSize: 11 }}>{time(item.m.createdAt)}</Txt>
                   {item.mine && !self && (
                     <Ionicons
                       name={item.m.delivered ? 'checkmark-done' : 'time-outline'}
@@ -194,7 +194,8 @@ export default function Conversation() {
             value={text}
             onChangeText={setText}
             placeholder={self ? 'Écrire une note…' : 'Message'}
-            placeholderTextColor="#8A8AA0"
+            placeholderTextColor={C.text3}
+            selectionColor={C.accentText}
             keyboardAppearance="dark"
             multiline
             maxLength={4000}
@@ -205,7 +206,8 @@ export default function Conversation() {
             onPress={send}
             disabled={!text.trim()}
             accessibilityLabel="Envoyer"
-            style={[styles.send, { opacity: text.trim() ? 1 : 0.4 }]}>
+            haptics="light"
+            style={[styles.send, !text.trim() && { backgroundColor: C.elevated, boxShadow: undefined }]}>
             <Ionicons name="arrow-up" size={20} color={C.onAccent} />
           </Press>
         </View>
@@ -216,23 +218,24 @@ export default function Conversation() {
 
 const styles = StyleSheet.create({
   header: {
-    flexDirection: 'row', alignItems: 'center', gap: S.md, paddingHorizontal: S.lg, paddingBottom: S.md,
-    borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: C.border,
+    flexDirection: 'row', alignItems: 'center', gap: S.md, paddingHorizontal: S.lg, paddingBottom: S.sm,
+    backgroundColor: 'rgba(5,7,13,0.97)', borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: C.hairline,
   },
+  day: { alignSelf: 'center', marginVertical: S.md, paddingHorizontal: 10, paddingVertical: 3, borderRadius: R.pill, backgroundColor: C.pill },
   bubble: { maxWidth: '80%', paddingVertical: 9, paddingHorizontal: 14, borderRadius: 20, borderCurve: 'continuous' },
-  mine: { backgroundColor: C.accent },
-  theirs: { backgroundColor: C.elevated },
+  mine: { backgroundColor: C.accent, boxShadow: SHADOW.insetStrong },
+  theirs: { backgroundColor: C.elevated, borderWidth: 1, borderColor: 'rgba(255,255,255,0.06)', boxShadow: SHADOW.inset },
   banner: {
     gap: S.sm, paddingTop: S.md, paddingHorizontal: S.lg, backgroundColor: C.surface,
-    borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: C.border,
+    borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: C.hairline,
   },
   composer: {
     flexDirection: 'row', alignItems: 'flex-end', gap: 10, paddingTop: S.sm, paddingHorizontal: S.lg,
-    backgroundColor: C.surface, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: C.border,
+    backgroundColor: 'rgba(5,7,13,0.97)', borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: C.hairline,
   },
   input: {
     flex: 1, minHeight: 44, maxHeight: 130, paddingHorizontal: S.lg, paddingTop: 12, paddingBottom: 12,
-    borderRadius: 22, backgroundColor: C.elevated, color: C.text, ...F.regular, fontSize: 15,
+    borderRadius: 22, backgroundColor: C.surface, borderWidth: 1, borderColor: C.border, color: C.text, ...F.regular, fontSize: 16,
   },
-  send: { width: 44, height: 44, borderRadius: 22, alignItems: 'center', justifyContent: 'center', backgroundColor: C.accent },
+  send: { width: 44, height: 44, borderRadius: 22, alignItems: 'center', justifyContent: 'center', backgroundColor: C.accent, boxShadow: SHADOW.insetStrong },
 });

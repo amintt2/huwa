@@ -3,10 +3,11 @@
 import Ionicons from '@expo/vector-icons/Ionicons';
 import * as Haptics from 'expo-haptics';
 import { useState } from 'react';
-import { Alert, ScrollView, StyleSheet, Switch, View } from 'react-native';
+import { Alert, StyleSheet, Switch, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { DANGER, Field, Group, Row, ScreenHeader } from '@/components/social';
+import { DANGER, Field, Group, Row } from '@/components/social';
+import { Screen } from '@/components/screen';
 import { Button, Txt, type IconName } from '@/components/ui';
 import { cloudBackupSupported, useCloudBackup } from '@/p2p/cloud-backup';
 import { useMe, useSecurity } from '@/p2p/hooks';
@@ -76,12 +77,8 @@ export default function DeleteAccount() {
   }
 
   return (
-    <View style={{ flex: 1, backgroundColor: C.bg }}>
-      <ScreenHeader title="Supprimer le compte" />
-      <ScrollView
-        keyboardShouldPersistTaps="handled"
-        automaticallyAdjustKeyboardInsets
-        contentContainerStyle={{ paddingHorizontal: S.lg, paddingBottom: insets.bottom + S.xxl, gap: S.xl }}>
+    <Screen title="Supprimer le compte" keyboardShouldPersistTaps="handled"
+        automaticallyAdjustKeyboardInsets>
         <Txt v="body">
           Huwa n’a pas de serveur : ton compte, c’est ta clé d’identité et ce que tes appareils gardent. Voici ce que la suppression fait.
         </Txt>
@@ -131,8 +128,7 @@ export default function DeleteAccount() {
             style={{ backgroundColor: DANGER }}
           />
         </View>
-      </ScrollView>
-    </View>
+      </Screen>
   );
 }
 
