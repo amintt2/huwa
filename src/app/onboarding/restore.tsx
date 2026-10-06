@@ -1,11 +1,11 @@
 import * as Haptics from 'expo-haptics';
 import { router } from 'expo-router';
 import { useMemo, useState } from 'react';
-import { Alert, KeyboardAvoidingView, Platform, ScrollView, View } from 'react-native';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { Alert, View } from 'react-native';
 
 import { RestoreOfflineNotice } from '@/components/restore-offline';
-import { DANGER, Field, Group, Row, ScreenHeader } from '@/components/social';
+import { Screen } from '@/components/screen';
+import { DANGER, Field, Group, Row } from '@/components/social';
 import { Button, Txt } from '@/components/ui';
 import { cloudBackup, cloudBackupSupported } from '@/p2p/cloud-backup';
 import { isRestoreNotFound } from '@/p2p/errors';
@@ -15,7 +15,6 @@ import { PHRASE_WORDS, isValidPhrase, normalizePhraseInput, unknownWords } from 
 import { C, S } from '@/theme/tokens';
 
 export default function Restore() {
-  const insets = useSafeAreaInsets();
   const [text, setText] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();
@@ -112,11 +111,7 @@ export default function Restore() {
       : undefined;
 
   return (
-    <KeyboardAvoidingView style={{ flex: 1, backgroundColor: C.bg }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
-      <ScreenHeader title="J’ai déjà un compte" />
-      <ScrollView
-        keyboardShouldPersistTaps="handled"
-        contentContainerStyle={{ paddingHorizontal: S.lg, paddingBottom: insets.bottom + S.xl, gap: S.xl }}>
+    <Screen title="J’ai déjà un compte">
         {retry ? (
           <RestoreOfflineNotice
             busy={busy}
@@ -144,7 +139,7 @@ export default function Restore() {
         </Group>
 
         <View style={{ gap: S.md }}>
-          <Txt v="caption" style={{ paddingHorizontal: S.xs }}>Phrase de récupération</Txt>
+          <Txt v="caption" accessibilityRole="header" style={{ paddingHorizontal: S.md }}>Phrase de récupération</Txt>
           <Field
             value={text}
             onChangeText={(t) => {
@@ -168,15 +163,12 @@ export default function Restore() {
               {`${words.length}/${PHRASE_WORDS}`}
             </Txt>
           </View>
-          <View style={{ opacity: valid ? 1 : 0.45 }}>
-            <Button label={busy ? 'Restauration…' : 'Restaurer mon compte'} icon="key" onPress={restore} />
-          </View>
+          <Button label="Restaurer mon compte" icon="key" loading={busy} disabled={!valid} onPress={restore} />
         </View>
 
-        <Txt v="small" style={{ lineHeight: 18 }}>
+        <Txt v="footnote" color={C.text3} style={{ lineHeight: 17, paddingHorizontal: S.md }}>
           Sans phrase, sans autre appareil et sans sauvegarde, un compte ne peut pas être récupéré : personne d’autre ne détient ta clé.
         </Txt>
-      </ScrollView>
-    </KeyboardAvoidingView>
+    </Screen>
   );
 }
