@@ -20,12 +20,16 @@ use tokio::io::{AsyncRead, AsyncReadExt, AsyncSeekExt};
 use tracing::{debug, warn};
 
 use crate::{
-    engine::{Engine, Entry, ManagedTorrentHandle, ServerHandle},
-    priorities::{
-        classify_request, prefetch_windows, MemoryPressure, PlaybackIntent, PlaybackPriorityPolicy, PriorityContext,
-    },
+    engine::{Engine, Entry, ServerHandle},
+    priorities::classify_request,
     range::{parse_range, RangeSpec},
+    streaming::TrackedReader,
 };
+
+/// Body chunk size. librqbit's `FileStream` reads at most up to the end of the current piece per
+/// call, each read is one `block_in_place` + `pread`: 256 KiB chunks cut those calls (and the
+/// hyper frames) by 4 compared with 64 KiB while staying far below a piece.
+const BODY_CHUNK: usize = 256 * 1024;
 
 pub fn router(engine: Arc<Engine>) -> Router {
     Router::new()
@@ -127,11 +131,21 @@ async fn stream_file(
     entry.touch();
 
     let timeout = Duration::from_secs(engine.config().resolve_timeout_secs);
+    let deadline = tokio::time::Instant::now() + timeout;
     let handle = match entry.wait_ready(timeout).await {
         Ok(h) => h,
         Err(e) if e.to_string().starts_with("timeout") => return text(StatusCode::GATEWAY_TIMEOUT, e.to_string()),
         Err(e) => return text(StatusCode::BAD_GATEWAY, e.to_string()),
     };
+    // Right after the metadata arrives the torrent is still `initializing` (files checked /
+    // created), and `FileStream` refuses that state: the first request of every cold start used
+    // to get a 503. Wait for it, within the same budget.
+    let remaining = deadline.saturating_duration_since(tokio::time::Instant::now()).max(Duration::from_secs(5));
+    match tokio::time::timeout(remaining, handle.wait_until_initialized()).await {
+        Ok(Ok(())) => {}
+        Ok(Err(e)) => return text(StatusCode::SERVICE_UNAVAILABLE, format!("torrent failed to initialize: {e:#}")),
+        Err(_) => return text(StatusCode::GATEWAY_TIMEOUT, "timeout: torrent still initializing"),
+    }
 
     // Resolve the file index.
     let file_idx = if file == "auto" {
@@ -189,9 +203,14 @@ async fn stream_file(
     };
     let to_send = end - start;
 
-    // --- Priority policy: classify the request and materialise the windows librqbit cannot
-    // infer from the serving stream (startup head + container index at the end of the file).
-    apply_priority_policy(&engine, &entry, &handle, file_idx, start, to_send, len);
+    // --- Priorities: classify the request (playback vs container-index probe) and let
+    // `streaming` move the read-ahead walker / start the tail prefetch (see streaming.rs).
+    let first_byte_sent = entry.first_byte_sent.load(Ordering::Relaxed);
+    let last_end = entry.last_served_end.load(Ordering::Relaxed);
+    let intent = classify_request(start, to_send, len, first_byte_sent, (last_end > 0).then_some(last_end));
+    let cache_limit = engine.config().cache_limit_bytes;
+    let playback = engine.streaming.on_request(&engine.runtime, &hex, &handle, file_idx, start, intent, cache_limit);
+    debug!(intent = intent.as_str(), start, to_send, "priority intent");
 
     if start > 0 {
         if let Err(e) = stream.seek(SeekFrom::Start(start)).await {
@@ -211,103 +230,9 @@ async fn stream_file(
     entry.active_streams.fetch_add(1, Ordering::Relaxed);
     entry.first_byte_sent.store(true, Ordering::Relaxed);
     let guard = StreamGuard { entry: entry.clone(), end };
-    let reader = GuardedReader { inner: stream.take(to_send), _guard: guard };
-    let body = Body::from_stream(tokio_util::io::ReaderStream::with_capacity(reader, 64 * 1024));
+    let reader = GuardedReader { inner: TrackedReader::new(stream.take(to_send), playback, start), _guard: guard };
+    let body = Body::from_stream(tokio_util::io::ReaderStream::with_capacity(reader, BODY_CHUNK));
     (status, out, body).into_response()
-}
-
-#[allow(clippy::too_many_arguments)]
-fn apply_priority_policy(
-    engine: &Arc<Engine>,
-    entry: &Arc<Entry>,
-    handle: &ManagedTorrentHandle,
-    file_idx: usize,
-    start: u64,
-    requested_len: u64,
-    file_len: u64,
-) {
-    let first_byte_sent = entry.first_byte_sent.load(Ordering::Relaxed);
-    let last_end = entry.last_served_end.load(Ordering::Relaxed);
-    let intent = classify_request(start, requested_len, file_len, first_byte_sent, (last_end > 0).then_some(last_end));
-
-    let (piece_length, first_piece, last_piece) = handle
-        .with_metadata(|m| {
-            let pl = m.lengths().default_piece_length() as u64;
-            let range = m.file_infos.get(file_idx).map(|f| f.piece_range.clone()).unwrap_or(0..0);
-            (pl, range.start as i32, range.end.saturating_sub(1) as i32)
-        })
-        .unwrap_or((0, 0, 0));
-    if piece_length == 0 {
-        return;
-    }
-
-    let stats = handle.stats();
-    let (download_rate, peers) = stats
-        .live
-        .as_ref()
-        .map(|l| (l.download_speed.as_bytes(), l.snapshot.peer_stats.live as u64))
-        .unwrap_or((0, 0));
-    let file_offset = handle
-        .with_metadata(|m| m.file_infos.get(file_idx).map(|f| f.offset_in_torrent).unwrap_or(0))
-        .unwrap_or(0);
-    let current_piece = ((file_offset + start) / piece_length) as i32;
-
-    let ctx = PriorityContext {
-        intent,
-        current_piece,
-        first_piece,
-        last_piece,
-        piece_length,
-        file_size: file_len,
-        bitrate_bytes_per_sec: None,
-        download_rate_bytes_per_sec: download_rate,
-        peers,
-        cache_size_bytes: engine.config().cache_limit_bytes,
-        memory_pressure: MemoryPressure::Normal,
-        consecutive_waits: entry.consecutive_waits.load(Ordering::Relaxed) as u32,
-        first_byte_sent,
-    };
-    let decision = PlaybackPriorityPolicy::decide(ctx.clone());
-    let windows = prefetch_windows(&decision, &ctx, start);
-    debug!(reason = %decision.reason, hot = decision.hot_window_pieces, warm = decision.warm_window_pieces, windows = windows.len(), "priority decision");
-
-    // Every window becomes an auxiliary FileStream: librqbit interleaves the look-ahead queues of
-    // all open streams, so these pieces are requested alongside the serving stream's.
-    for w in windows {
-        let handle = handle.clone();
-        let entry = entry.clone();
-        let is_background = intent == PlaybackIntent::Background;
-        engine.runtime.spawn(async move {
-            let job = async {
-                let mut s = handle.stream(file_idx).await?;
-                if w.offset > 0 {
-                    s.seek(SeekFrom::Start(w.offset)).await?;
-                }
-                let mut left = w.len;
-                let mut buf = vec![0u8; 256 * 1024];
-                while left > 0 {
-                    let chunk = buf.len().min(left as usize);
-                    let n = s.read(&mut buf[..chunk]).await?;
-                    if n == 0 {
-                        break;
-                    }
-                    left -= n as u64;
-                }
-                anyhow::Ok(())
-            };
-            let budget = if is_background { 120 } else { 60 };
-            match tokio::time::timeout(Duration::from_secs(budget), job).await {
-                Ok(Ok(())) => {
-                    entry.consecutive_waits.store(0, Ordering::Relaxed);
-                }
-                Ok(Err(e)) => debug!("prefetch window failed: {e:#}"),
-                Err(_) => {
-                    entry.consecutive_waits.fetch_add(1, Ordering::Relaxed);
-                    debug!(offset = w.offset, len = w.len, "prefetch window timed out");
-                }
-            }
-        });
-    }
 }
 
 #[cfg(test)]

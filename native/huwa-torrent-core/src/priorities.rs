@@ -26,11 +26,12 @@
 // Huwa adaptation (MIT): the original drives libtorrent piece priorities and deadlines.
 // librqbit has no per-piece priority API; what it offers is `FileStream` — a seekable reader
 // whose position drives a 32 MiB look-ahead queue, with the queues of all open streams
-// interleaved. The policy below therefore decides *windows* (immediate / hot / warm / metadata
-// bands in pieces, exactly like the original), and `prefetch_windows` maps the bands that
-// librqbit cannot infer from the serving stream alone (startup head, container metadata at the
-// end of the file) onto auxiliary `FileStream`s opened by the HTTP server. HLS intents and the
-// disk-backed download intents were dropped: Huwa streams directly and caches on disk.
+// interleaved. The policy below decides *windows* (immediate / hot / warm / metadata bands in
+// pieces, exactly like the original); the HTTP server uses `classify_request` to tell playback
+// requests from container-index probes, and `streaming.rs` materialises the read-ahead and the
+// tail prefetch sized by `readahead_target_bytes` / `tail_prefetch_bytes` (end of this file).
+// HLS intents and the disk-backed download intents were dropped: Huwa streams directly and
+// caches on disk.
 
 /// Startup is gated on the actual first readable bytes. Keep speculative work near the player's
 /// ~4 MiB network buffer so rare seek/Cues pieces are not starved by a large urgent head window.
@@ -400,50 +401,49 @@ fn assignment_for(ctx: &PriorityContext, distance: i32, immediate_pieces: i32, h
 }
 
 // ---------------------------------------------------------------------------------------------
-// Huwa: mapping of the decision onto librqbit `FileStream`s.
+// Huwa: byte windows materialised by `streaming.rs` with librqbit `FileStream`s.
 // ---------------------------------------------------------------------------------------------
+//
+// The original helper streams (an "immediate" copy of the request head and a 16 MiB tail, one
+// set per HTTP request, each alive up to 60 s) were replaced: librqbit interleaves the queues of
+// all open streams, so a copy of the head added nothing, a 16 MiB tail took half the priority
+// slots from the head at startup, and AVPlayer's burst of small probe requests piled up streams
+// (each holding one of librqbit's blocking permits). `streaming.rs` now keeps one read-ahead
+// walker per playback and one small tail prefetch, sized below.
 
-/// A byte window (relative to the file) that the HTTP server materialises with an auxiliary
-/// `FileStream` positioned at `offset` and read for `len` bytes.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct PrefetchWindow {
-    pub offset: u64,
-    pub len: u64,
-    pub band: PriorityBand,
+/// How far ahead of the playhead the read-ahead walker keeps priority, in bytes.
+///
+/// Duration is unknown to the engine, so the window is a share of the file: 1/12 is about two
+/// minutes of a 24-minute episode at any quality (and more for longer files, up to the cap),
+/// which rides out a swarm hiccup or a peer churn. librqbit's own look-ahead is a fixed 32 MiB
+/// (≈ 25 s of a 10 Mbit/s remux). Bounded to a quarter of the cache quota. Beyond the window
+/// pieces still download in natural order (the whole selected file is wanted anyway), so this
+/// changes the order, not the data usage.
+pub const MIN_READAHEAD_BYTES: u64 = 48 * 1024 * 1024;
+pub const MAX_READAHEAD_BYTES: u64 = 256 * 1024 * 1024;
+
+pub fn readahead_target_bytes(file_size: u64, cache_limit_bytes: u64) -> u64 {
+    let mut target = (file_size / 12).clamp(MIN_READAHEAD_BYTES, MAX_READAHEAD_BYTES);
+    if cache_limit_bytes > 0 {
+        target = target.min((cache_limit_bytes / 4).max(MIN_STARTUP_BYTES));
+    }
+    target.min(file_size)
 }
 
-/// Windows the serving stream cannot express by itself:
-/// - `Immediate`: the head of the request, bounded to the immediate band (startup ≈ 4 MiB,
-///   seek = `SEEK_IMMEDIATE_PIECES`). librqbit already looks 32 MiB ahead of the serving stream,
-///   so this only exists to be *read first* by a dedicated helper (it wakes as soon as the first
-///   piece lands, which mirrors the "immediate" deadline of the original policy).
-/// - `Metadata`: the container index at the end of the file, requested up-front on the initial
-///   request so MP4 `moov` / MKV Cues are there when the player asks for them.
-pub fn prefetch_windows(decision: &PriorityDecision, ctx: &PriorityContext, request_start: u64) -> Vec<PrefetchWindow> {
-    let mut out = Vec::new();
-    if ctx.piece_length == 0 || ctx.file_size == 0 {
-        return out;
-    }
+/// Bytes at the end of the file prefetched with the head on the first request (container index).
+///
+/// MKV Cues are tens of KiB; an MP4 `moov` grows with the sample count (≈ 1–3 MiB for an episode,
+/// ≈ 5–8 MiB for a feature film). 1/512 of the file, between 1 and 8 MiB, covers both without
+/// competing long with the head; the piece granularity rounds it up anyway.
+pub const MIN_TAIL_PREFETCH_BYTES: u64 = 1024 * 1024;
+pub const MAX_TAIL_PREFETCH_BYTES: u64 = 8 * 1024 * 1024;
 
-    let immediate_bytes = (decision.immediate_pieces.max(0) as u64).saturating_mul(ctx.piece_length);
-    if immediate_bytes > 0 && request_start < ctx.file_size {
-        let len = immediate_bytes.min(ctx.file_size - request_start);
-        let band = if ctx.intent == PlaybackIntent::ContainerMetadata { PriorityBand::Metadata } else { PriorityBand::Immediate };
-        out.push(PrefetchWindow { offset: request_start, len, band });
+pub fn tail_prefetch_bytes(file_size: u64, piece_length: u64) -> u64 {
+    if file_size == 0 || piece_length == 0 || file_size <= SMALL_FILE_BYTES / 4 {
+        // Tiny files: the head's look-ahead covers the whole file.
+        return 0;
     }
-
-    if ctx.intent == PlaybackIntent::DirectInitial && !ctx.first_byte_sent {
-        // Anchor the window to the end of the file (where `moov` / Cues live), bounded to 16 MiB.
-        let meta_start = container_metadata_start(ctx.file_size)
-            .max(ctx.file_size.saturating_sub(MAX_CONTAINER_METADATA_WINDOW_BYTES));
-        if meta_start > request_start.saturating_add(immediate_bytes) {
-            let len = ctx.file_size - meta_start;
-            if len > 0 {
-                out.push(PrefetchWindow { offset: meta_start, len, band: PriorityBand::Metadata });
-            }
-        }
-    }
-    out
+    (file_size / 512).clamp(MIN_TAIL_PREFETCH_BYTES, MAX_TAIL_PREFETCH_BYTES).min(file_size)
 }
 
 #[cfg(test)]
@@ -646,52 +646,27 @@ mod tests {
     }
 
     #[test]
-    fn prefetch_initial_adds_head_and_tail_metadata() {
-        let mut ctx = base_context(PlaybackIntent::DirectInitial);
-        ctx.current_piece = 0;
-        ctx.first_byte_sent = false;
-        let decision = PlaybackPriorityPolicy::decide(ctx.clone());
-        let windows = prefetch_windows(&decision, &ctx, 0);
-        assert_eq!(windows.len(), 2);
-        assert_eq!(windows[0], PrefetchWindow { offset: 0, len: 4 * 1024 * 1024, band: PriorityBand::Immediate });
-        assert_eq!(windows[1].band, PriorityBand::Metadata);
-        // 1000 MiB file: metadata region starts at 950 MiB, the prefetch keeps the last 16 MiB.
-        assert_eq!(windows[1].offset, ctx.file_size - MAX_CONTAINER_METADATA_WINDOW_BYTES);
-        assert_eq!(windows[1].len, MAX_CONTAINER_METADATA_WINDOW_BYTES);
-        assert_eq!(windows[1].offset + windows[1].len, ctx.file_size);
+    fn readahead_is_a_share_of_the_file_within_bounds() {
+        let mib = 1024 * 1024;
+        // 1.4 GiB episode → 1/12 ≈ 119 MiB.
+        let ep = 1400 * mib;
+        assert_eq!(readahead_target_bytes(ep, 0), ep / 12);
+        // Small file → floor, but never more than the file.
+        assert_eq!(readahead_target_bytes(300 * mib, 0), MIN_READAHEAD_BYTES);
+        assert_eq!(readahead_target_bytes(10 * mib, 0), 10 * mib);
+        // Large file → cap.
+        assert_eq!(readahead_target_bytes(20 * 1024 * mib, 0), MAX_READAHEAD_BYTES);
+        // A small cache quota bounds it.
+        assert_eq!(readahead_target_bytes(20 * 1024 * mib, 400 * mib), 100 * mib);
     }
 
     #[test]
-    fn prefetch_seek_is_head_only() {
-        let ctx = base_context(PlaybackIntent::DirectSeek);
-        let decision = PlaybackPriorityPolicy::decide(ctx.clone());
-        let windows = prefetch_windows(&decision, &ctx, 100 * 1024 * 1024);
-        assert_eq!(windows.len(), 1);
-        assert_eq!(windows[0].offset, 100 * 1024 * 1024);
-        assert_eq!(windows[0].len, SEEK_IMMEDIATE_PIECES as u64 * 1024 * 1024);
-    }
-
-    #[test]
-    fn prefetch_is_clamped_to_file_end() {
-        let mut ctx = base_context(PlaybackIntent::DirectSeek);
-        ctx.current_piece = 999;
-        let decision = PlaybackPriorityPolicy::decide(ctx.clone());
-        let start = ctx.file_size - 100;
-        let windows = prefetch_windows(&decision, &ctx, start);
-        assert_eq!(windows.len(), 1);
-        assert_eq!(windows[0].len, 100);
-    }
-
-    #[test]
-    fn prefetch_small_file_skips_tail_when_head_covers_it() {
-        let mut ctx = base_context(PlaybackIntent::DirectInitial);
-        ctx.current_piece = 0;
-        ctx.first_byte_sent = false;
-        ctx.file_size = 3 * 1024 * 1024;
-        ctx.last_piece = 2;
-        let decision = PlaybackPriorityPolicy::decide(ctx.clone());
-        let windows = prefetch_windows(&decision, &ctx, 0);
-        assert_eq!(windows.len(), 1);
-        assert_eq!(windows[0].band, PriorityBand::Immediate);
+    fn tail_prefetch_is_small_and_bounded() {
+        let mib = 1024 * 1024;
+        assert_eq!(tail_prefetch_bytes(0, mib), 0);
+        assert_eq!(tail_prefetch_bytes(8 * mib, mib), 0, "tiny file: head covers it");
+        assert_eq!(tail_prefetch_bytes(200 * mib, mib), MIN_TAIL_PREFETCH_BYTES);
+        assert_eq!(tail_prefetch_bytes(1400 * mib, mib), 1400 * mib / 512);
+        assert_eq!(tail_prefetch_bytes(40 * 1024 * mib, mib), MAX_TAIL_PREFETCH_BYTES);
     }
 }

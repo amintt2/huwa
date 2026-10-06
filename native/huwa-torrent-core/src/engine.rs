@@ -25,8 +25,8 @@ use librqbit::{
     api::TorrentIdOrHash,
     dht::{DhtPersistenceConfig, Id20},
     limits::LimitsConfig,
-    AddTorrent, AddTorrentOptions, DhtSessionConfig, ManagedTorrent, Session, SessionOptions, SessionPersistenceConfig,
-    TorrentStatsState,
+    AddTorrent, AddTorrentOptions, ConnectionOptions, DhtSessionConfig, ManagedTorrent, PeerConnectionOptions, Session,
+    SessionOptions, SessionPersistenceConfig, TorrentStatsState,
 };
 
 /// librqbit's `torrent_state::ManagedTorrentHandle` is not re-exported from the crate root.
@@ -133,6 +133,11 @@ pub struct TorrentStatus {
     pub added_at: u64,
     pub last_access: u64,
     pub size_on_disk: u64,
+    /// Streaming health (see `streaming.rs`): `ok` | `searching` (no peer connected) | `stalled`
+    /// (the player waits for data) | `recovering` (re-announce in progress) | `idle`.
+    pub health: &'static str,
+    /// Automatic recoveries (pause + resume re-announce) since the torrent was added this run.
+    pub recoveries: u32,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -240,6 +245,8 @@ pub struct Engine {
     /// Swarm probes (see `probe.rs`) and the metadata they resolved, reused by `start_stream`.
     pub probes: Probes,
     pub meta_cache: MetaCache,
+    /// Read-ahead walkers, playhead / stall tracking and recovery state (see `streaming.rs`).
+    pub streaming: crate::streaming::Streaming,
 }
 
 impl Drop for Engine {
@@ -330,13 +337,22 @@ impl Engine {
 
         let opts = SessionOptions {
             dht: Some(DhtSessionConfig {
-                bootstrap_addrs: None,
+                bootstrap_addrs: Some(crate::streaming::DHT_BOOTSTRAP.iter().map(|s| s.to_string()).collect()),
                 port: None,
                 persistence: Some(DhtPersistenceConfig {
-                    dump_interval: None,
+                    dump_interval: Some(crate::streaming::DHT_DUMP_INTERVAL),
                     config_filename: Some(config.data_dir.join("dht.json")),
                 }),
             }),
+            // Mobile tuning, see `streaming.rs` for the reasons.
+            connect: Some(ConnectionOptions {
+                peer_opts: Some(PeerConnectionOptions {
+                    connect_timeout: Some(crate::streaming::PEER_CONNECT_TIMEOUT),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            }),
+            runtime_worker_threads: Some(crate::streaming::BLOCKING_PERMITS),
             disable_trackers: false,
             fastresume: true,
             persistence: Some(SessionPersistenceConfig::Json { folder: Some(session_dir) }),
@@ -372,9 +388,11 @@ impl Engine {
             server: parking_lot::Mutex::new(None),
             probes: Probes::default(),
             meta_cache: MetaCache::default(),
+            streaming: Default::default(),
         });
         engine.restore_entries();
         engine.spawn_janitor();
+        crate::streaming::spawn_monitor(&engine);
         Ok(engine)
     }
 
@@ -501,7 +519,10 @@ impl Engine {
     /// returns the loopback URL immediately. The HTTP handler waits for readiness.
     pub fn start_stream(self: &Arc<Self>, req: StartStreamRequest) -> Result<StartStreamResponse> {
         let (id20, hex) = normalize_hash(&req.info_hash)?;
-        let trackers = trackers_from_sources(&req.sources);
+        let mut trackers = trackers_from_sources(&req.sources);
+        if self.config.read().default_trackers.is_empty() {
+            trackers = crate::trackers::augment(trackers);
+        }
 
         if let Some(existing) = self.entry(&hex) {
             existing.touch();
@@ -670,6 +691,8 @@ impl Engine {
             added_at: entry.added_at,
             last_access: entry.last_access.load(Ordering::Relaxed),
             size_on_disk: 0,
+            health: self.streaming.health_of(&entry.hex),
+            recoveries: self.streaming.recoveries_of(&entry.hex),
         };
 
         let handle = match &*entry.state.read() {
@@ -782,6 +805,7 @@ impl Engine {
     /// Removes the torrent from the session and deletes its files.
     pub async fn remove(&self, hex: &str) -> Result<()> {
         let entry = self.entries.write().remove(hex).context("unknown torrent")?;
+        self.streaming.forget(hex);
         let resolving = matches!(&*entry.state.read(), EntryState::Resolving);
         let task = entry.resolver.lock().take();
         if let Some(task) = task {
