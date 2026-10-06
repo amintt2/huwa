@@ -87,6 +87,8 @@ export class PasskeyError extends Error {
   code: PasskeyErrorCode;
   /** Credential created before the failure (setup interrupted after registration). */
   credentialId?: string;
+  /** What happened, step by step (e.g. `combined:blob=0,prf=1 → blob-only:blob=1`), for support. */
+  trace?: string;
   constructor(code: PasskeyErrorCode, message: string, credentialId?: string) {
     super(message);
     this.name = 'PasskeyError';
@@ -341,21 +343,65 @@ export async function setupPasskey(
   }
 }
 
-/** One assertion: pick the passkey, read the blob (+ PRF), return the recovery phrase. */
+/**
+ * Pick the passkey, read the blob (+ PRF), return the recovery phrase. One assertion asking for
+ * both; when a provider does not answer both extensions in the same assertion (blob or PRF
+ * missing, assertion failing after the user verification), each one is asked again on its own
+ * for the same credential. Every step is kept in `trace` on the error.
+ */
 export async function loginWithPasskey(
-  deps: { native: PasskeyNative; aead: Aead; random: (n: number) => Uint8Array },
+  deps: { native: PasskeyNative; aead: Aead; random: (n: number) => Uint8Array; log?: (msg: string) => void },
   opts: { immediate?: boolean } = {},
 ): Promise<{ words: string[]; credentialId: string; prf: boolean; enc: PasskeyPayload['enc'] }> {
+  const steps: string[] = [];
+  const fail = (e: unknown, credentialId?: string): PasskeyError => {
+    const err = asPasskeyError(e, credentialId);
+    err.trace = [...steps, `error:${err.code}`].join(' → ');
+    deps.log?.(`passkey login failed: ${err.trace} (${err.message})`);
+    return err;
+  };
+  const salt = prfSalt();
+  const ask = async (label: string, o: { credentialId?: string; readBlob: boolean; prf: boolean; immediate?: boolean }) => {
+    const a = await deps.native.authenticate({ challenge: deps.random(32), credentialId: o.credentialId, readBlob: o.readBlob, prfSalt: o.prf ? salt : undefined, immediate: o.immediate });
+    steps.push(`${label}:blob=${a.blob?.length ? a.blob.length : 0},prf=${a.prfFirst?.length ? 1 : 0}`);
+    return a;
+  };
+
   let a;
   try {
-    a = await deps.native.authenticate({ challenge: deps.random(32), readBlob: true, prfSalt: prfSalt(), immediate: opts.immediate });
+    a = await ask('combined', { readBlob: true, prf: true, immediate: opts.immediate });
   } catch (e) {
-    throw asPasskeyError(e);
+    const err = asPasskeyError(e);
+    steps.push(`combined:${err.code}`);
+    // Cancelled / nothing on this device / busy: the user's answer, not a provider limitation.
+    if (err.code !== 'failed') throw fail(err);
+    try {
+      a = await ask('blob-only', { readBlob: true, prf: false });
+    } catch (e2) {
+      throw fail(e2);
+    }
   }
-  if (!a.blob?.length) throw new PasskeyError('no-blob', 'Cette clé d’accès ne contient pas de compte Huwa', a.credentialId);
-  const payload = decodePayload(a.blob);
-  const words = await openPhrase(payload, { prf: a.prfFirst, aead: deps.aead });
-  return { words, credentialId: a.credentialId, prf: !!a.prfFirst, enc: payload.enc };
+  const id = a.credentialId;
+  let blob = a.blob;
+  let prf = a.prfFirst;
+  try {
+    if (!blob?.length) blob = (await ask('blob-only', { credentialId: id, readBlob: true, prf: false })).blob;
+    if (!blob?.length) throw new PasskeyError('no-blob', 'Cette clé d’accès ne contient pas de compte Huwa', id);
+    const payload = decodePayload(blob);
+    if (payload.enc === 'prf-aes256gcm' && !prf) prf = (await ask('prf-only', { credentialId: id, readBlob: false, prf: true })).prfFirst;
+    let words: string[];
+    try {
+      words = await openPhrase(payload, { prf, aead: deps.aead });
+    } catch (e) {
+      // A PRF output returned next to the blob could differ from a PRF-only assertion: one more try.
+      if (!(e instanceof PasskeyError) || e.code !== 'decrypt-failed' || steps.some((x) => x.startsWith('prf-only'))) throw e;
+      prf = (await ask('prf-only', { credentialId: id, readBlob: false, prf: true })).prfFirst;
+      words = await openPhrase(payload, { prf, aead: deps.aead });
+    }
+    return { words, credentialId: id, prf: !!prf, enc: payload.enc };
+  } catch (e) {
+    throw fail(e, id);
+  }
 }
 
 // ---------- account hint (iCloud Keychain companion of the phrase) ----------

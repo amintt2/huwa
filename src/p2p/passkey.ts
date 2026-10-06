@@ -9,7 +9,7 @@ import { HuwaPasskey } from '../../modules/huwa-passkey';
 import { isValidPhrase } from '@/social/identity';
 
 import { cloudBackup } from './cloud-backup';
-import type { Profile } from './contract';
+import type { Profile, RestoreOptions } from './contract';
 import { social } from './hooks';
 import {
   PasskeyError,
@@ -157,12 +157,36 @@ export async function createPasskey(me: Profile, onStep?: (s: SetupStep) => void
   }
 }
 
-/** Onboarding: passkey → blob → phrase → same restore path as typing the phrase. */
-export async function restoreWithPasskey(opts: { immediate?: boolean } = {}): Promise<Profile> {
-  const login = await loginWithPasskey({ native: nativeAdapter(), aead, random: randomBytes }, opts);
-  const profile = await social.restoreIdentity(login.words);
+export type PasskeyLogin = Awaited<ReturnType<typeof loginWithPasskey>>;
+
+/** Onboarding, step 1: passkey → blob → phrase (Face ID once; the result can be reused for retries). */
+export function readPasskeyAccount(opts: { immediate?: boolean } = {}): Promise<PasskeyLogin> {
+  return loginWithPasskey({ native: nativeAdapter(), aead, random: randomBytes, log: (m) => console.warn(`[huwa] ${m}`) }, opts);
+}
+
+/** Onboarding, step 2: same restore path as typing the phrase (RESTORE_NOT_FOUND included). */
+export async function restoreFromPasskeyLogin(login: PasskeyLogin, restore?: RestoreOptions): Promise<Profile> {
+  const profile = await social.restoreIdentity(login.words, restore);
   await setRecord({ credentialId: login.credentialId, identity: profile.key, createdAt: Date.now(), largeBlob: true, prf: login.prf, enc: login.enc });
   return profile;
+}
+
+/** Onboarding: passkey → blob → phrase → same restore path as typing the phrase. */
+export async function restoreWithPasskey(opts: { immediate?: boolean } = {}): Promise<Profile> {
+  return restoreFromPasskeyLogin(await readPasskeyAccount(opts));
+}
+
+/**
+ * Precise cause of a passkey failure, shown under the message so a report says what happened:
+ * code, the login steps (which extension answered) and the system's own text.
+ */
+export function passkeyDetail(e: unknown): string | undefined {
+  if (!e) return undefined;
+  const code = e instanceof PasskeyError ? e.code : (e as { code?: string })?.code;
+  const trace = e instanceof PasskeyError ? e.trace : undefined;
+  const native = e instanceof Error ? e.message : undefined;
+  const parts = [code, trace, native && native.length < 200 ? native : native?.slice(0, 200)].filter(Boolean);
+  return parts.length ? parts.join(' · ') : undefined;
 }
 
 /** French message for an error, or undefined when nothing should be shown (user cancelled). */
