@@ -5,14 +5,14 @@ import Ionicons from '@expo/vector-icons/Ionicons';
 import { router, type Href } from 'expo-router';
 import { ActivityIndicator, FlatList, RefreshControl, StyleSheet, View } from 'react-native';
 
-import { useOpenSourceItem } from '@/components/paperback';
+import { CloudflareButton, SourceErrorState, useOpenSourceItem } from '@/components/paperback';
 import { PosterTile, Rail } from '@/components/rails';
-import { Button, Txt } from '@/components/ui';
+import { Txt } from '@/components/ui';
 import { palette } from '@/data/anilist';
 import { loadSourceHome, useSourceHome } from '@/manga-ext/discover';
 import { getInstalled } from '@/manga-ext/registry';
 import type { ExtSearchItem, ExtSection } from '@/manga-ext/validate';
-import { C, S } from '@/theme/tokens';
+import { C, R, S } from '@/theme/tokens';
 
 const PLACEHOLDER = palette(null);
 
@@ -21,18 +21,22 @@ export function SourceHome({ sourceKey, bottomInset }: { sourceKey: string; bott
   const { open, isOpening } = useOpenSourceItem();
   const source = getInstalled(sourceKey);
 
-  if (home.state === 'error' || (home.state === 'ok' && !home.sections.length)) {
+  if (home.state === 'error') {
+    return <SourceErrorState sourceKey={sourceKey} error={home.error} blocked={home.blocked} onRetry={() => loadSourceHome(sourceKey, true)} />;
+  }
+  if (home.state === 'ok' && !home.sections.length) {
     return (
       <View style={styles.center}>
-        <Ionicons name={home.state === 'error' ? 'cloud-offline-outline' : 'albums-outline'} size={36} color={C.text2} />
-        <Txt v="label" style={{ textAlign: 'center' }}>{home.state === 'error' ? 'Source indisponible' : 'Pas de page d’accueil'}</Txt>
+        <Ionicons name="albums-outline" size={36} color={C.text2} />
+        <Txt v="label" style={{ textAlign: 'center' }}>Pas de page d’accueil</Txt>
         <Txt v="small" style={{ textAlign: 'center' }}>
-          {home.state === 'error' ? home.error : `${source?.name ?? 'Cette source'} ne propose pas de sections. Cherche un titre dans l’onglet Huwa : il sera trouvé dans tes sources.`}
+          {`${source?.name ?? 'Cette source'} ne propose pas de sections. Cherche un titre dans l’onglet Huwa : il sera trouvé dans tes sources.`}
         </Txt>
-        {home.state === 'error' && <Button small variant="soft" icon="refresh" label="Réessayer" onPress={() => loadSourceHome(sourceKey, true)} />}
       </View>
     );
   }
+  // Some rows blocked by Cloudflare (the home itself loaded): one banner with the button.
+  const blockedRow = Object.values(home.rows).find((r) => r.blocked)?.blocked;
   if (home.state !== 'ok') {
     return (
       <View style={styles.center}>
@@ -64,6 +68,15 @@ export function SourceHome({ sourceKey, bottomInset }: { sourceKey: string; bott
       refreshControl={<RefreshControl refreshing={false} onRefresh={() => loadSourceHome(sourceKey, true)} tintColor={C.text2} />}
       initialNumToRender={4}
       windowSize={5}
+      ListHeaderComponent={
+        blockedRow ? (
+          <View style={styles.banner}>
+            <Ionicons name="cloud-outline" size={18} color={C.accentText} />
+            <Txt v="small" style={{ flex: 1, fontSize: 13 }}>Certaines sections demandent une vérification Cloudflare.</Txt>
+            <CloudflareButton sourceKey={sourceKey} url={blockedRow.url} onVerified={() => loadSourceHome(sourceKey, true)} />
+          </View>
+        ) : null
+      }
       renderItem={({ item: s }) => {
         const row = home.rows[s.id];
         return (
@@ -72,7 +85,7 @@ export function SourceHome({ sourceKey, bottomInset }: { sourceKey: string; bott
             subtitle={s.subtitle}
             data={row?.items ?? []}
             loading={!row || row.state === 'loading'}
-            error={row?.state === 'error' ? row.error : undefined}
+            error={row?.state === 'error' ? (row.blocked ? 'Vérification Cloudflare requise.' : row.error) : undefined}
             empty="Aucun titre."
             tileWidth={s.kind === 'featured' || s.kind === 'large' ? 140 : 112}
             keyOf={(i) => i.mangaId}
@@ -86,5 +99,6 @@ export function SourceHome({ sourceKey, bottomInset }: { sourceKey: string; bott
 }
 
 const styles = StyleSheet.create({
+  banner: { flexDirection: 'row', alignItems: 'center', gap: S.sm, marginHorizontal: S.lg, padding: S.md, borderRadius: R.card, backgroundColor: C.surface, borderWidth: 1, borderColor: C.accentLine },
   center: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: S.sm, paddingHorizontal: S.xl, paddingBottom: 80 },
 });

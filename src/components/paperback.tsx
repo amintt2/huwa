@@ -10,8 +10,10 @@ import { Button, Cover, Press, Txt } from '@/components/ui';
 import { palette } from '@/data/anilist';
 import type { Series } from '@/data/catalog';
 import { useSourceSearch, type SourceResults } from '@/manga-ext/hooks';
-import { autoLink, linkManually, rejectLink, useAutoLink } from '@/manga-ext/autolink';
-import { openSourceManga, refreshLinked, setLinkLang, useSourceLink } from '@/manga-ext/link';
+import { autoLink, linkManually, probeCandidates, rejectLink, useAutoLink } from '@/manga-ext/autolink';
+import { verifySource } from '@/manga-ext/cloudflare';
+import { isCloudflareError, sourceErrorText } from '@/manga-ext/cloudflare-core';
+import { moveLink, openSourceManga, refreshLinked as refreshLinkedQuiet, refreshLinkedInteractive, searchCatalog, setLinkLang, useSourceLink } from '@/manga-ext/link';
 import type { RankedCandidate } from '@/manga-ext/match';
 import { getInstalled, useMangaExt, type InstalledSource } from '@/manga-ext/registry';
 import type { ExtSearchItem } from '@/manga-ext/validate';
@@ -38,26 +40,89 @@ const langLabel = (l: string) => (l === 'unknown' ? '?' : l.toUpperCase());
 
 /** Opens a source result: builds (or reuses) its Huwa page, then navigates to it. */
 async function openResult(source: InstalledSource, item: ExtSearchItem, seriesId?: string) {
-  const id = await openSourceManga(source.key, item.mangaId, { seriesId });
+  const id = await openSourceManga(source.key, item.mangaId, { seriesId, interactive: true });
   router.push(`/manhwa/${id}` as Href);
 }
 
-/** Opening a source title takes a few seconds (details, AniList match, chapters): one at a time, with a busy tile. */
+/** Alert for a title that couldn't be opened, with the way out when the site wants a check. */
+function openFailed(sourceKey: string, title: string, e: unknown, retry: () => void) {
+  if (isCloudflareError(e)) {
+    Alert.alert('Vérification Cloudflare requise', `${getInstalled(sourceKey)?.name ?? 'La source'} n’a pas laissé passer la vérification. Réessaie : la page du site va s’ouvrir.`, [
+      { text: 'Annuler', style: 'cancel' },
+      { text: 'Réessayer', onPress: retry },
+    ]);
+    return;
+  }
+  Alert.alert(title, sourceErrorText(e), [
+    { text: 'OK', style: 'cancel' },
+    { text: 'Réessayer', onPress: retry },
+  ]);
+}
+
+/**
+ * Opening a source title takes a few seconds (details, chapters, AniList match): one at a time,
+ * with a busy tile. A Cloudflare block opens the check, then the title opens.
+ */
 export function useOpenSourceItem() {
   const [opening, setOpening] = useState<string | null>(null);
   const open = async (sourceKey: string, item: Pick<ExtSearchItem, 'mangaId' | 'title'>) => {
     if (opening) return;
     setOpening(`${sourceKey}|${item.mangaId}`);
     try {
-      const id = await openSourceManga(sourceKey, item.mangaId);
+      const id = await openSourceManga(sourceKey, item.mangaId, { interactive: true });
       router.push(`/manhwa/${id}` as Href);
     } catch (e) {
-      Alert.alert(item.title, e instanceof Error ? e.message : 'Impossible d’ouvrir ce titre');
+      openFailed(sourceKey, item.title, e, () => open(sourceKey, item));
     } finally {
       setOpening(null);
     }
   };
   return { open, isOpening: (sourceKey: string, mangaId: string) => opening === `${sourceKey}|${mangaId}` };
+}
+
+/** "Cloudflare" button: opens the site so the user does the check; `onVerified` retries. */
+export function CloudflareButton({ sourceKey, url, onVerified, label = 'Cloudflare' }: { sourceKey: string; url?: string; onVerified?: () => void; label?: string }) {
+  const [busy, setBusy] = useState(false);
+  return (
+    <Button
+      small
+      variant="soft"
+      icon="cloud-outline"
+      label={busy ? 'Vérification…' : label}
+      disabled={busy}
+      accessibilityLabel={`Vérification Cloudflare de ${getInstalled(sourceKey)?.name ?? 'la source'}`}
+      onPress={async () => {
+        setBusy(true);
+        try {
+          if ((await verifySource(sourceKey, url)) === 'verified') onVerified?.();
+        } finally {
+          setBusy(false);
+        }
+      }}
+    />
+  );
+}
+
+/** Error state of a source screen: Cloudflare check needed, or source unreachable, with "Réessayer". */
+export function SourceErrorState({ sourceKey, error, blocked, onRetry }: { sourceKey: string; error?: string; blocked?: { url?: string }; onRetry: () => void }) {
+  const name = getInstalled(sourceKey)?.name ?? 'Cette source';
+  return (
+    <View style={styles.state} accessibilityRole="summary">
+      <View style={styles.stateIcon}>
+        <Ionicons name={blocked ? 'cloud-outline' : 'cloud-offline-outline'} size={26} color={C.accentText} />
+      </View>
+      <Txt v="label" style={{ textAlign: 'center' }}>{blocked ? 'Vérification Cloudflare requise' : 'Source injoignable'}</Txt>
+      <Txt v="small" style={{ textAlign: 'center', maxWidth: 320 }}>
+        {blocked
+          ? `${name} protège son site avec Cloudflare. Touche Cloudflare, coche la vérification sur la page du site, puis touche Terminé.`
+          : error || `${name} ne répond pas pour l’instant.`}
+      </Txt>
+      <View style={{ flexDirection: 'row', gap: S.sm, marginTop: S.sm }}>
+        {blocked && <CloudflareButton sourceKey={sourceKey} url={blocked.url} onVerified={onRetry} />}
+        <Button small variant={blocked ? 'ghost' : 'soft'} icon="refresh" label="Réessayer" onPress={onRetry} />
+      </View>
+    </View>
+  );
 }
 
 function ResultCard({ source, item, width, busy, onPress, headers }: { source: InstalledSource; item: ExtSearchItem; width: number; busy: boolean; onPress: () => void; headers?: Record<string, string> }) {
@@ -87,7 +152,7 @@ export function SourceResultsRail({ query, cardWidth }: { query: string; cardWid
     try {
       await openResult(r.source, item);
     } catch (e) {
-      Alert.alert(item.title, e instanceof Error ? e.message : 'Impossible d’ouvrir ce titre');
+      openFailed(r.source.key, item.title, e, () => open(r, item));
     } finally {
       setOpening(null);
     }
@@ -104,7 +169,12 @@ export function SourceResultsRail({ query, cardWidth }: { query: string; cardWid
             {r.state === 'loading' && <ActivityIndicator size="small" color={C.text2} />}
             {r.state === 'ok' && <Txt v="small" style={{ fontSize: 12 }}>{r.items.length ? `${r.items.length} résultat${r.items.length > 1 ? 's' : ''}` : 'Aucun résultat'}</Txt>}
           </View>
-          {r.state === 'error' && <Txt v="small" style={{ paddingHorizontal: S.lg, fontSize: 12 }} numberOfLines={2}>{r.error}</Txt>}
+          {r.state === 'error' && (
+            <View style={styles.inlineError}>
+              <Txt v="small" style={{ flex: 1, fontSize: 12 }} numberOfLines={2}>{r.blocked ? 'Le site demande une vérification Cloudflare.' : r.error}</Txt>
+              {r.blocked && <CloudflareButton sourceKey={r.source.key} url={r.blocked.url} onVerified={r.retry} />}
+            </View>
+          )}
           {r.items.length > 0 && (
             <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingHorizontal: S.lg, gap: S.md }} keyboardShouldPersistTaps="handled">
               {r.items.map((item) => (
@@ -126,17 +196,23 @@ export function SourcePanel({ series }: { series: Series }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [picking, setPicking] = useState(false);
+  const [associating, setAssociating] = useState(false);
   const source = link ? getInstalled(link.key) : undefined;
   const hasSources = installed.some((s) => s.enabled);
 
-  const refresh = async () => {
+  const refresh = async (quiet = false) => {
     if (busy || !link) return;
+    // The automatic refresh of a stale list never pops the Cloudflare page by itself.
+    if (quiet) {
+      refreshLinkedQuiet(series.id).catch(() => {});
+      return;
+    }
     setBusy(true);
     setError('');
     try {
-      await refreshLinked(series.id);
+      await refreshLinkedInteractive(series.id);
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Actualisation impossible');
+      setError(isCloudflareError(e) ? 'Vérification Cloudflare non terminée : chapitres non actualisés.' : sourceErrorText(e));
     } finally {
       setBusy(false);
     }
@@ -146,7 +222,7 @@ export function SourcePanel({ series }: { series: Series }) {
   const updatedAt = link?.updatedAt;
   useEffect(() => {
     if (updatedAt === undefined || Date.now() - updatedAt < REFRESH_AFTER) return;
-    const t = setTimeout(refresh, 0);
+    const t = setTimeout(() => refresh(true), 0);
     return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [series.id, updatedAt]);
@@ -158,6 +234,14 @@ export function SourcePanel({ series }: { series: Series }) {
     const t = setTimeout(() => autoLink(series.id).catch(() => {}), 300);
     return () => clearTimeout(t);
   }, [series.id, linked, hasSources]);
+
+  if (associating) {
+    return (
+      <View style={styles.panel}>
+        <CatalogPicker series={series} onClose={() => setAssociating(false)} />
+      </View>
+    );
+  }
 
   if (picking) {
     return (
@@ -183,7 +267,7 @@ export function SourcePanel({ series }: { series: Series }) {
           {busy ? (
             <ActivityIndicator color={C.text2} />
           ) : (
-            <Press onPress={refresh} style={styles.round} accessibilityLabel="Actualiser les chapitres">
+            <Press onPress={() => refresh()} style={styles.round} accessibilityLabel="Actualiser les chapitres">
               <Ionicons name="refresh" size={18} color={C.text} />
             </Press>
           )}
@@ -212,9 +296,19 @@ export function SourcePanel({ series }: { series: Series }) {
             })}
           </ScrollView>
         )}
-        <Pressable onPress={() => setPicking(true)} hitSlop={8} accessibilityRole="button" style={{ alignSelf: 'flex-start', minHeight: 28, justifyContent: 'center' }}>
-          <Txt v="small" color={C.accentText} style={{ fontSize: 12, ...F.semibold }}>Ce n’est pas le bon ?</Txt>
-        </Pressable>
+        <View style={{ flexDirection: 'row', gap: S.lg, flexWrap: 'wrap' }}>
+          <Pressable onPress={() => setPicking(true)} hitSlop={8} accessibilityRole="button" style={styles.link}>
+            <Txt v="small" color={C.accentText} style={{ fontSize: 12, ...F.semibold }}>{series.id.startsWith('px') ? 'Changer de titre source' : 'Ce n’est pas le bon ?'}</Txt>
+          </Pressable>
+          {series.id.startsWith('px') ? (
+            <Pressable onPress={() => setAssociating(true)} hitSlop={8} accessibilityRole="button" style={styles.link}>
+              <Txt v="small" color={C.accentText} style={{ fontSize: 12, ...F.semibold }}>Associer à une fiche Huwa</Txt>
+            </Pressable>
+          ) : null}
+        </View>
+        {series.id.startsWith('px') && !associating && (
+          <Txt v="small" style={{ fontSize: 12 }}>Page de la source seule : associe-la à sa fiche Huwa pour retrouver l’anime, les notes et la communauté.</Txt>
+        )}
         {!!error && <Txt v="small" color="#FF8A8A" style={{ fontSize: 12 }}>{error}</Txt>}
       </View>
     );
@@ -238,18 +332,125 @@ export function SourcePanel({ series }: { series: Series }) {
 
   const searching = auto.status === 'searching';
   const proposals = (auto.match?.candidates ?? []).filter((c) => !auto.match?.rejected.includes(`${c.sourceKey}|${c.mangaId}`));
+  const top = proposals[0];
   return (
-    <View style={[styles.panel, { flexDirection: 'row', alignItems: 'center', gap: S.md }]}>
-      {searching ? <ActivityIndicator color={C.text2} /> : <Ionicons name="search" size={18} color={C.text2} />}
-      <View style={{ flex: 1, gap: 2 }}>
-        <Txt v="label" style={{ fontSize: 14 }}>{searching ? 'Recherche dans tes sources…' : 'Pas encore lié à une source'}</Txt>
-        {!searching && (
-          <Txt v="small" style={{ fontSize: 12 }}>
-            {proposals.length ? `${proposals.length} titre${proposals.length > 1 ? 's' : ''} proche${proposals.length > 1 ? 's' : ''} trouvé${proposals.length > 1 ? 's' : ''}` : 'Aucune correspondance sûre'}
-          </Txt>
-        )}
+    <View style={styles.panel}>
+      <View style={{ flexDirection: 'row', alignItems: 'center', gap: S.md }}>
+        {searching ? <ActivityIndicator color={C.text2} /> : <Ionicons name="search" size={18} color={C.text2} />}
+        <View style={{ flex: 1, gap: 2 }}>
+          <Txt v="label" style={{ fontSize: 14 }}>{searching ? 'Recherche dans tes sources…' : 'Pas encore lié à une source'}</Txt>
+          {!searching && (
+            <Txt v="small" style={{ fontSize: 12 }}>
+              {proposals.length ? `${proposals.length} titre${proposals.length > 1 ? 's' : ''} proche${proposals.length > 1 ? 's' : ''} trouvé${proposals.length > 1 ? 's' : ''}` : auto.blocked ? 'Une source demande une vérification' : 'Aucune correspondance sûre'}
+            </Txt>
+          )}
+        </View>
+        {!searching && <Button small variant="soft" label="Choisir" onPress={() => setPicking(true)} />}
       </View>
-      {!searching && <Button small variant="soft" label="Choisir" onPress={() => setPicking(true)} />}
+      {!searching && top && <Suggestion seriesId={series.id} candidate={top} />}
+      {!searching && auto.blocked && (
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: S.sm }}>
+          <Txt v="small" style={{ flex: 1, fontSize: 12 }}>{getInstalled(auto.blocked.sourceKey)?.name ?? 'Une source'} demande une vérification Cloudflare.</Txt>
+          <CloudflareButton sourceKey={auto.blocked.sourceKey} url={auto.blocked.url} onVerified={() => autoLink(series.id, { force: true }).catch(() => {})} />
+        </View>
+      )}
+    </View>
+  );
+}
+
+/** "Trouvé dans Asura Scans · 98 ch.": best proposal below the automatic threshold, one tap to link. */
+function Suggestion({ seriesId, candidate: c }: { seriesId: string; candidate: RankedCandidate }) {
+  const [busy, setBusy] = useState(false);
+  const ref = `${c.sourceKey}|${c.mangaId}`;
+  // Chapter count of the best proposals, fetched once in the background (cached with them).
+  useEffect(() => {
+    let cancelled = false;
+    const t = setTimeout(() => probeCandidates(seriesId, 2, () => cancelled).catch(() => {}), 600);
+    return () => {
+      cancelled = true;
+      clearTimeout(t);
+    };
+  }, [seriesId, ref]);
+  const name = getInstalled(c.sourceKey)?.name ?? 'une source';
+  const link = async () => {
+    if (busy) return;
+    setBusy(true);
+    try {
+      await linkManually(seriesId, c);
+    } catch (e) {
+      Alert.alert(c.title, sourceErrorText(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <View style={styles.pickRow}>
+      <Cover palette={PLACEHOLDER} image={c.image} width={40} height={56} radius={8} />
+      <View style={{ flex: 1, gap: 2 }}>
+        <Txt v="small" style={{ fontSize: 12 }} numberOfLines={1}>Trouvé dans {name}{c.chapters !== undefined ? ` · ${c.chapters} ch.` : ''}</Txt>
+        <Txt v="label" numberOfLines={2} style={{ fontSize: 14 }}>{c.title}</Txt>
+      </View>
+      {busy ? <ActivityIndicator color={C.text2} /> : <Button small variant="soft" icon="link" label="Lier" onPress={link} accessibilityLabel={`Lier ${c.title} de ${name}`} />}
+    </View>
+  );
+}
+
+/** "Associer à une fiche Huwa": AniList search, the chosen page takes over the source link. */
+function CatalogPicker({ series, onClose }: { series: Series; onClose: () => void }) {
+  const [query, setQuery] = useState(series.title);
+  const [state, setState] = useState<{ loading: boolean; items: { media: { id: number }; series: Series }[]; error?: string }>({ loading: true, items: [] });
+  const [moving, setMoving] = useState<string | null>(null);
+  useEffect(() => {
+    const q = query.trim();
+    if (q.length < 2) return;
+    const ctrl = new AbortController();
+    const t = setTimeout(() => {
+      setState((s) => ({ ...s, loading: true, error: undefined }));
+      searchCatalog(q, ctrl.signal).then(
+        (items) => setState({ loading: false, items }),
+        (e) => !ctrl.signal.aborted && setState({ loading: false, items: [], error: e instanceof Error ? e.message : 'Recherche impossible' }),
+      );
+    }, 400);
+    return () => {
+      clearTimeout(t);
+      ctrl.abort();
+    };
+  }, [query]);
+  const pick = async (target: Series) => {
+    if (moving) return;
+    setMoving(target.id);
+    try {
+      const id = await moveLink(series.id, target);
+      onClose();
+      router.replace(`/manhwa/${id}` as Href);
+    } catch (e) {
+      Alert.alert(target.title, e instanceof Error ? e.message : 'Association impossible');
+    } finally {
+      setMoving(null);
+    }
+  };
+  return (
+    <View style={{ gap: S.md }}>
+      <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+        <Txt v="caption">Associer à une fiche Huwa</Txt>
+        <Press onPress={onClose} hitSlop={10} accessibilityLabel="Fermer">
+          <Ionicons name="close" size={18} color={C.text2} />
+        </Press>
+      </View>
+      <TextInput value={query} onChangeText={setQuery} placeholder="Titre sur AniList" placeholderTextColor={C.text2} style={styles.input} autoCorrect={false} accessibilityLabel="Rechercher une fiche Huwa" />
+      {state.loading && <ActivityIndicator color={C.text2} />}
+      {!!state.error && <Txt v="small" style={{ fontSize: 12 }}>{state.error}</Txt>}
+      {!state.loading && !state.error && !state.items.length && <Txt v="small" style={{ fontSize: 12 }}>Aucune fiche trouvée</Txt>}
+      {state.items.slice(0, 6).map(({ series: s }) => (
+        <Press key={s.id} onPress={() => pick(s)} style={styles.pickRow} accessibilityRole="button" accessibilityLabel={`Associer à ${s.title}`}>
+          <Cover palette={s.palette} image={s.image} width={40} height={56} radius={8} />
+          <View style={{ flex: 1, gap: 2 }}>
+            <Txt v="label" numberOfLines={2} style={{ fontSize: 14 }}>{s.title}</Txt>
+            <Txt v="small" numberOfLines={1} style={{ fontSize: 12 }}>{[s.year || '', s.anime ? 'Anime + manhwa' : 'Manhwa', s.manhwa?.chapters.length ? `${s.manhwa.chapters.length} ch.` : ''].filter(Boolean).join(' · ')}</Txt>
+          </View>
+          {moving === s.id ? <ActivityIndicator color={C.text2} /> : <Ionicons name="git-merge-outline" size={18} color={C.accentText} />}
+        </Press>
+      ))}
     </View>
   );
 }
@@ -329,10 +530,14 @@ function LinkPicker({ series, candidates, current, onClose }: { series: Series; 
 
 const styles = StyleSheet.create({
   busy: { backgroundColor: 'rgba(5,7,13,0.55)', alignItems: 'center', justifyContent: 'center' },
+  state: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: S.sm, paddingHorizontal: S.xl, paddingBottom: 80 },
+  stateIcon: { width: 56, height: 56, borderRadius: 28, backgroundColor: C.accentSoft, alignItems: 'center', justifyContent: 'center', marginBottom: S.xs },
+  inlineError: { flexDirection: 'row', alignItems: 'center', gap: S.sm, paddingHorizontal: S.lg },
   railHead: { flexDirection: 'row', alignItems: 'center', gap: S.sm, paddingHorizontal: S.lg },
   panel: { gap: S.md, padding: S.md, borderRadius: R.card, borderCurve: 'continuous', backgroundColor: C.surface, borderWidth: 1, borderColor: C.border },
   round: { width: 36, height: 36, borderRadius: 18, backgroundColor: C.elevated, alignItems: 'center', justifyContent: 'center' },
   lang: { minHeight: 30, minWidth: 44, paddingHorizontal: S.md, alignItems: 'center', justifyContent: 'center', borderRadius: R.control, borderWidth: 1, borderColor: C.border, backgroundColor: C.elevated },
+  link: { alignSelf: 'flex-start', minHeight: 28, justifyContent: 'center' },
   pickRow: { flexDirection: 'row', alignItems: 'center', gap: S.md, paddingVertical: 4 },
   input: {
     minHeight: 40, paddingHorizontal: S.md, borderRadius: R.control, borderCurve: 'continuous', backgroundColor: C.elevated,
