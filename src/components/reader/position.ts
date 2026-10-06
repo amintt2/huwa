@@ -46,6 +46,8 @@ function persist() {
 }
 
 export const isReaderHydrated = () => hydrated;
+/** Old vertical / paged switch (now part of the reader settings). */
+export const getReaderMode = () => saved.mode;
 export const getPosition = (chapterId: string): ReadPosition | undefined => saved.positions[chapterId];
 
 export function savePosition(chapterId: string, pos: ReadPosition) {
