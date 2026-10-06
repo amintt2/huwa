@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, huwa-v1]
   pull_request:
 
 concurrency:
@@ -41,5 +41,28 @@ jobs:
             echo "Pas de script test : étape ignorée."
           fi
 
+      - name: Tests P2P (worklet Holepunch, restauration, relais, signalements)
+        run: |
+          npm run build:worklet
+          npm run test:p2p
+
       - name: Empreinte runtime (informatif)
         run: npx expo-updates fingerprint:generate --platform android | head -c 400 || true
+
+  torrent-engine:
+    name: moteur torrent (Rust)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: native/huwa-torrent-core
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: native/huwa-torrent-core
+      # Tests hors réseau : sélection de fichier, sondes (pair local factice), serveur Range,
+      # priorités de lecture, suppression pendant la résolution, arrêt propre. Les tests réseau
+      # (essaims publics) sont marqués #[ignore].
+      - run: cargo test --locked
