@@ -12,7 +12,10 @@
 // Answers served from the disk cache (registry.ts) may carry expired links: a failure on one of
 // them refetches the addons once and gives that source another chance before dropping it.
 // `preview` (pre-search from a detail page / the home screen): same search and race, but a
-// torrent is only resolved through a debrid service (never the on-device engine).
+// torrent is only resolved through a debrid service. On an unmetered network the torrent race
+// runs too (probes: metadata + peers, no piece) and the winner is pre-warmed: the engine fetches
+// its first pieces and container index, then parks it (src/torrent/index.ts `prewarmTorrent`).
+// The tap then reuses the race winner (`peerWins`) and finds those pieces on disk.
 // Torrent race: when only torrents the on-device engine would download remain (nothing cached by
 // a debrid service, no direct link), the best few (language first) are probed in parallel by the
 // engine — metadata + answering peers, no piece — and the first healthy swarm is started; the
@@ -20,10 +23,23 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 
 import { useSettings } from '@/settings/settings';
-import { useRaceBudget, useTorrentProbeBudget } from '@/settings/network';
+import { useRaceBudget, useTorrentProbeBudget, useUnmetered } from '@/settings/network';
 import { resolveTorrent, resolveTorrentViaDebrid, useCachedHashes, useTorrentResolver } from '@/debrid/resolve';
-import { canProbeTorrents, useTorrentSettings } from '@/torrent';
-import { decidePeerRace, packKeys, peerLabel, probeTargets, shouldWiden, unpackKeys, wrongTorrents, type PeerCandidate, type PeerProbe } from '@/torrent/peer-race';
+import { canProbeTorrents, dropTorrent, holdTorrent, prewarmTorrent, useTorrentSettings } from '@/torrent';
+import { engineHashOf } from '@/torrent/stream-input';
+import {
+  decidePeerRace,
+  packKeys,
+  peerLabel,
+  probeTargets,
+  reusableWin,
+  shouldWiden,
+  unpackKeys,
+  wrongTorrents,
+  type PeerCandidate,
+  type PeerProbe,
+  type PeerWin,
+} from '@/torrent/peer-race';
 import { peerClock, usePeerRace, type PeerTarget } from '@/torrent/use-peer-race';
 
 import { langScore } from './audio';
@@ -50,6 +66,13 @@ const NO_SUBS: NonNullable<AddonStream['subtitles']> = [];
 const RACE_TORRENTS = 2;
 
 const isLoopback = (u: string) => /^https?:\/\/(127\.|localhost[:/]|\[::1\])/i.test(u);
+
+/**
+ * Torrent race winners by episode (`seriesId:episode`), from the pre-search or an earlier watch:
+ * the tap starts that torrent at once instead of racing again (its metadata and peers are still
+ * in the engine's probe cache). See `reusableWin`.
+ */
+const peerWins = new Map<string, PeerWin>();
 
 export type SourceOptions = {
   /** false = idle (used to prefetch the next episode only once armed). */
@@ -79,6 +102,7 @@ export function useSource(seriesId: string, episode: number, { enabled = true, p
   const probed = useProbedUrls(streams, enabled);
   const budget = useRaceBudget();
   const torrentBudget = useTorrentProbeBudget();
+  const unmetered = useUnmetered();
   // Re-render when the engine is switched on/off or "Wi-Fi only" changes (`canProbeTorrents`).
   useTorrentSettings();
   const peerScope = `${seriesId}:${episode}`;
@@ -254,9 +278,17 @@ export function useSource(seriesId: string, episode: number, { enabled = true, p
 
   // ---- torrent race (on-device engine): uncached torrents probed in parallel ----
   const engineTorrent = (s: AddonStream) => isTorrent(s) && cachedOf(s) !== true;
+  // Pre-search: probes (no piece) only on an unmetered network, where the winner is pre-warmed.
+  const presearchProbes = preview && unmetered;
   const peerWanted =
-    enabled && !preview && !manual && !lockedStream && torrentBudget.base > 0 && canProbeTorrents() && pool.some(engineTorrent) && !pool.some(safe);
+    enabled && (!preview || presearchProbes) && !manual && !lockedStream && torrentBudget.base > 0 && canProbeTorrents() && pool.some(engineTorrent) && !pool.some(safe);
   const peerPool = peerWanted ? pool.filter(engineTorrent) : [];
+  // Decided a moment ago for this episode (pre-search, previous visit): no new race.
+  const recentWin = peerWins.get(peerScope);
+  // When this screen opened (the tap): a race decided before it is reused, one decided after is ours.
+  const [mountedAt] = useState(() => Date.now());
+  const reuse = peerWanted && !preview ? reusableWin(recentWin, mountedAt, peerPool.map(streamKey), bad.length) : undefined;
+  const presearched = reuse ? peerPool.find((s) => streamKey(s) === reuse.key) : undefined;
   // A new round whenever a source failed (e.g. the winner would not start): the next best
   // torrents are probed again instead of being started blindly one by one.
   const raceScope = `${peerScope}#${bad.length}`;
@@ -279,7 +311,7 @@ export function useSource(seriesId: string, episode: number, { enabled = true, p
     [peerKeys, episode],
   );
   // Armed only with something to probe: a race without probes would wait for its deadline forever.
-  const peerOn = peerWanted && peerTargets.length > 0;
+  const peerOn = peerWanted && peerTargets.length > 0 && !presearched;
   const peerCands = (probes: Record<string, PeerProbe>): PeerCandidate[] =>
     peerPool.map((s) => ({ key: streamKey(s), lang: langOf(s), probe: probes[streamKey(s)] }));
   const decidePeers = (probes: Record<string, PeerProbe>, startedAt: number | null) =>
@@ -312,7 +344,13 @@ export function useSource(seriesId: string, episode: number, { enabled = true, p
   if (newlyWrong.length) setWrong({ scope: peerScope, keys: [...wrongKeys, ...newlyWrong] });
 
   // No verdict from the probes (none playable): the plain ranking, as before.
-  const peerPick = peerDecision?.key ? pool.find((s) => streamKey(s) === peerDecision.key) : undefined;
+  const peerPick = presearched ?? (peerDecision?.key ? pool.find((s) => streamKey(s) === peerDecision.key) : undefined);
+  const peerPickKey = peerPick ? streamKey(peerPick) : undefined;
+  useEffect(() => {
+    if (peerPickKey && peerOn) peerWins.set(peerScope, { key: peerPickKey, at: Date.now(), fileIdx: peer.probes[peerPickKey]?.fileIdx });
+    // Recorded when the race decides (the probes of that moment).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [peerPickKey, peerOn, peerScope]);
   const auto = peerPick ?? (peerWaitMs ? undefined : decision?.key ? pool.find((s) => streamKey(s) === decision.key) : undefined);
 
   const current = (manual ? ranked.find((s) => streamKey(s) === manual) : undefined) ?? lockedStream ?? auto;
@@ -354,10 +392,10 @@ export function useSource(seriesId: string, episode: number, { enabled = true, p
     if (!enabled || !current || !currentKey || !isTorrent(current) || !resolverLabel || done?.url || done?.error) return;
     const ctrl = new AbortController();
     // A season pack without `fileIdx`: the file the probe found for this episode.
-    const fileIdx = current.fileIdx ?? peer.probes[currentKey]?.fileIdx ?? undefined;
+    const fileIdx = current.fileIdx ?? peer.probes[currentKey]?.fileIdx ?? (recentWin?.key === currentKey ? recentWin.fileIdx : undefined) ?? undefined;
     const ref = { infoHash: current.infoHash!, fileIdx, filename: current.behaviorHints?.filename, sources: current.sources, episode };
     // Pre-search: debrid only (an on-device torrent would start downloading).
-    (preview ? resolveTorrentViaDebrid(ref, ctrl.signal) : resolveTorrent(ref, ctrl.signal))
+    (preview ? resolveTorrentViaDebrid(ref, ctrl.signal) : resolveTorrent(ref, ctrl.signal, { notCached: cachedOf(current) === false }))
       .then((r) => r && setResolved((m) => ({ ...m, [currentKey]: { url: r.url, via: r.via } })))
       .catch((e) => {
         if (preview) return;
@@ -366,6 +404,30 @@ export function useSource(seriesId: string, episode: number, { enabled = true, p
     return () => ctrl.abort();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentKey, resolverLabel, enabled, preview, resolvedState]);
+
+  // Pre-search on an unmetered network: the race winner is pre-warmed (first pieces + container
+  // index on disk), held while this pre-search lives, released when it goes (another target, the
+  // tap: the watch screen then holds it).
+  const prewarm = presearchProbes && peerPick && engineTorrent(peerPick) ? peerPick : undefined;
+  const prewarmKey = prewarm ? streamKey(prewarm) : undefined;
+  useEffect(() => {
+    if (!prewarm || !prewarmKey) return;
+    const hash = prewarm.infoHash!.toLowerCase();
+    const fileIdx = prewarm.fileIdx ?? peer.probes[prewarmKey]?.fileIdx ?? undefined;
+    holdTorrent(hash);
+    void prewarmTorrent({ infoHash: hash, fileIdx, sources: prewarm.sources, name: prewarm.behaviorHints?.filename }).catch(() => {});
+    return () => dropTorrent(hash);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [prewarmKey]);
+
+  // The engine torrent this screen plays (or prefetches) is held while it does; left behind
+  // (other episode, other source, screen closed), it is released in the engine.
+  const heldHash = !preview ? engineHashOf(url) : null;
+  useEffect(() => {
+    if (!heldHash) return;
+    holdTorrent(heldHash);
+    return () => dropTorrent(heldHash);
+  }, [heldHash]);
 
   // ---- upgrade: strictly better quality, same language fit, proved fast ----
   const sideOf = (s: AddonStream): UpgradeSide => ({

@@ -31,6 +31,21 @@ export const PEER_POLL_MS = 200;
  */
 export const LANG_GRACE_MS = 500;
 
+/** A race decided for an episode (pre-search or an earlier visit): winner key, when, its file. */
+export type PeerWin = { key: string; at: number; fileIdx?: number | null };
+/** A decided race is reused this long (the engine keeps the probe's metadata and peers 20 min). */
+export const PEER_WIN_TTL_MS = 3 * 60_000;
+
+/**
+ * The tap reuses the race decided a moment ago for the same episode (pre-search on the detail
+ * page) instead of racing again: when it is recent, its winner is still a candidate, and no
+ * source failed since (a failure starts a new round).
+ */
+export function reusableWin(win: PeerWin | undefined, nowMs: number, candidateKeys: string[], failed: number): PeerWin | undefined {
+  if (!win || failed > 0 || nowMs - win.at >= PEER_WIN_TTL_MS || nowMs < win.at) return undefined;
+  return candidateKeys.includes(win.key) ? win : undefined;
+}
+
 /** What the decision needs from a probe (+ when it ended, ms since the race started). */
 export type PeerProbe = Pick<ProbeStatus, 'state' | 'peers' | 'connected' | 'local'> & {
   fileIdx?: number | null;

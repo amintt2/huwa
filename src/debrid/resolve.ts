@@ -82,9 +82,16 @@ async function resolveWith(r: TorrentResolver, t: TorrentRef, signal?: AbortSign
   return url;
 }
 
-/** Resolves a torrent to an HTTP(S) URL. Throws when no resolver can play it. */
-export async function resolveTorrent(t: TorrentRef, signal?: AbortSignal): Promise<{ url: string; via: string }> {
-  const list = resolvers();
+/**
+ * Resolves a torrent to an HTTP(S) URL. Throws when no resolver can play it.
+ * `notCached`: the debrid service already said it does not have this torrent (cache check): it
+ * is skipped, the on-device engine goes first (asking it again cost a round trip, or a cloud
+ * download that never answers in time, before the engine even started).
+ */
+export async function resolveTorrent(t: TorrentRef, signal?: AbortSignal, { notCached = false } = {}): Promise<{ url: string; via: string }> {
+  const all = resolvers();
+  const engines = notCached && getDebrid() ? all.slice(1) : all;
+  const list = engines.length ? engines : all;
   if (!list.length) throw new DebridError('Aucun service débrid configuré');
   for (const r of list) {
     const url = cached(r, t);

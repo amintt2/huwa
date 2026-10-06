@@ -17,6 +17,7 @@ import { useEffect, useState } from 'react';
 import { Alert } from 'react-native';
 
 import Native from '../../modules/huwa-torrent';
+import { createHolds } from './hold';
 import { getTorrentSettings, hydrateTorrentSettings, setTorrentSettings } from './settings';
 import { startStreamInput, type TorrentStreamLike } from './stream-input';
 import type { EngineStats, ProbeInput, ProbeStatus, StartStreamInput, StreamHandle, TorrentStatus } from './types';
@@ -96,6 +97,31 @@ export const setQuota = async (quotaBytes: number) => {
 // Metadata + peers answering a handshake, never a piece; the call returns at once and the probe
 // runs in the engine (bounded: 6 at a time, 8 s by default). A stream started afterwards on a
 // probed torrent reuses its metadata and peers.
+
+// ---- lifetime of a started torrent (see ./hold.ts) ----
+
+/** Ends a torrent's playback in the engine and pauses it (cheap; `startStream` brings it back). */
+export const releaseTorrent = (id: string, at?: number) => call<boolean>('release', { id, at });
+
+const holds = createHolds((hash, at) => {
+  if (isAvailable()) void releaseTorrent(hash, at).catch(() => {});
+});
+/** The caller uses this engine torrent (watch screen source, prefetch, pre-warm) until `dropTorrent`. */
+export const holdTorrent = (hash: string) => holds.hold(hash);
+export const dropTorrent = (hash: string) => holds.drop(hash);
+
+/**
+ * Pre-warm before the tap (pre-search, unmetered network only): the engine fetches the first
+ * pieces and the container index of the file, then parks the torrent. The tap's `startStream`
+ * finds them on disk. Same arguments as `startStream`; released like any held torrent.
+ */
+export async function prewarmTorrent(stream: TorrentStreamLike): Promise<StreamHandle | null> {
+  if (!stream.infoHash || !isAvailable()) return null;
+  await hydrateTorrentSettings();
+  const s = getTorrentSettings();
+  if (!s.enabled || !s.legalAccepted || isMeteredNow()) return null;
+  return call<StreamHandle>('prewarm', startStreamInput({ ...stream, infoHash: stream.infoHash }, false));
+}
 
 export const probeStart = (input: ProbeInput) => call<ProbeStatus>('probeStart', input);
 /** Statuses of the given probes (unknown / expired ids are left out). */

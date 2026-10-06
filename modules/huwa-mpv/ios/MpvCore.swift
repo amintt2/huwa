@@ -162,6 +162,11 @@ final class MpvCore {
       runCommand(ctx, ["change-list", "http-header-fields", "clr", ""])
       for f in fields { runCommand(ctx, ["change-list", "http-header-fields", "append", f]) }
       mpv_set_property_string(ctx, "start", start > 1 ? String(format: "%.3f", start) : "none")
+      // Resume: open on the keyframe before the saved position instead of decoding up to it
+      // (a precise seek needs every frame since that keyframe: up to a GOP, several MiB more to
+      // download first — measured with native/huwa-torrent-core/bench). Back to precise seeks
+      // after the first frame (see MPV_EVENT_PLAYBACK_RESTART).
+      mpv_set_property_string(ctx, "hr-seek", start > 1 ? "no" : "default")
       mpv_set_property_string(ctx, "pause", autoplay ? "no" : "yes")
       mpv_set_property_string(ctx, "sid", "no")
       // The rotation nudge (refreshOutputSize) leaves an aspect override: never carry it to the next file.
@@ -237,6 +242,7 @@ final class MpvCore {
         // the first frame on screen (a `start` position included). Reported once per file.
         if loaded && !firstFrameSent {
           firstFrameSent = true
+          mpv_set_property_string(ctx, "hr-seek", "default")
           main { $0.mpvState(["firstFrame": true]) }
         }
       case MPV_EVENT_VIDEO_RECONFIG:
