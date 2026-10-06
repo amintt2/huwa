@@ -4,6 +4,7 @@ import { router, useLocalSearchParams } from 'expo-router';
 import { useMemo, useState } from 'react';
 import { ScrollView, StyleSheet, TextInput, View } from 'react-native';
 
+import { EmptyState } from '@/components/feedback';
 import { SheetTitle } from '@/components/screen';
 import { Segmented } from '@/components/states';
 import { Button, Press, Txt } from '@/components/ui';
@@ -54,8 +55,8 @@ export default function MappingSheet() {
 
   if (!series?.anime || !ctx) {
     return (
-      <View style={styles.sheet}>
-        <Txt v="body">Cette série n’a pas de correspondance anime ↔ manhwa à corriger.</Txt>
+      <View style={{ flex: 1, backgroundColor: C.surface }}>
+        <EmptyState icon="swap-horizontal" tone="neutral" title="Rien à corriger" text="Cette série n’a pas de correspondance anime ↔ manhwa." action="Fermer" actionIcon="close" onAction={() => router.back()} />
       </View>
     );
   }
