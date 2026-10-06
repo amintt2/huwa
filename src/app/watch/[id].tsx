@@ -24,7 +24,7 @@ import { SourceButton, SourcesMenu } from '@/components/sources-menu';
 import { useStreamPolicy } from '@/settings/network';
 import { useWatchTrace } from '@/stats/use-watch-trace';
 import { useSettings } from '@/settings/settings';
-import { Button, Chip, Cover, IconButton, Press, Txt } from '@/components/ui';
+import { ActionTile, Chip, Cover, IconButton, Press, Txt } from '@/components/ui';
 import { chapterAfterEpisode } from '@/data/bridge';
 import { episodeLabel, getEpisode, useCatalog } from '@/data/catalog';
 import { useMappingSync } from '@/data/mapping-sync';
@@ -33,7 +33,7 @@ import { flushPendingWrites } from '@/store/persist';
 import { getState, markEpisodeDone, saveEpisodeProgress, toggleMyList, useStore } from '@/store/store';
 import { enableTorrentEngine, getTorrentSettings, isAvailable as torrentEngineLinked, useTorrentSettings } from '@/torrent';
 import { isStoreBuild } from '@/config/channel';
-import { C, S } from '@/theme/tokens';
+import { C, R, S, SHADOW } from '@/theme/tokens';
 
 // A player crash stays on this route (retry / back) instead of taking the whole app down.
 export { ErrorScreen as ErrorBoundary } from '@/components/error-screen';
@@ -210,25 +210,24 @@ function WatchScreen({ id }: { id: string }) {
   const header = (
     <View style={{ paddingHorizontal: S.lg, paddingTop: S.md, paddingBottom: S.lg, gap: S.md }}>
       <View style={{ gap: 6 }}>
-        <View style={{ flexDirection: 'row', alignItems: 'center', gap: S.sm }}>
+        <Press onPress={() => router.push(`/anime/${series.id}`)} scaleTo={0.98} accessibilityRole="link" accessibilityLabel={`${series.title}, saison 1. Ouvrir la fiche`}
+          style={{ flexDirection: 'row', alignItems: 'center', gap: S.sm, alignSelf: 'flex-start', minHeight: 28 }}>
           <Chip kind="anime" />
-          <Press onPress={() => router.push(`/anime/${series.id}`)}>
-            <Txt v="small" style={{ fontSize: 13 }}>{series.title} · S1</Txt>
-          </Press>
-        </View>
-        <Txt v="title">{episodeLabel(episode)}</Txt>
+          <Txt v="small" color={C.body} numberOfLines={1} style={{ flexShrink: 1, fontWeight: '600' }}>{series.title} · S1</Txt>
+          <Ionicons name="chevron-forward" size={13} color={C.text3} />
+        </Press>
+        <Txt v="title" accessibilityRole="header">{episodeLabel(episode)}</Txt>
       </View>
 
-      <View style={{ flexDirection: 'row', gap: S.sm, flexWrap: 'wrap' }}>
-        <Button small variant="soft" icon={inList ? 'checkmark' : 'add'} label="Ma liste" onPress={() => toggleMyList(series.id)} />
-        <Button small variant="soft" icon="chatbubble-outline" label={`${count}`}
+      <View style={styles.tiles}>
+        <ActionTile icon={inList ? 'checkmark' : 'add'} label="Ma liste" active={inList} onPress={() => toggleMyList(series.id)} />
+        <ActionTile icon="chatbubble-outline" label={count ? `${count}` : 'Commenter'} accessibilityLabel={`Commentaires, ${count}`}
           onPress={() => router.push({ pathname: '/comments', params: { target, kind: 'anime' } })} />
         {/* App Store flavor: no episode downloads (their sources are extensions). */}
         {!isStoreBuild && (
-          <Button
-            small
-            variant="soft"
+          <ActionTile
             icon={dlItem?.status === 'done' ? 'checkmark-circle' : 'arrow-down-circle-outline'}
+            active={dlItem?.status === 'done'}
             label={!dlItem ? 'Télécharger' : dlItem.status === 'done' ? 'Téléchargé' : dlItem.status === 'failed' ? 'Échec' : 'En cours'}
             onPress={() => setDlOpen(true)}
           />
@@ -248,23 +247,23 @@ function WatchScreen({ id }: { id: string }) {
       )}
       {mismatch && (
         <Press onPress={() => setMenuOpen(true)} style={styles.langWarn} accessibilityRole="button" accessibilityLabel={`${mismatch}. Changer de source`}>
-          <Ionicons name="language-outline" size={18} color="#F5B544" />
+          <Ionicons name="language-outline" size={18} color={C.star} style={{ marginTop: 1 }} />
           <View style={{ flex: 1, gap: 2 }}>
             <Txt v="label" style={{ fontSize: 14 }}>{mismatch}</Txt>
-            <Txt v="small">Aucune source ne correspond à tes langues pour l’instant. Touche pour choisir une autre source.</Txt>
+            <Txt v="small" color={C.body}>Aucune source ne correspond à tes langues pour l’instant. Touche pour choisir une autre source.</Txt>
           </View>
         </Press>
       )}
 
       {next && (
         <Press onPress={() => router.replace(`/watch/${next.id}`)} style={styles.next} accessibilityLabel={`Suivant : ${episodeLabel(next)}`}>
-          <Cover palette={series.palette} image={series.image} width={96} height={56} radius={10} />
+          <Cover palette={series.palette} image={series.image} width={104} height={60} radius={8} />
           <View style={{ flex: 1, gap: 3 }}>
-            <Txt v="caption" color={C.accentText}>À SUIVRE</Txt>
-            <Txt v="label" numberOfLines={1}>{episodeLabel(next)}</Txt>
+            <Txt v="caption" color={C.accentText}>À suivre</Txt>
+            <Txt v="label" numberOfLines={2}>{episodeLabel(next)}</Txt>
           </View>
-          <View style={styles.nextPlay}>
-            <IconButton icon="play" label="Lire" size={40} tone="solid" color={C.white} onPress={() => router.replace(`/watch/${next.id}`)} />
+          <View style={styles.nextPlay} accessibilityElementsHidden importantForAccessibility="no-hide-descendants">
+            <Ionicons name="play" size={18} color={C.white} style={{ marginLeft: 2 }} />
           </View>
         </Press>
       )}
@@ -274,8 +273,8 @@ function WatchScreen({ id }: { id: string }) {
       )}
 
       <View style={{ flexDirection: 'row', alignItems: 'baseline', gap: S.sm }}>
-        <Txt v="section">Commentaires</Txt>
-        <Txt v="small" style={{ fontSize: 14 }}>{count}</Txt>
+        <Txt v="section" accessibilityRole="header">Commentaires</Txt>
+        <Txt v="small" tabular color={C.text3} style={{ fontSize: 14 }}>{count}</Txt>
       </View>
     </View>
   );
@@ -287,8 +286,8 @@ function WatchScreen({ id }: { id: string }) {
       <View style={full ? { flex: 1, backgroundColor: C.black } : { paddingTop: insets.top, backgroundColor: C.black }}>
         {!full && (
           <View style={styles.topBar}>
-            <IconButton icon="chevron-back" label="Retour" onPress={() => router.back()} />
-            <Txt v="small" numberOfLines={1} style={{ flex: 1 }}>{series.title}</Txt>
+            <IconButton icon="chevron-back" label="Retour" size={40} onPress={() => router.back()} />
+            <Txt v="label" color={C.body} numberOfLines={1} style={{ flex: 1, fontSize: 14 }}>{series.title}</Txt>
           </View>
         )}
         {src.web && !offline ? (
@@ -394,14 +393,18 @@ const STORE_HIDDEN_ACTIONS = new Set<NoSourceAction>(['addons', 'debrid', 'enabl
 
 const styles = StyleSheet.create({
   offline: {
-    flexDirection: 'row', alignItems: 'center', gap: S.md, padding: S.md, borderRadius: 14,
-    backgroundColor: C.accentSoft, borderWidth: 1, borderColor: C.accentLine,
+    flexDirection: 'row', alignItems: 'center', gap: S.md, padding: 14, borderRadius: R.card, borderCurve: 'continuous',
+    backgroundColor: 'rgba(47,107,235,0.08)', borderWidth: 1, borderColor: 'rgba(127,176,255,0.20)',
   },
   langWarn: {
-    flexDirection: 'row', alignItems: 'flex-start', gap: S.md, padding: S.md, borderRadius: 14,
-    backgroundColor: 'rgba(245,181,68,0.12)', borderWidth: 1, borderColor: 'rgba(245,181,68,0.35)',
+    flexDirection: 'row', alignItems: 'flex-start', gap: S.md, padding: 14, borderRadius: R.card, borderCurve: 'continuous',
+    backgroundColor: 'rgba(255,200,87,0.08)', borderWidth: 1, borderColor: 'rgba(255,200,87,0.24)',
   },
+  tiles: { flexDirection: 'row', gap: S.sm, marginLeft: -S.sm },
   topBar: { flexDirection: 'row', alignItems: 'center', gap: S.md, paddingHorizontal: S.md, paddingBottom: S.sm },
-  next: { flexDirection: 'row', alignItems: 'center', gap: S.md, padding: 10, borderRadius: 16, backgroundColor: C.surface },
-  nextPlay: { borderRadius: 20, overflow: 'hidden', backgroundColor: C.accent },
+  next: {
+    flexDirection: 'row', alignItems: 'center', gap: S.md, padding: S.sm, paddingRight: S.md, borderRadius: R.card, borderCurve: 'continuous',
+    backgroundColor: C.surface, borderWidth: 1, borderColor: C.border, boxShadow: `${SHADOW.raised}, ${SHADOW.inset}`,
+  },
+  nextPlay: { width: 40, height: 40, borderRadius: 20, alignItems: 'center', justifyContent: 'center', backgroundColor: C.accent, boxShadow: SHADOW.insetStrong },
 });
