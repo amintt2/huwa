@@ -14,7 +14,7 @@ Le relais ne s'annonce pas sur les sujets Hyperswarm : l'app s'y connecte direct
 
 - `server.js` : démarre `blind-peer@3.15.1` (bibliothèque, pas le CLI), applique la politique, sonde `GET /health` (port 8080, interne), écrit la clé publique dans `/data/public-key.txt` et dans les logs (`"msg":"Listening","publicKey":"…"`).
 - `policy.js` : politique de stockage Huwa (ci-dessous).
-- `Dockerfile`, `docker-compose.yml`, `.env.example`.
+- `Dockerfile`, `docker-compose.yaml`, `.env.example`.
 
 ## Stockage : ce que fait la bibliothèque, ce qu'ajoute Huwa
 
@@ -30,7 +30,7 @@ Vérifié dans `node_modules/blind-peer/index.js` et `lib/db.js` :
 ## Déploiement sur Coolify (après fusion dans la branche déployée)
 
 1. Coolify → projet → **+ New → Application → Public/Private repository** `amintt2/huwa`, branche fusionnée.
-2. Build pack **Docker Compose**, *Base directory* `/services/blind-peer`, *Docker Compose location* `/docker-compose.yml`.
+2. Build pack **Docker Compose**, *Base directory* `/services/blind-peer`, *Docker Compose location* `/docker-compose.yaml`.
 3. Variables d'environnement : celles de `.env.example` (les défauts conviennent). Aucun secret.
 4. Pas de domaine : le service ne sert pas de HTTP public. Le port `49738/udp` est publié par le compose.
 5. **Pare-feu du serveur** : ouvrir `49738/udp` (`ufw allow 49738/udp` et la règle équivalente du fournisseur cloud). Sans ça, le relais reste joignable par hole-punching mais moins bien.
