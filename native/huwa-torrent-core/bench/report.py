@@ -1,62 +1,109 @@
 #!/usr/bin/env python3
-"""Before/after tables from the bench's --out files (JSON lines).
+"""Tables from the bench's --out files (JSON lines).
 
-  bench/report.py target/bench-results/baseline-*.jsonl -- target/bench-results/after-*.jsonl
+  bench/report.py cells  <before.jsonl...> -- <after.jsonl...>   before/after per profile x file x scenario
+  bench/report.py cache  <files...>                                one row per file (cache cap / fill cell)
+  bench/report.py storm  <file>                                    first vs later starts, resources
 
-Cells: profile x file x scenario (and prefill/cap for the cache runs when given with --cache).
-Each value: median / worst over the runs, in seconds; "miss" = runs without a first frame (or
-without the seek's frame) within the timeout, which make the worst a timeout.
+Values: median / worst over the runs, in seconds. A run without a first frame (or without the
+seek's frame) within the timeout makes the worst "timeout" and is counted in "miss".
 """
 import json
+import os
 import statistics
 import sys
 from collections import OrderedDict
 
 
-def load(paths):
-    cells = OrderedDict()
-    storm = []
+def runs_of(paths):
+    out = []
     for p in paths:
         for line in open(p):
             d = json.loads(line)
-            if "storm" in d:
-                storm.append(d)
-                continue
-            key = (d["profile"], d["file"], d["scenario"])
-            cells.setdefault(key, []).append(d)
-    return cells, storm
+            d["_file"] = os.path.basename(p)
+            out.append(d)
+    return out
 
 
-def stat(runs, field):
-    vals = [r[field] for r in runs if r.get(field) is not None]
-    miss = len(runs) - len(vals)
+def med_worst(vals, miss):
     if not vals:
-        return "timeout" if miss else "—", miss
+        return "timeout" if miss else "—"
     med = statistics.median_low(sorted(vals)) / 1000
     worst = "timeout" if miss else f"{max(vals) / 1000:.2f}"
-    return f"{med:.2f} / {worst}", miss
+    return f"{med:.2f} / {worst}"
 
 
-def main():
-    args = sys.argv[1:]
-    if "--" in args:
-        i = args.index("--")
-        before, after = args[:i], args[i + 1:]
-    else:
-        before, after = args, []
-    b, _ = load(before)
-    a, _ = load(after) if after else ({}, [])
-    keys = list(b.keys()) + [k for k in a.keys() if k not in b]
-    print("| profile | file | scenario | before start→frame (median / worst) | after | before seek | after seek | n before / after |")
-    print("|---|---|---|---|---|---|---|---|")
+def field(runs, name):
+    vals = [r[name] for r in runs if r.get(name) is not None]
+    return med_worst(vals, len(runs) - len(vals))
+
+
+def cells(args):
+    i = args.index("--") if "--" in args else len(args)
+    groups = []
+    for paths in (args[:i], args[i + 1:]):
+        g = OrderedDict()
+        for r in runs_of(paths):
+            if "storm" in r:
+                continue
+            g.setdefault((r["profile"], r["file"], r["scenario"]), []).append(r)
+        groups.append(g)
+    b, a = groups
+    keys = list(b) + [k for k in a if k not in b]
+    print("| profile | file | scenario | before: start→frame | after: start→frame | after: tap→frame | before: seek | after: seek | runs |")
+    print("|---|---|---|---|---|---|---|---|---|")
     for k in keys:
         rb, ra = b.get(k, []), a.get(k, [])
-        sb, _ = stat(rb, "start_to_frame_ms") if rb else ("—", 0)
-        sa, _ = stat(ra, "start_to_frame_ms") if ra else ("—", 0)
-        kb, _ = stat(rb, "seek_ms") if rb and k[2] == "seek" else ("", 0)
-        ka, _ = stat(ra, "seek_ms") if ra and k[2] == "seek" else ("", 0)
-        print(f"| {k[0]} | {k[1]} | {k[2]} | {sb} | {sa} | {kb} | {ka} | {len(rb)} / {len(ra)} |")
+        seek = k[2] == "seek"
+        print(
+            f"| {k[0]} | {k[1]} | {k[2]} | {field(rb, 'start_to_frame_ms') if rb else '—'} | {field(ra, 'start_to_frame_ms') if ra else '—'} "
+            f"| {field(ra, 'tap_to_frame_ms') if ra else '—'} | {field(rb, 'seek_ms') if rb and seek else ''} | {field(ra, 'seek_ms') if ra and seek else ''} "
+            f"| {len(rb)} / {len(ra)} |"
+        )
+
+
+def cache(paths):
+    print("| cell | profile | scenario | start→frame | engine launch ms (median) | disk written to the frame MiB (median) | evictions (count, ms) | stalls in 60 s | runs |")
+    print("|---|---|---|---|---|---|---|---|---|")
+    for p in paths:
+        g = OrderedDict()
+        for r in runs_of([p]):
+            if "storm" in r:
+                continue
+            g.setdefault((r["profile"], r["scenario"]), []).append(r)
+        for (prof, scen), rs in g.items():
+            launch = statistics.median_low(sorted(r.get("launch_ms", 0) for r in rs))
+            written = statistics.median_low(sorted(max(0, (r.get("disk_at_frame_mib") or 0) - (r.get("disk_before_mib") or 0)) for r in rs))
+            ev = [r.get("evictions") or {} for r in rs]
+            ev_count = sum(e.get("count", 0) for e in ev if isinstance(e, dict))
+            ev_ms = sum(e.get("total_ms", 0) for e in ev if isinstance(e, dict))
+            stalls = sum(r.get("stalls", 0) for r in rs)
+            cell = os.path.basename(p).replace(".jsonl", "")
+            print(f"| {cell} | {prof} | {scen} | {field(rs, 'start_to_frame_ms')} | {launch} | {written} | {ev_count}, {ev_ms} | {stalls} | {len(rs)} |")
+
+
+def storm(paths):
+    for p in paths:
+        rows = [r["storm"] for r in runs_of([p]) if "storm" in r]
+        print(f"### {os.path.basename(p)}")
+        for prof in ("popular", "obscure"):
+            v = [r for r in rows if r["profile"] == prof]
+            if not v:
+                continue
+            first = v[0].get("start_to_frame_ms")
+            rest = [r.get("start_to_frame_ms") for r in v[1:]]
+            ok = [x for x in rest if x is not None]
+            print(
+                f"- {prof}: first start {first / 1000 if first is not None else 'none'} s; later starts median "
+                f"{statistics.median_low(sorted(ok)) / 1000 if ok else '—'} s, worst {max(ok) / 1000 if ok else '—'} s, "
+                f"no frame {sum(1 for x in rest if x is None)}/{len(rest)}"
+            )
+        last = rows[-1]["res"] if rows else {}
+        peak = {k: max(r["res"].get(k, 0) for r in rows) for k in ("live", "peers", "net_conns", "tasks", "rss_mib", "fds", "disk_mib")}
+        print(f"- resources at the end: {last}")
+        print(f"- peaks: {peak}")
 
 
 if __name__ == "__main__":
-    main()
+    mode, rest = sys.argv[1], sys.argv[2:]
+    {"cells": cells, "cache": cache, "storm": storm}[mode](rest)

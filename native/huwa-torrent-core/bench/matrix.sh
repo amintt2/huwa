@@ -18,7 +18,8 @@ run() { # name, args...
   local name="$1"
   shift
   echo "== $TAG $name: $*"
-  "$BIN" "$@" --out "$OUT/$TAG-$name.jsonl" >"$OUT/$TAG-$name.log" 2>&1 || echo "   (exit $?)"
+  # shellcheck disable=SC2086 # BENCH_ARGS: extra flags for every run (e.g. --fixtures / --work).
+  "$BIN" "$@" ${BENCH_ARGS:-} --out "$OUT/$TAG-$name.jsonl" >"$OUT/$TAG-$name.log" 2>&1 || echo "   (exit $?)"
   grep '^|' "$OUT/$TAG-$name.log" | tail -n +3 || true
 }
 
@@ -38,7 +39,8 @@ for cell in $CELLS; do
       for fill in 0 2G 50% 95% 100%; do
         run "cache-$cap-$fill" --cache-cap "$cap" --prefill "$fill" --profiles popular,obscure --files h264.mkv --scenarios start --repeat 3 --play-secs 60 --timeout 60s
       done
-      for fill in 0 100%; do
+      # (Empty cache: the `start` cell's resume / seek rows.)
+      for fill in 100%; do
         run "cache-$cap-$fill-seek" --cache-cap "$cap" --prefill "$fill" --profiles popular,obscure --files h264.mkv --scenarios resume,seek --repeat 3 --timeout 60s
       done
     done
