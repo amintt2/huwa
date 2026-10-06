@@ -95,6 +95,15 @@ Modèle des *labelers* Bluesky : chacun publie dans son core des enregistrements
 - UI : conversations, non-lus, demandes de message (opt-in), blocage.
 - Ce qui reste impossible : socket Hyperswarm ouvert en arrière-plan iOS ; worklet complet dans la NSE.
 
+## Relais Huwa (blind peer) — fait
+- **But :** un téléphone effacé (seul appareil du compte) retrouve son compte avec la phrase (iCloud / clé d'accès la fournissent) ; MP en attente et salons publics restent disponibles quand aucun pair n'est en ligne.
+- **Serveur :** `services/blind-peer/` (bibliothèque `blind-peer@3.15.1` + `policy.js`) : 20 Go au total (GC natif par priorité puis activité), 50 Mo par base (le pointeur compte avec la base perso), suppression après 120 jours ni demandés ni répliqués, sonde `/health`, `49738/udp`. Déploiement Coolify : `services/blind-peer/README.md`.
+- **Client :** `src/p2p/worklet/relay.js` (`blind-peering@2.10`, compatible Bare) : priorité 2 = pointeur + base perso, 1 = MP, 0 = salons ouverts (48/session). La restauration (`_findHome`) demande le pointeur aux relais dans la même fenêtre que la recherche d'appareils, avant `RESTORE_NOT_FOUND`.
+- **Config :** clé par défaut `HUWA_RELAY_KEYS` → `extra.relayKeys` (vide tant que le relais n'est pas déployé) ; Réglages → Sécurité → Relais Huwa (on/off, relais par défaut désactivable, relais personnels). Désactivés tant que les préférences ne sont pas lues.
+- **Chiffrement :** aucun core n'est chiffré (Hypercore `encryptionKey`) : la base perso est lue par les autres pairs (profil, journal, listes de blocage), la chiffrer casserait ces usages et les comptes existants. Le relais lit donc ce que tout pair lit ; MP : texte scellé, métadonnées visibles (paire, horodatages, tailles). Détail : `site/privacy.html` « Relais Huwa ».
+- **App Store :** le relais par défaut est une collecte par le développeur au sens d'Apple (stockage > temps réel) : label à mettre à jour avant de livrer une build Store avec `HUWA_RELAY_KEYS` (proposition : `store/privacy.relay.json`). Tant que la build Store n'a pas de clé par défaut, le label actuel reste exact.
+- **Reste :** suppression immédiate à la demande (RPC `delete-core` réservée aux pairs de confiance : un outil admin avec `TRUSTED_PEERS`), quota par personne plutôt que par base, second relais (`group`) pour la redondance.
+
 ## Phase 6 — Rang, historique, réputation
 - **Journal signé** dans le core personnel : `{type: ep|ch|comment|streak, work, unit, ts, prev}` chaîné par hash. Chaque pair rejoue le journal avec les mêmes règles : le rang affiché est celui **recalculé par le lecteur**.
 - Anti-triche réaliste : plafonds de plausibilité (écart ≥ 20 min entre épisodes, ≤ 30/jour), XP quotidienne plafonnée, bonus d'ancienneté de clé, PoW par entrée.
