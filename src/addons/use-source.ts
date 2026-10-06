@@ -23,7 +23,7 @@ import { useSettings } from '@/settings/settings';
 import { useRaceBudget, useTorrentProbeBudget } from '@/settings/network';
 import { resolveTorrent, resolveTorrentViaDebrid, useCachedHashes, useTorrentResolver } from '@/debrid/resolve';
 import { canProbeTorrents, useTorrentSettings } from '@/torrent';
-import { decidePeerRace, peerLabel, probeTargets, wrongTorrents, type PeerCandidate, type PeerProbe } from '@/torrent/peer-race';
+import { decidePeerRace, packKeys, peerLabel, probeTargets, unpackKeys, wrongTorrents, type PeerCandidate, type PeerProbe } from '@/torrent/peer-race';
 import { peerClock, usePeerRace, type PeerTarget } from '@/torrent/use-peer-race';
 
 import { langScore } from './audio';
@@ -156,12 +156,12 @@ export function useSource(seriesId: string, episode: number, { enabled = true, p
 
   // ---- cached torrents at the top: resolved ahead (debrid only) to be measured too ----
   const torrentKeys = enabled
-    ? candidates.filter((s) => isTorrent(s) && cachedOf(s) === true).slice(0, RACE_TORRENTS).map(streamKey).join('\n')
+    ? packKeys(candidates.filter((s) => isTorrent(s) && cachedOf(s) === true).slice(0, RACE_TORRENTS).map(streamKey))
     : '';
   useEffect(() => {
     if (!torrentKeys || budget.max === 0) return;
     const ctrl = new AbortController();
-    for (const k of torrentKeys.split('\n')) {
+    for (const k of unpackKeys(torrentKeys)) {
       const s = candidates.find((x) => streamKey(x) === k);
       if (!s || resolved[k]) continue;
       resolveTorrentViaDebrid(
@@ -254,14 +254,15 @@ export function useSource(seriesId: string, episode: number, { enabled = true, p
 
   // ---- torrent race (on-device engine): uncached torrents probed in parallel ----
   const engineTorrent = (s: AddonStream) => isTorrent(s) && cachedOf(s) !== true;
-  const peerOn =
+  const peerWanted =
     enabled && !preview && !manual && !lockedStream && torrentBudget > 0 && canProbeTorrents() && pool.some(engineTorrent) && !pool.some(safe);
-  const peerPool = peerOn ? pool.filter(engineTorrent) : [];
-  const peerKeys = probeTargets(peerPool.map((s) => ({ key: streamKey(s) })), torrentBudget).join('\n');
+  const peerPool = peerWanted ? pool.filter(engineTorrent) : [];
+  // Stream keys contain the addon's multi-line name / title: packed as JSON, never joined on '\n'.
+  const peerKeys = packKeys(probeTargets(peerPool.map((s) => ({ key: streamKey(s) })), torrentBudget));
   const peerTargets = useMemo<PeerTarget[]>(
     () =>
       peerKeys
-        ? peerKeys.split('\n').flatMap((k) => {
+        ? unpackKeys(peerKeys).flatMap((k) => {
             const s = pool.find((x) => streamKey(x) === k);
             return s
               ? [{ key: k, infoHash: s.infoHash!, sources: s.sources, name: s.behaviorHints?.filename ?? s.title?.split('\n')[0], fileIdx: s.fileIdx, filename: s.behaviorHints?.filename, episode }]
@@ -271,11 +272,15 @@ export function useSource(seriesId: string, episode: number, { enabled = true, p
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [peerKeys, episode],
   );
+  // Armed only with something to probe: a race without probes would wait for its deadline forever.
+  const peerOn = peerWanted && peerTargets.length > 0;
   const peerCands = (probes: Record<string, PeerProbe>): PeerCandidate[] =>
     peerPool.map((s) => ({ key: streamKey(s), lang: langOf(s), probe: probes[streamKey(s)] }));
   const decidePeers = (probes: Record<string, PeerProbe>, startedAt: number | null) =>
     decidePeerRace(peerCands(probes), startedAt != null ? peerClock() - startedAt : 0);
-  const peer = usePeerRace(peerScope, peerTargets, peerOn, (probes, at) => {
+  // A new round whenever a source failed (e.g. the winner would not start): the next best
+  // torrents are probed again instead of being started blindly one by one.
+  const peer = usePeerRace(`${peerScope}#${bad.length}`, peerTargets, peerOn, (probes, at) => {
     const d = decidePeers(probes, at);
     return d.key !== null || 'exhausted' in d;
   });

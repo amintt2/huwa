@@ -4,6 +4,8 @@ import { test } from 'node:test';
 
 import {
   decidePeerRace,
+  packKeys,
+  unpackKeys,
   LANG_GRACE_MS,
   PEER_RACE_DEADLINE_MS,
   peerLabel,
@@ -97,3 +99,17 @@ test('sources menu labels', () => {
   assert.deepEqual(peerLabel(p('healthy', { local: true })), { label: 'déjà sur l’appareil', speed: 'fast' });
   assert.equal(peerLabel(p('cancelled')), null);
 });
+
+test('stream keys with line breaks survive packing (Torrentio names are "Torrentio\\n1080p")', () => {
+  // Regression: the keys were joined / split on '\n', so no target was ever found, the race was
+  // armed without a single probe and waited for its deadline forever: nothing chosen, nothing measured.
+  const keys = [
+    'com.stremio.torrentio.addon||b130fefa|1|||Torrentio\n1080p|[ToonsHub] One Piece\nOne.Piece.S01E02.mkv\n👤 8',
+    'com.stremio.torrentio.addon||9fc017ae|1|||Torrentio\n480p|[uP] One Piece\n👤 3',
+  ];
+  const packed = packKeys(probeTargets(keys.map((key) => ({ key })), 4));
+  assert.deepEqual(unpackKeys(packed), keys);
+  assert.equal(packKeys([]), '');
+  assert.deepEqual(unpackKeys(''), []);
+});
+
