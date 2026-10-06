@@ -1,0 +1,28 @@
+# Template: scripts/torrent-bench.sh copies this crate to <build>/<label>/host/ and replaces
+# @ENGINE_DIR@ with the engine under test (any git ref / worktree of native/huwa-torrent-core).
+[package]
+name = "huwa-torrent-bench-host"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[[bin]]
+name = "tbench-engine-host"
+path = "src/main.rs"
+
+[dependencies]
+huwa-torrent-core = { path = "@ENGINE_DIR@" }
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+serde_json = "1"
+
+# Same release settings as the engine crate (the app ships with these).
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+panic = "unwind"
+strip = "none"
+
+@PATCH@
+
+[workspace]
