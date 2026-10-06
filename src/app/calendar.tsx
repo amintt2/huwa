@@ -6,14 +6,16 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { ActivityIndicator, Alert, AppState, FlatList, ScrollView, StyleSheet, View, useWindowDimensions } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { ErrorState, FilterChip, LoadingView, ScreenHeader, StateView } from '@/components/states';
+import { SkeletonPosters } from '@/components/feedback';
+import { BAR_H, LargeTitle, NavBar } from '@/components/screen';
+import { ErrorState, FilterChip, StateView } from '@/components/states';
 import { Cover, Press, Txt } from '@/components/ui';
 import { palette } from '@/data/anilist';
 import { fetchAiring, openMedia, type AiringItem } from '@/data/anilist-api';
 import { useLocale, useT } from '@/i18n';
 import { useLists } from '@/store/lists';
 import { useStore } from '@/store/store';
-import { C, R, S } from '@/theme/tokens';
+import { C, R, S, SHADOW } from '@/theme/tokens';
 
 const DAY = 86_400_000;
 const GAP = 12;
@@ -167,7 +169,7 @@ export default function Calendar() {
           {/* The countdown sits in the text column: beside it, it squeezed the title to a few letters. */}
           <View style={{ flex: 1, minWidth: 0, gap: 4, alignItems: 'flex-start' }}>
             <Txt v="caption" color={C.accentText} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.7}>
-              {t('calendar.next').toUpperCase()}
+              {t('calendar.next')}
             </Txt>
             <Txt v="label" numberOfLines={2} style={{ fontSize: 16 }}>{next.title}</Txt>
             <Txt v="small" numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.8}>
@@ -194,9 +196,8 @@ export default function Calendar() {
   );
 
   return (
-    <View style={{ flex: 1, backgroundColor: C.bg, paddingTop: insets.top + S.sm }}>
-      <ScreenHeader title={t('calendar.title')} />
-      <Txt v="small" style={{ paddingHorizontal: S.lg, marginTop: -4, marginBottom: S.md }}>{t('calendar.subtitle')}</Txt>
+    <View style={{ flex: 1, backgroundColor: C.bg, paddingTop: insets.top + BAR_H }}>
+      <LargeTitle title={t('calendar.title')} subtitle={t('calendar.subtitle')} style={{ paddingBottom: S.md }} />
 
       {/* flexShrink 0: the list below must not squeeze the strip (it clipped the dates). */}
       <ScrollView ref={tabsRef} horizontal showsHorizontalScrollIndicator={false} style={{ flexGrow: 0, flexShrink: 0 }}
@@ -231,7 +232,9 @@ export default function Calendar() {
       {failed ? (
         <ErrorState onRetry={() => setAttempt((n) => n + 1)} />
       ) : !items ? (
-        <LoadingView />
+        <View style={{ paddingHorizontal: S.lg }}>
+          <SkeletonPosters count={4} width={cardW} height={Math.round(cardW * 1.45)} gap={GAP} />
+        </View>
       ) : onlyMine && mineCount === 0 ? (
         <StateView icon="calendar-outline" title={t('calendar.emptyMine')} />
       ) : (
@@ -271,8 +274,8 @@ export default function Calendar() {
                       </Txt>
                     </View>
                     {(first || last) && (
-                      <View style={[styles.pill, { backgroundColor: first ? C.accent : '#C2410C' }]}>
-                        <Txt v="caption" color={C.white} numberOfLines={1} maxFontSizeMultiplier={PILL_SCALE} style={{ fontSize: 10 }}>
+                      <View style={[styles.pill, { backgroundColor: first ? C.accent : 'rgba(5,7,13,0.82)' }]}>
+                        <Txt v="caption" color={first ? C.white : C.star} numberOfLines={1} maxFontSizeMultiplier={PILL_SCALE} style={{ fontSize: 10 }}>
                           {first ? t('calendar.new') : t('calendar.final')}
                         </Txt>
                       </View>
@@ -288,6 +291,7 @@ export default function Calendar() {
           }}
         />
       )}
+      <NavBar />
     </View>
   );
 }
@@ -295,18 +299,18 @@ export default function Calendar() {
 const styles = StyleSheet.create({
   tabs: { paddingHorizontal: S.lg, gap: S.sm, paddingBottom: S.md, alignItems: 'stretch' },
   tab: {
-    minWidth: 92, paddingVertical: 8, paddingHorizontal: 14, borderRadius: R.card, borderCurve: 'continuous',
-    backgroundColor: C.surface, borderWidth: 1, borderColor: C.border, gap: 1,
+    minWidth: 92, minHeight: 50, justifyContent: 'center', paddingVertical: 8, paddingHorizontal: 14, borderRadius: R.control, borderCurve: 'continuous',
+    backgroundColor: C.surface, borderWidth: 1, borderColor: C.border, gap: 1, boxShadow: SHADOW.inset,
   },
-  tabOn: { backgroundColor: C.accent, borderColor: C.accent },
+  tabOn: { backgroundColor: C.accent, borderColor: C.accent, boxShadow: `${SHADOW.primary}, ${SHADOW.insetStrong}` },
   filters: { flexDirection: 'row', paddingHorizontal: S.lg, paddingBottom: S.lg },
   next: {
     flexDirection: 'row', alignItems: 'center', gap: S.md, padding: S.md, borderRadius: R.card, borderCurve: 'continuous',
-    backgroundColor: C.surface, borderWidth: 1, borderColor: C.accentLine,
+    backgroundColor: '#0F1A33', borderWidth: 1, borderColor: C.accentLine, boxShadow: `${SHADOW.raised}, ${SHADOW.inset}`,
   },
   countdown: {
     flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 2, maxWidth: '100%',
-    paddingHorizontal: 10, paddingVertical: 5, borderRadius: R.pill, backgroundColor: C.accent,
+    paddingHorizontal: 10, paddingVertical: 5, borderRadius: R.pill, backgroundColor: C.accent, boxShadow: SHADOW.insetStrong,
   },
   poster: { borderRadius: R.card, borderCurve: 'continuous', overflow: 'hidden' },
   posterMine: { borderWidth: 2, borderColor: C.accentText },
