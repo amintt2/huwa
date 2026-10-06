@@ -10,6 +10,7 @@ import { useStore } from '@/store/store';
 import { resumeEpisode } from './bridge';
 import { getSeries, useCatalog, type Episode, type Series } from './catalog';
 import { kitsuPairs, showEpisodes, type KitsuPair } from './cinemeta';
+import { rememberRejected } from './imdb-episode';
 import {
   chronologyLabel,
   chronologyName,
@@ -20,6 +21,7 @@ import {
   jstDate,
   seasonOf,
   shownNumber,
+  upcomingPair,
   type DisplaySeason,
   type SeasonEntry,
   type ShowEpisode,
@@ -52,6 +54,11 @@ export type SeasonView = {
   rows: EpisodeRow[];
   /** "S21 · Ép. 1000" / "S4 · Ép. 17" / "Ép. 3". */
   badge: (e: Episode) => string;
+  /**
+   * An episode of this series still to air (AniList number), shown like the aired rows: number
+   * continuing across parts, "S23 · É26" (absolute seasons) or "Partie 2 · ép. 5".
+   */
+  upcoming: (n: number, airingAt: number) => { number: number; where?: string };
   /** Label of the button next to the "Épisodes" tab. */
   buttonLabel: string;
   /** "Saison 4" chip of the meta line (undefined: a lone season). */
@@ -155,6 +162,16 @@ export function useSeasonView(series: Series | undefined, franchise: FranchiseIn
     if (composed.wantPairs && kitsu) load(`pairs:${kitsu}`, pairsMemo, kitsu, () => kitsuPairs(kitsu), bump);
   }, [composed.wantPairs, kitsu]);
 
+  // Absolute entries whose numbering the franchise rejects: no IMDb id for their addon
+  // requests (data/imdb-episode.ts verifies the others on its own, from the same caches).
+  useEffect(() => {
+    for (const e of entries) {
+      const imdb = e.map?.imdb;
+      const why = composed.rejected[e.id];
+      if (imdb && e.map?.season == null && e.map?.offset == null && (why === 'shared' || why === 'overlap')) rememberRejected(e.id, imdb, e.episodes);
+    }
+  }, [composed, entries]);
+
   return useMemo(() => {
     if (!series?.anime) return undefined;
     const { seasons, mappings } = composed;
@@ -223,6 +240,23 @@ export function useSeasonView(series: Series | undefined, franchise: FranchiseIn
 
     const multi = seasons.length > 1;
     const count = series.anime.episodes.length;
+    // Episodes still to air continue the part holding this series' latest episode.
+    const lastSeason = seasonOf(seasons, series.id, Math.max(1, count));
+    const lastPart = lastSeason?.parts.filter((p) => p.seriesId === series.id).sort((a, b) => b.to - a.to)[0];
+    const upcoming = (n: number, airingAt: number) => {
+      if (!lastSeason || !lastPart) return { number: n };
+      let where: string | undefined;
+      if (lastSeason.absolute) {
+        const m = mappings[series.id];
+        const imdb = entries.find((e) => e.id === series.id)?.map?.imdb;
+        const show = imdb ? showsMemo.get(imdb) : undefined;
+        const p = m && show ? upcomingPair(m.runs, show, n, jstDate(new Date(airingAt * 1000).toISOString())) : undefined;
+        where = p && `S${p.season} · É${p.episode}`;
+      } else if (lastPart.label) {
+        where = `${lastPart.label} · ép. ${n}`;
+      }
+      return { number: lastPart.shownFrom + n - lastPart.from, where };
+    };
     return {
       seasons,
       specials,
@@ -230,6 +264,7 @@ export function useSeasonView(series: Series | undefined, franchise: FranchiseIn
       showSpecials,
       rows,
       badge: (e: Episode) => episodeBadge(seasonOf(seasons, e.seriesId, e.number), e.seriesId, e.number, seasons.length),
+      upcoming,
       chipLabel: multi ? (selected?.absolute ? selected : seasonOf(seasons, series.id, 1))?.label : undefined,
       buttonLabel: showSpecials ? (specials.some((x) => x.format === 'MOVIE') ? 'Films & spéciaux' : 'Spéciaux') : (selected?.label ?? 'Saison 1'),
       // Episodes still to air follow this series' latest one.

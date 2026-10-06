@@ -63,8 +63,8 @@ export const airingDate = (airingAt: number) => {
   return `${DAYS[d.getDay()]} ${d.getDate()} ${MONTHS[d.getMonth()]}`;
 };
 
-/** "Ép. 8 · jeudi 9 oct. · 17:30" */
-export const upcomingLabel = (n: AiringNode) => `Ép. ${n.episode} · ${airingDate(n.airingAt)} · ${airingTime(n.airingAt)}`;
+/** "Ép. 8 · jeudi 9 oct. · 17:30"; `shown`: number in its season (parts continue: "Ép. 21"). */
+export const upcomingLabel = (n: AiringNode, shown = n.episode) => `Ép. ${shown} · ${airingDate(n.airingAt)} · ${airingTime(n.airingAt)}`;
 
 /** "aujourd’hui 17:30", "demain 17:30", "jeu. 17:30" (within the week), "jeu. 16 oct. 17:30". */
 export function shortAiring(airingAt: number, now = Date.now()) {
@@ -77,8 +77,8 @@ export function shortAiring(airingAt: number, now = Date.now()) {
   return `${DAYS_SHORT[d.getDay()]} ${d.getDate()} ${MONTHS[d.getMonth()]} ${time}`;
 }
 
-/** "Prochain épisode : Ép. 8 · jeu. 17:30" */
-export const nextEpisodeLine = (n: AiringNode, now = Date.now()) => `Prochain épisode : Ép. ${n.episode} · ${shortAiring(n.airingAt, now)}`;
+/** "Prochain épisode : Ép. 8 · jeu. 17:30"; `shown` as in `upcomingLabel`. */
+export const nextEpisodeLine = (n: AiringNode, now = Date.now(), shown = n.episode) => `Prochain épisode : Ép. ${shown} · ${shortAiring(n.airingAt, now)}`;
 
 /** Under this, the row shows a live countdown instead of "dans 3 j". */
 export const COUNTDOWN_MS = 24 * 3_600_000;

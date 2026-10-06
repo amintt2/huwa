@@ -6,7 +6,7 @@ import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'reac
 import { extraKey, rankSubtitles, type SubMatch } from '@/subtitles/request';
 
 import { firstUseful, withRetry } from './fetch-policy';
-import { requestsFor, type AddonRequest } from './id-candidates';
+import { absoluteNumbering, requestsFor, type AddonRequest } from './id-candidates';
 import { useAnimeIds, type AnimeIds } from './ids';
 import {
   type AddonStream,
@@ -32,6 +32,7 @@ import { dropDemoWhenReal } from './builtin-demo';
 import { parseSavedAddons } from './saved';
 import { dropAnswer, freshness, readAnswer, writeAnswer } from './stream-cache';
 import { timedAddon } from '@/stats/addon-timing';
+import { lazyImdbId } from '@/data/imdb-episode';
 import { registerRehydrate } from '@/settings/rehydrate';
 
 export type InstalledAddon = { baseUrl: string; manifest: Manifest; enabled: boolean };
@@ -212,6 +213,16 @@ export function requestFor(m: Manifest, resource: Resource, seriesId: string, ep
   return requestsFor(m, resource, seriesId, episode, ids)[0] ?? null;
 }
 
+/** The request as sent: a lazy IMDb id once known (null: none for this episode, undefined: not yet). */
+function settledReq(req: AddonRequest): AddonRequest | null | undefined {
+  if (!req.lazy) return req;
+  const id = req.lazy.peek();
+  return id ? { type: req.type, id } : (id as null | undefined);
+}
+
+/** A lazy IMDb id that turned out to have nothing for this episode (not an addon failure). */
+class NoCandidate extends Error {}
+
 // ---------- aggregation ----------
 // One shared job per (resource, episode, addons, ids): the pre-search of a detail page, the next
 // episode prefetch and the watch screen all read the same job, so opening an episode whose
@@ -323,7 +334,10 @@ class AggJob<T> {
     slot.running = true;
     try {
       if (this.opts.persist && !spec.a.baseUrl.startsWith('builtin:')) {
-        for (const req of spec.reqs) {
+        for (const r of spec.reqs) {
+          // A lazy IMDb id only when already known: the cache never waits for the season model.
+          const req = settledReq(r);
+          if (!req) continue;
           const key = reqKeyOf(spec.a, this.resource, req);
           const hit = await readAnswer<T>(key);
           if (!hit || (this.opts.useful && !hit.items.some(this.opts.useful))) continue;
@@ -352,10 +366,32 @@ class AggJob<T> {
       slot.items = [...slot.items, ...fresh];
       this.emit();
     };
+    // Lazy IMDb ids (season model): resolved here, while the other formats are already asked.
+    const sent = new Map<AddonRequest, AddonRequest>();
+    let failures = 0;
+    let skipped = 0;
+    const ask = async (req: AddonRequest) => {
+      let out = req;
+      if (req.lazy) {
+        const id = await req.lazy.resolve();
+        if (!id) {
+          skipped++;
+          throw new NoCandidate('Pas d’identifiant IMDb pour cet épisode');
+        }
+        out = { type: req.type, id };
+        sent.set(req, out);
+      }
+      try {
+        return await withRetry(() => this.load(spec.a, out), { signal });
+      } catch (e) {
+        failures++;
+        throw e;
+      }
+    };
     try {
       const { items, index } = await firstUseful(
         spec.reqs,
-        (req) => withRetry(() => this.load(spec.a, req), { signal }),
+        ask,
         useful,
         { concurrency: PER_ADDON_CONCURRENCY, signal, onExtra: merge },
       );
@@ -365,8 +401,9 @@ class AggJob<T> {
       // Stopped before every id format was tried: not an answer yet (runs again when retained).
       if (!isUseful && signal.aborted) return;
       Object.assign(slot, { items, done: true, failed: false, cachedAt: undefined });
-      if (isUseful && this.opts.persist && index >= 0 && !spec.a.baseUrl.startsWith('builtin:')) {
-        slot.reqKey = reqKeyOf(spec.a, this.resource, spec.reqs[index]);
+      const answered = index >= 0 ? (sent.get(spec.reqs[index]) ?? spec.reqs[index]) : undefined;
+      if (isUseful && this.opts.persist && answered && !answered.lazy && !spec.a.baseUrl.startsWith('builtin:')) {
+        slot.reqKey = reqKeyOf(spec.a, this.resource, answered);
         void writeAnswer(slot.reqKey, items);
       }
       this.emit();
@@ -374,7 +411,9 @@ class AggJob<T> {
       if (slot.cachedAt != null) return;
       // Cancelled before any request could start: not a failure, it may run again.
       if (signal.aborted && !slot.items.length) return;
-      Object.assign(slot, { done: true, failed: true });
+      // Its only id format was an IMDb id this episode does not have: nothing, not a failure.
+      const none = failures === 0 && skipped > 0;
+      Object.assign(slot, { done: true, failed: !none });
       this.emit();
     }
   }
@@ -446,12 +485,14 @@ function useAggregate<T>(
   const list = useAddons();
   const ids = useAnimeIds(seriesId);
   const idsReady = ids !== undefined;
+  // Absolute entries (One Piece): IMDb numbering from the season model, resolved when asked.
+  const lazy = ids && absoluteNumbering(ids) ? lazyImdbId(seriesId, episode, ids) : undefined;
   const asked: JobSpec[] = idsReady && enabled
     ? list
         .filter((a) => a.enabled && (a.baseUrl !== builtin.baseUrl || resource === 'stream'))
         .map((a) => ({
           a,
-          reqs: a.baseUrl === builtin.baseUrl ? [{ type: 'series', id: videoId(seriesId, episode) }] : requestsFor(a.manifest, resource, seriesId, episode, ids ?? null),
+          reqs: a.baseUrl === builtin.baseUrl ? [{ type: 'series', id: videoId(seriesId, episode) }] : requestsFor(a.manifest, resource, seriesId, episode, ids ?? null, lazy),
         }))
         .filter((j) => j.reqs.length > 0)
     : [];

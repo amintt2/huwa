@@ -7,7 +7,7 @@ type Watched = Record<string, { done: boolean; updatedAt: number }>;
 
 export type PlayTarget = {
   episode: Episode;
-  /** 1-based season inside the franchise, only when the franchise has several seasons. */
+  /** Season inside the franchise, only when the franchise has several seasons. */
   season?: number;
   /** The user already watched something of this franchise. */
   started: boolean;
@@ -15,12 +15,16 @@ export type PlayTarget = {
   label: string;
 };
 
+/** Season (several seasons only) and number shown of an episode (data/seasons.ts `episodeNumbering`). */
+export type Numbering = (seriesId: string, n: number) => { season?: number; shown: number };
+
 /**
  * `chain` lists the seasons in airing order (first season first). Never watched → episode 1
  * of the first season; otherwise the last episode touched (or the next one when it is finished),
- * moving on to the next season after a season finale.
+ * moving on to the next season after a season finale. `numbering`: the season model's (parts
+ * are one season: AoT Final Season Part 2 ep. 1 = "S4 Ép. 17"); without it, one season per entry.
  */
-export function playTarget(chain: Series[], watched: Watched): PlayTarget | undefined {
+export function playTarget(chain: Series[], watched: Watched, numbering?: Numbering): PlayTarget | undefined {
   const seasons = chain.filter((s) => s.anime?.episodes.length);
   if (!seasons.length) return undefined;
 
@@ -50,7 +54,8 @@ export function playTarget(chain: Series[], watched: Watched): PlayTarget | unde
       episode = seasons[k].anime!.episodes[0];
     }
   }
-  const season = seasons.length > 1 ? k + 1 : undefined;
-  const label = `${started ? 'Reprendre' : 'Regarder'} · ${season ? `S${season} ` : ''}Ép. ${episode.number}`;
+  const num = numbering?.(seasons[k].id, episode.number);
+  const season = num ? num.season : seasons.length > 1 ? k + 1 : undefined;
+  const label = `${started ? 'Reprendre' : 'Regarder'} · ${season ? `S${season} ` : ''}Ép. ${num?.shown ?? episode.number}`;
   return { episode, season, started, label };
 }

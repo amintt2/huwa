@@ -153,7 +153,7 @@ function AnimeDetailPage({ id, view, onSeasons }: { id: string; view?: SeasonVie
                 router.push(`/watch/${resume.id}`);
               }}
             />
-            {upcoming[0] && <NextEpisodeLine node={upcoming[0]} now={now} />}
+            {upcoming[0] && <NextEpisodeLine node={upcoming[0]} now={now} shown={view?.upcoming(upcoming[0].episode, upcoming[0].airingAt)} />}
             {resumeRatio > 0 && (
               <View style={styles.resumeRow}>
                 <View style={{ flex: 1 }}><Progress value={resumeRatio} height={3} /></View>
@@ -250,7 +250,7 @@ function AnimeDetailPage({ id, view, onSeasons }: { id: string; view?: SeasonVie
             <>
               <UpcomingHeader />
               {upcoming.map((n) => (
-                <UpcomingRow key={`up-${n.episode}`} seriesId={series.id} node={n}
+                <UpcomingRow key={`up-${n.episode}`} seriesId={series.id} node={n} shown={view?.upcoming(n.episode, n.airingAt)}
                   reminded={!!episodeBells[reminderKey(series.id, n.episode)]} covered={covered} />
               ))}
             </>

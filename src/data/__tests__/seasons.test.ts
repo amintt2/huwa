@@ -25,7 +25,12 @@ import {
   seasonOf,
   shownNumber,
   sortSpecials,
+  upcomingPair,
+  verifiedRuns,
   verifyRuns,
+  labelSeasons,
+  episodeNumbering,
+  seasonNumberIn,
   type SeasonEntry,
   type ShowEpisode,
 } from '../seasons';
@@ -378,4 +383,56 @@ test('specials: position in the chronology', () => {
   assert.equal(chronologyLabel('2020-01-01', eps, true), undefined, 'show still airing: the listing may be behind');
   assert.equal(chronologyLabel(undefined, eps), undefined);
   assert.equal(chronologyLabel('2013-04-15', []), undefined);
+});
+
+// ---------- outside the anime page ----------
+
+test('addon requests: One Piece numbering verified on the entry alone (anime-kitsu table first)', () => {
+  const r = verifiedRuns(opEntry, op.eps, opPairs, TODAY);
+  assert.ok(r.runs);
+  assert.deepEqual(pairOf(r.runs, 1000), { season: 21, episode: 109 });
+  assert.equal(pairOf(r.runs, 590), undefined, '590: TheTVDB special, no pair → no IMDb id');
+  // Without the table: the shifted absolute listing is refused, the table is asked for.
+  assert.deepEqual(verifiedRuns(opEntry, op.eps, undefined, TODAY), { runs: undefined, wantPairs: true });
+  // AniList one episode behind: the absolute listing lines up by chance, the table keeps it right.
+  const behind = { ...opEntry, episodes: 1179 };
+  assert.deepEqual(pairOf(composeSeasons({ entries: [behind], currentId: 'al21', shows: { tt0388629: op.eps }, today: TODAY }).mappings.al21.runs, 1000), { season: 21, episode: 110 });
+  assert.deepEqual(pairOf(verifiedRuns(behind, op.eps, opPairs, TODAY).runs!, 1000), { season: 21, episode: 109 });
+  // A table that disagrees with Cinemeta, or no listing: unverified.
+  const shifted = opPairs.map((p) => (p.n >= 600 ? { ...p, date: addDays(p.date, 7) } : p));
+  assert.equal(verifiedRuns(opEntry, op.eps, shifted, TODAY).runs, undefined);
+  assert.equal(verifiedRuns(opEntry, null, opPairs, TODAY).runs, undefined);
+});
+
+test('upcoming episodes: TheTVDB slot past the last mapped one', () => {
+  const runs = runsFromPairs(opPairs, 1180);
+  const eps = op.eps;
+  // Not listed yet: the last season continued (S23E25 = 1180).
+  assert.deepEqual(upcomingPair(runs, eps, 1181), { season: 23, episode: 26 });
+  assert.deepEqual(upcomingPair(runs, eps, 1183), { season: 23, episode: 28 });
+  // Listed by Cinemeta: its slot, when the dates agree.
+  const next = [...eps, { s: 24, e: 1, date: '2026-10-11' }, { s: 24, e: 2, date: '2026-10-18' }];
+  assert.deepEqual(upcomingPair(runs, next, 1181, '2026-10-11'), { season: 24, episode: 1 });
+  assert.deepEqual(upcomingPair(runs, next, 1183, '2026-10-25'), { season: 24, episode: 3 });
+  assert.equal(upcomingPair(runs, next, 1181, '2026-11-30'), undefined, 'dates disagree');
+  // Inside the mapping: its own slot; a hole (590): nothing.
+  assert.deepEqual(upcomingPair(runs, eps, 1000), { season: 21, episode: 109 });
+  assert.equal(upcomingPair(runs, eps, 590), undefined);
+});
+
+test('labels outside the page: parts are one season, TheTVDB numbers once every mapping is known', () => {
+  // Ids loading: titles alone (Season 3 Part 2, Final Season Part 2 continue their season).
+  const loading = aot.map((e, i) => ({ ...e, map: i === 0 ? e.map : undefined }));
+  const t = labelSeasons(loading);
+  assert.deepEqual(t.map((s) => s.number), [1, 2, 3, 4]);
+  assert.deepEqual(episodeNumbering(t, 'al131681', 1), { season: 4, shown: 17 });
+  assert.deepEqual(episodeNumbering(labelSeasons(aot), 'al131681', 1), { season: 4, shown: 17 });
+  assert.equal(seasonNumberIn(labelSeasons(aot), 'al104578'), 3);
+  // A season without aired episodes still gets its number; a lone season none in labels.
+  const next = labelSeasons([...aot, entry('al999', 'Attack on Titan Final Chapters', 0, { imdb: AOT, season: 5 })]);
+  assert.equal(seasonNumberIn(next, 'al999'), 5);
+  assert.deepEqual(episodeNumbering(labelSeasons([opEntry]), 'al21', 1000), { season: undefined, shown: 1000 });
+  // Several shows: labelled by title, numbered by position.
+  const naruto = labelSeasons([entry('al20', 'Naruto', 220, { imdb: 'tt0409591' }), entry('al1735', 'Naruto: Shippuden', 500, { imdb: 'tt0988824' })]);
+  assert.deepEqual(episodeNumbering(naruto, 'al1735', 3), { season: 2, shown: 3 });
 });

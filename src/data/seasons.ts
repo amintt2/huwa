@@ -585,3 +585,87 @@ export function composeSeasons({ entries, currentId, shows, pairs, today }: Comp
     current?.map?.imdb && cur && cur.source !== 'season' ? subSeasons({ entry: current, runs: cur.runs, show: shows[current.map.imdb] ?? [] }) : undefined;
   return { seasons: buildSeasons({ entries, currentId, sub }), mappings, rejected, wantPairs };
 }
+
+// ---------- one episode outside the anime page ----------
+
+/**
+ * Verified absolute ↔ IMDb numbering of one entry on its own, for addon requests (One Piece
+ * ep. 1000 = tt0388629:21:109, the numbering Torrentio uses): the picker's checks without the
+ * rest of the franchise. Undefined when not verified; an episode without a slot there (One Piece
+ * 590, moved to TheTVDB's specials, has no pair in the anime-kitsu table either) has no IMDb id.
+ * The anime-kitsu table goes first when it lines up with Cinemeta: it is the one Torrentio reads,
+ * and an absolute listing can line up by chance (AniList one episode behind while one episode
+ * sits in the specials: every id after it would be one off).
+ * `wantPairs`: the anime-kitsu table may verify it (absolute numbering off by an episode).
+ */
+export function verifiedRuns(
+  entry: SeasonEntry,
+  show: ShowEpisode[] | null | undefined,
+  pairs: ComposeInput['pairs'],
+  today: string,
+): { runs?: Run[]; wantPairs: boolean } {
+  const imdb = entry.map?.imdb;
+  if (!imdb || !show || entry.episodes <= 0) return { wantPairs: false };
+  if (entry.map?.season == null && pairs?.length && verifyPairs(pairs, show, entry.episodes)) {
+    return { runs: runsFromPairs(pairs, entry.episodes), wantPairs: false };
+  }
+  const out = composeSeasons({ entries: [entry], currentId: entry.id, shows: { [imdb]: show }, pairs, today });
+  const m = out.mappings[entry.id];
+  return { runs: m?.runs, wantPairs: !m && out.wantPairs };
+}
+
+/**
+ * TheTVDB slot of an episode not aired yet (the "À venir" rows), past the last mapped one: the
+ * episodes Cinemeta lists after that slot, in order (air date within 2 days when both are known),
+ * then the same season continued. Undefined inside a hole of the mapping or when Cinemeta's date
+ * disagrees.
+ */
+export function upcomingPair(runs: Run[], show: ShowEpisode[], n: number, date?: string): { season: number; episode: number } | undefined {
+  const p = pairOf(runs, n);
+  if (p) return p;
+  let lastN = 0;
+  let last: { s: number; e: number } | undefined;
+  for (const r of runs) {
+    const end = r.from + r.count - 1;
+    if (end > lastN) {
+      lastN = end;
+      last = { s: r.season, e: r.episode + r.count - 1 };
+    }
+  }
+  if (!last || n <= lastN) return undefined;
+  const k = n - lastN;
+  const from = key(last.s, last.e);
+  const after = show.filter((x) => x.s > 0 && key(x.s, x.e) > from).sort((a, b) => a.s - b.s || a.e - b.e);
+  const x = after[k - 1];
+  if (x) return !date || !x.date || daysBetween(date, x.date) <= DATE_SLACK_DAYS ? { season: x.s, episode: x.e } : undefined;
+  const base = after[after.length - 1] ?? last;
+  return { season: base.s, episode: base.e + k - after.length };
+}
+
+// ---------- labels outside the anime page (buttons, cards) ----------
+
+/**
+ * Seasons of a franchise for "Regarder · S4 Ép. 17" and cards: parts grouped, TheTVDB numbers
+ * once every entry's mapping is known (title signals alone before, so a label never comes from
+ * a half-loaded mapping). No Cinemeta here: a long entry stays one season.
+ */
+export function labelSeasons(entries: SeasonEntry[]): DisplaySeason[] {
+  const known = entries.every((e) => e.map !== undefined);
+  return buildSeasons({
+    entries: entries.map((e) => ({ ...e, episodes: Math.max(1, e.episodes), map: known ? e.map : undefined })),
+    currentId: '',
+  });
+}
+
+/** Season number of a series (1 when it is alone), position among the seasons when labelled by title. */
+export function seasonNumberIn(seasons: DisplaySeason[], seriesId: string, n = 1): number {
+  const s = seasonOf(seasons, seriesId, n);
+  return s ? (s.number ?? seasons.indexOf(s) + 1) : 1;
+}
+
+/** Season (several seasons only) and number shown of an episode: "S4 Ép. 17" for AoT Final Season Part 2 ep. 1. */
+export function episodeNumbering(seasons: DisplaySeason[], seriesId: string, n: number): { season?: number; shown: number } {
+  const s = seasonOf(seasons, seriesId, n);
+  if (!s) return { shown: n };
+  return { season: seasons.length > 1 ? seasonNumberIn(seasons, seriesId, n) : undefined, shown: shownNumber(s, seriesId, n) };
+}

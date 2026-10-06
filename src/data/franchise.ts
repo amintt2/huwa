@@ -5,6 +5,7 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useEffect, useState } from 'react';
 
+import { idsForAnilist, loadIdsCache, peekIds } from '@/addons/ids';
 import { isDemo } from '@/demo/flags';
 import { DEMO_CHAINS } from '@/demo/seasons';
 import { getState, useStore } from '@/store/store';
@@ -13,8 +14,8 @@ import { NODE, type Media } from './anilist';
 import { gql, seriesFromMedia } from './anilist-api';
 import { franchiseChain, isListedSpecial, prequelOf, specialRelationsOf, walkRelation } from './anilist-relations';
 import { getSeries, refreshCatalog, registerSeries, useCatalog, type Series } from './catalog';
-import { playTarget, type PlayTarget } from './play-target';
-import { fuzzyDate, groupEntries, sortSpecials, type SpecialItem } from './seasons';
+import { playTarget, type Numbering, type PlayTarget } from './play-target';
+import { episodeNumbering, fuzzyDate, labelSeasons, seasonNumberIn, sortSpecials, type DisplaySeason, type SeasonEntry, type SpecialItem } from './seasons';
 
 // v2: one-shots and short ONAs are no longer seasons (One Piece's 1-episode "MONSTERS" was
 // "Saison 1"): chains cached by v1 are walked again.
@@ -246,16 +247,68 @@ export function useFranchiseSeasons(s: Series | undefined): { seasons: Series[];
   return { seasons: known, index: Math.max(0, known.findIndex((x) => x.id === s.id)), specials: specials[s.id] ?? [] };
 }
 
+// ---------- season numbers of buttons and cards ----------
+// The season model's numbering (data/seasons.ts `labelSeasons`): parts are one season, TheTVDB
+// numbers once every entry's ids are known (AoT Final Season Part 2 = "S4", not the 6th entry).
+
+const entryOf = (s: Series): SeasonEntry => {
+  const al = anilistId(s);
+  const ids = al === null ? null : peekIds(al);
+  return {
+    id: s.id,
+    title: s.title,
+    episodes: s.anime?.episodes.length ?? 0,
+    start: s.start,
+    year: s.year || undefined,
+    map: ids === undefined ? undefined : ids?.imdb && ids.media !== 'MOVIE' ? { imdb: ids.imdb, season: ids.season } : null,
+  };
+};
+
+/** Seasons to number with: the whole franchise when walked already, else the prequels and the series. */
+function numberingChain(s: Series, prequels: Series[]): Series[] {
+  const full = knownSeasons(s);
+  return full && full.length > prequels.length + 1 ? full : [...prequels, s];
+}
+
+const labelSeasonsOf = (s: Series, prequels: Series[]) => labelSeasons(numberingChain(s, prequels).map(entryOf));
+const numberingOf = (seasons: DisplaySeason[]): Numbering => (id, n) => episodeNumbering(seasons, id, n);
+
+/**
+ * Ids of a chain's entries for its numbering: from the disk cache, also fetched (ARM) when
+ * `fetch` (the hero slide on screen); rails of cards never send one request per season.
+ */
+function useChainIds(chain: Series[] | undefined, fetch: boolean) {
+  const [, setTick] = useState(0);
+  const missing = (chain ?? []).map(anilistId).filter((al): al is number => al !== null && peekIds(al) === undefined);
+  const key = missing.join(',');
+  useEffect(() => {
+    if (!key) return;
+    let alive = true;
+    const bump = () => {
+      if (alive) setTick((n) => n + 1);
+    };
+    void loadIdsCache().then(() => {
+      bump();
+      if (!fetch) return;
+      for (const al of key.split(',').map(Number)) if (peekIds(al) === undefined) idsForAnilist(al).then(bump, () => {});
+    });
+    return () => {
+      alive = false;
+    };
+  }, [key, fetch]);
+}
+
 /** Episode to open for a series and its whole franchise, with the label that goes with it. */
 export function franchiseTarget(s: Series, watched = getState().episodes): PlayTarget | undefined {
   const prequels = knownPrequels(s);
-  return playTarget([...(prequels ?? []), s], watched);
+  return playTarget([...(prequels ?? []), s], watched, prequels ? numberingOf(labelSeasonsOf(s, prequels)) : undefined);
 }
 
 /**
  * Play target for a series. While earlier seasons are unknown and the user has never watched
  * this one, `pending` is true (label "Regarder", the press waits for the resolution).
- * `active`: only fetch for the slide that is on screen.
+ * `active`: only fetch for the slide that is on screen. Season numbers follow the season model
+ * (title signals alone while the ids of the chain are not known).
  */
 export function useFranchiseTarget(s: Series, active: boolean) {
   const watched = useStore((st) => st.episodes);
@@ -274,17 +327,12 @@ export function useFranchiseTarget(s: Series, active: boolean) {
     };
   }, [active, unknown, s, catalogVersion]);
 
+  useChainIds(prequels ? numberingChain(s, prequels) : undefined, active);
+  const seasons = prequels ? labelSeasonsOf(s, prequels) : undefined;
   const watchedSelf = s.anime?.episodes.some((e) => watched[e.id]) ?? false;
-  const target = unknown && !watchedSelf ? undefined : playTarget([...(prequels ?? []), s], watched);
-  return { target, pending: unknown && !watchedSelf, seasonNumber: prequels ? seasonNumberOf(prequels, s) : undefined };
+  const target = unknown && !watchedSelf ? undefined : playTarget([...(prequels ?? []), s], watched, seasons ? numberingOf(seasons) : undefined);
+  return { target, pending: unknown && !watchedSelf, seasonNumber: seasons ? seasonNumberIn(seasons, s.id) : undefined };
 }
-
-/**
- * Season number from the earlier seasons: "Part 2" / "Cour 2" entries continue the season before
- * them (AoT Final Season Part 2 = season 4, not 6). The page refines it with TheTVDB numbering.
- */
-const seasonNumberOf = (prequels: Series[], s: Series) =>
-  groupEntries([...prequels, s].map((x) => ({ id: x.id, title: x.title, episodes: 1 }))).length;
 
 /** Season number of a series inside its franchise (1 = first), once its prequels are known. */
 export function useSeasonNumber(s: Series, active = true): number | undefined {
@@ -299,7 +347,8 @@ export function useSeasonNumber(s: Series, active = true): number | undefined {
       alive = false;
     };
   }, [active, unknown, s]);
-  return prequels ? seasonNumberOf(prequels, s) : undefined;
+  useChainIds(prequels ? numberingChain(s, prequels) : undefined, false);
+  return prequels ? seasonNumberIn(labelSeasonsOf(s, prequels), s.id) : undefined;
 }
 
 /** Episode 1 of the franchise's first season (fetches the prequels if needed). */
