@@ -117,6 +117,7 @@ export function DividerView({
   before,
   after,
   beforeLoaded,
+  afterLoaded,
   afterLoad,
   boxW,
   boxH,
@@ -129,6 +130,8 @@ export function DividerView({
   after?: string;
   /** `before` is in the list (false: the previous chapter, above the window, not loaded yet). */
   beforeLoaded: boolean;
+  /** `after` is in the list. */
+  afterLoaded?: boolean;
   /** Load state of the chapter that is not in the list yet, if any. */
   afterLoad?: LoadState;
   boxW: number;
@@ -175,7 +178,7 @@ export function DividerView({
       <View style={[styles.card, { width: Math.min(boxW - 2 * S.lg, 460) }]}>
         {row(beforeLoaded ? 'Fin' : 'Chapitre précédent', b, !beforeLoaded ? state : <Ionicons name="checkmark-circle" size={20} color={C.accentText} />, false)}
         <View style={styles.line} />
-        {row(a ? (beforeLoaded ? 'À suivre' : 'Début') : 'Fin de la série disponible', a, beforeLoaded ? state : null, true)}
+        {row(a ? (beforeLoaded && !afterLoaded ? 'À suivre' : 'Début') : 'Fin de la série disponible', a, beforeLoaded ? state : null, true)}
         {!a && <Txt v="small" style={{ paddingHorizontal: S.lg, marginTop: -6 }}>Le prochain chapitre arrive bientôt.</Txt>}
         {beforeLoaded && before && (
           <View style={styles.actions}>

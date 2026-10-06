@@ -11,6 +11,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   FlatList,
+  LogBox,
   StyleSheet,
   View,
   useWindowDimensions,
@@ -40,6 +41,9 @@ import { ReaderSettingsSheet } from './ReaderSettingsSheet';
 import { setActiveSetting, useReaderSettings } from './settings-store';
 import { neighbours, useChapterFeed } from './useChapterFeed';
 import { ZoomLayer } from './ZoomLayer';
+
+// Known React Native noise (native-driven animations elsewhere); the toast covered the reader's buttons.
+if (__DEV__) LogBox.ignoreLogs(['Sending `onAnimatedValueUpdate` with no listeners registered']);
 
 const PREFETCH_AHEAD = 5;
 const KEEP_AWAKE_TAG = 'huwa-reader';
@@ -378,7 +382,8 @@ export function ChapterReader({ startId, onRestart }: { startId: string; onResta
       const beforeLoaded = !!item.before && feed.segments.some((s) => s.chapterId === item.before);
       const pending = beforeLoaded ? item.after : item.before;
       return (
-        <DividerView before={item.before} after={item.after} beforeLoaded={beforeLoaded} afterLoad={pending ? feed.loads[pending] : undefined}
+        <DividerView before={item.before} after={item.after} beforeLoaded={beforeLoaded}
+          afterLoaded={!!item.after && feed.segments.some((s) => s.chapterId === item.after)} afterLoad={pending ? feed.loads[pending] : undefined}
           boxW={W} boxH={paged ? H : DIVIDER_H} paged={paged} flip={rtl} flag={flag} onRetry={feed.retry} />
       );
     }
