@@ -220,7 +220,12 @@ async fn handle_conn(p: Arc<Proxy>, ctx: Arc<ShapingCtx>, client: TcpStream, sto
     // Connection setup costs one RTT (SYN/SYN-ACK through the simulated path).
     let rtt = p.profile.rtt_ms + ctx.client.rtt_ms;
     tokio::time::sleep(Duration::from_secs_f64(rtt / 1000.0)).await;
-    let upstream = TcpStream::connect(p.upstream).await?;
+    // Small receive buffer on the seeder → proxy hop: the shaped bottleneck is in this proxy, and
+    // loopback autotuning (up to 4 MiB per socket on macOS) would otherwise hide megabytes of
+    // already-requested data in kernel buffers, an artificial queue no real path has.
+    let sock = tokio::net::TcpSocket::new_v4()?;
+    sock.set_recv_buffer_size(64 * 1024)?;
+    let upstream = sock.connect(p.upstream).await?;
     let _ = upstream.set_nodelay(true);
     let _ = client.set_nodelay(true);
     ctx.counters.connections_total.fetch_add(1, Ordering::Relaxed);
