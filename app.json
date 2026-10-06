@@ -97,6 +97,11 @@
       "typedRoutes": true,
       "reactCompiler": true
     },
-    "backgroundColor": "#0A0A0F"
+    "backgroundColor": "#0A0A0F",
+    "extra": {
+      "relayKeys": [
+        "h5s1qmqx8q5y7ca99ftssxdyxaahmux6xxhxci91x4kq6ib81qgo"
+      ]
+    }
   }
 }
