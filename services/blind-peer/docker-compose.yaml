@@ -5,7 +5,7 @@
 # et le pare-feu de l'hôte doit l'ouvrir : `ufw allow 49738/udp` (+ règle du fournisseur cloud).
 # La sonde HTTP (8080) n'est PAS publiée : elle sert au healthcheck dans le conteneur.
 #
-# Volume : ./data contient la base RocksDB ET la paire de clés du relais. La perdre change la clé
+# Volume : relay-data contient la base RocksDB ET la paire de clés du relais. La perdre change la clé
 # publique que les apps connaissent : sauvegarder ce dossier.
 
 services:
@@ -15,7 +15,9 @@ services:
     ports:
       - "${PORT:-49738}:${PORT:-49738}/udp"
     volumes:
-      - ./data:/data
+      # Volume nommé (pas un dossier de l'hôte) : il hérite des droits de l'image (utilisateur node),
+      # alors qu'un ./data créé par Docker appartient à root et le relais ne peut pas y écrire.
+      - relay-data:/data
     environment:
       STORAGE: /data
       PORT: ${PORT:-49738}
@@ -39,3 +41,6 @@ services:
       resources:
         limits:
           memory: 1G
+
+volumes:
+  relay-data:
