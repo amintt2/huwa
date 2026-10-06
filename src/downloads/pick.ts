@@ -87,14 +87,25 @@ export function whyNotDownloadable(ranked: AddonStream[], ctx: DlContext): strin
   return REASONS.none;
 }
 
-/** File extension to keep on disk: from the URL, the addon's file name, or mp4 by default. */
+/**
+ * File extension to keep on disk: the URL's, else the addon's file name's, when it is a known
+ * video container (the offline player picks AVPlayer or mpv from it, see engines/policy.ts);
+ * mp4 by default (the player sniffs the file anyway).
+ */
 export function extensionOf(url: string | undefined, filename?: string): string {
-  const fromName = filename ? /\.([a-z0-9]{2,4})$/i.exec(filename)?.[1] : undefined;
-  const c = url ? containerFromUrl(url) : 'unknown';
-  if (c === 'hls') return 'movpkg';
-  if (c !== 'unknown') return c === 'mov' ? 'mov' : c === 'mkv' ? 'mkv' : c === 'webm' ? 'webm' : c === 'ts' ? 'ts' : c === 'avi' ? 'avi' : 'mp4';
-  const ext = fromName?.toLowerCase();
-  return ext && ['mp4', 'm4v', 'mkv', 'webm', 'mov', 'avi', 'ts'].includes(ext) ? ext : 'mp4';
+  const extOf = (s: string | undefined) => {
+    const ext = s ? /\.([a-z0-9]{2,5})$/i.exec(s.split(/[?#]/)[0])?.[1]?.toLowerCase() : undefined;
+    return ext && containerFromUrl(`x.${ext}`) !== 'unknown' ? ext : undefined;
+  };
+  if (url && containerFromUrl(url) === 'hls') return 'movpkg';
+  let path = url;
+  try {
+    path = url ? decodeURIComponent(url) : url;
+  } catch {
+    // keep raw
+  }
+  const ext = extOf(path) ?? extOf(filename);
+  return !ext || ext === 'm3u8' || ext === 'm3u' || ext === 'mpd' ? 'mp4' : ext;
 }
 
 /** Snapshot stored with the download. */

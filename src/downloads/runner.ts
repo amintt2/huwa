@@ -9,6 +9,7 @@
 // 127.0.0.1 inside the app: those transfers use a foreground session (the app must stay open).
 import { Directory, DownloadTask, File } from 'expo-file-system';
 
+import { sniffLocalFile } from '@/components/player/engines/local-probe';
 import { sniff } from '@/components/player/engines/policy';
 import { getSeries } from '@/data/catalog';
 import { getState as getWatchState } from '@/store/store';
@@ -355,6 +356,7 @@ export async function compressNext(): Promise<void> {
         durationSec: probe.durationSec,
         sizeBytes: probe.sizeBytes,
         fps: probe.fps,
+        codecs: sniffLocalFile(input)?.codecs,
       },
       mode,
     );

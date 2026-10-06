@@ -363,7 +363,52 @@ pub fn build_magnet(hex: &str, trackers: &[String], name: Option<&str>) -> Strin
     m
 }
 
-const VIDEO_EXT: &[&str] = &["mkv", "mp4", "webm", "m4v", "mov", "avi", "ts", "m2ts", "wmv", "flv"];
+/// Video containers (mpv plays every one; the JS engine policy maps each to AVPlayer or mpv from
+/// the extension carried by the stream URL, see `src/components/player/engines/policy.ts`).
+const VIDEO_EXT: &[&str] = &[
+    "mkv", "mk3d", "mp4", "m4v", "mov", "webm", "avi", "divx", "xvid", "ts", "m2ts", "mts", "m2t", "wmv", "asf", "flv", "f4v",
+    "mpg", "mpeg", "m2v", "vob", "evo", "ogm", "ogv", "rmvb", "rm", "3gp",
+];
+
+/// Extensions that are never the video of a torrent: subtitles, pictures, text, archives (RAR'd
+/// releases cannot be streamed), separate audio tracks, disc images (no ISO reader over HTTP),
+/// executables. Anything else without a video extension (no extension, `.bin`, a typo) may still
+/// be the video: the largest such file is the fallback, and mpv recognizes it from its bytes.
+const NOT_VIDEO_EXT: &[&str] = &[
+    "srt", "ass", "ssa", "sub", "idx", "sup", "vtt", "smi", "ttf", "otf", "jpg", "jpeg", "png", "gif", "webp", "bmp", "avif",
+    "nfo", "txt", "md", "sfv", "md5", "sha1", "sha256", "url", "htm", "html", "log", "cue", "xml", "json", "pdf", "epub",
+    "rar", "zip", "7z", "tar", "gz", "bz2", "xz", "par2", "torrent", "exe", "dll", "msi", "dmg", "apk", "lnk", "db",
+    "iso", "img", "nrg", "mdf", "mds", "flac", "mp3", "aac", "m4a", "ogg", "opus", "wav", "ac3", "eac3", "dts", "thd", "mka",
+];
+
+fn ext_of(name: &str) -> Option<String> {
+    Path::new(name).extension().and_then(|e| e.to_str()).map(str::to_ascii_lowercase)
+}
+
+/// Not a video for sure (see `NOT_VIDEO_EXT`; split archives `.r00`… `.r99` and `.001` too).
+pub fn is_junk_name(name: &str) -> bool {
+    let Some(ext) = ext_of(name) else { return false };
+    NOT_VIDEO_EXT.contains(&ext.as_str())
+        || (ext.len() == 3 && ext.starts_with('r') && ext[1..].bytes().all(|c| c.is_ascii_digit()))
+        || (ext.len() == 3 && ext.bytes().all(|c| c.is_ascii_digit()))
+}
+
+/// Sample, trailer, creditless opening / ending (NCOP / NCED, `OP1`), menu, preview… : a video
+/// that comes with the episode, not the episode. Matched on whole words of the path.
+pub fn is_extra_name(name: &str) -> bool {
+    let lower = name.to_ascii_lowercase();
+    let words: Vec<&str> = lower.split(|c: char| !c.is_ascii_alphanumeric()).filter(|w| !w.is_empty()).collect();
+    let numbered = |w: &str, p: &str| w.strip_prefix(p).is_some_and(|rest| rest.len() <= 3 && rest.bytes().all(|c| c.is_ascii_alphanumeric()) && rest.bytes().next().is_none_or(|c| c.is_ascii_digit()));
+    words.iter().any(|w| {
+        matches!(
+            *w,
+            "sample" | "samples" | "trailer" | "trailers" | "teaser" | "creditless" | "menu" | "menus" | "preview" | "previews"
+                | "featurette" | "featurettes" | "extras" | "bonus" | "pv" | "cm" | "cms"
+        ) || numbered(w, "ncop")
+            || numbered(w, "nced")
+            || (w.len() > 2 && (numbered(w, "op") || numbered(w, "ed")) && w[2..].bytes().all(|c| c.is_ascii_digit()))
+    })
+}
 
 /// Lower-case video extension of a file name (one of `VIDEO_EXT`), for the stream URL.
 pub fn video_ext(name: &str) -> Option<&'static str> {
@@ -402,15 +447,26 @@ pub fn selected_file_complete(file_progress: &[u64], handle: &ManagedTorrentHand
     Some(file_progress.get(i).copied().unwrap_or(0) >= len)
 }
 
-/// Picks the largest video file, else the largest file.
+/// Files that may be the video, best first in kind: named videos that are not extras, then any
+/// named video, then files with no / an unknown extension (decided by size; mpv sniffs the bytes).
+pub fn video_candidates(files: &[(String, u64)]) -> Vec<usize> {
+    let all = 0..files.len();
+    let main: Vec<usize> = all.clone().filter(|&i| is_video_name(&files[i].0) && !is_extra_name(&files[i].0)).collect();
+    if !main.is_empty() {
+        return main;
+    }
+    let videos: Vec<usize> = all.clone().filter(|&i| is_video_name(&files[i].0)).collect();
+    if !videos.is_empty() {
+        return videos;
+    }
+    all.filter(|&i| !is_junk_name(&files[i].0) && !is_extra_name(&files[i].0)).collect()
+}
+
+/// Picks the largest video file (samples, trailers, NCOP/NCED and other extras last), else the
+/// largest file that is not known to be something else (no extension, unknown extension). None
+/// when the torrent holds no possible video (archives, ISO, subtitles only…).
 pub fn pick_file(files: &[(String, u64)]) -> Option<usize> {
-    let best_video = files
-        .iter()
-        .enumerate()
-        .filter(|(_, (n, _))| is_video_name(n))
-        .max_by_key(|(_, (_, len))| *len)
-        .map(|(i, _)| i);
-    best_video.or_else(|| files.iter().enumerate().max_by_key(|(_, (_, len))| *len).map(|(i, _)| i))
+    video_candidates(files).into_iter().max_by_key(|&i| files[i].1)
 }
 
 impl Engine {
@@ -1489,5 +1545,60 @@ mod tests {
         let none_video = vec![("a.bin".to_string(), 1), ("b.bin".to_string(), 2)];
         assert_eq!(pick_file(&none_video), Some(1));
         assert_eq!(pick_file(&[]), None);
+    }
+
+    fn files(list: &[(&str, u64)]) -> Vec<(String, u64)> {
+        list.iter().map(|(n, s)| (n.to_string(), *s)).collect()
+    }
+
+    #[test]
+    fn more_containers_are_videos() {
+        for name in ["a.mk3d", "a.M2TS", "a.mts", "a.vob", "a.mpg", "a.ogm", "a.rmvb", "a.divx", "a.3gp", "a.asf", "a.f4v", "BDMV/STREAM/00001.m2ts"] {
+            assert!(is_video_name(name), "{name}");
+            assert!(video_ext(name).is_some(), "{name}");
+        }
+        for name in ["a.srt", "a.ass", "a.idx", "a.sub", "a.nfo", "a.rar", "a.r00", "a.r17", "a.001", "a.iso", "a.mka", "a.flac", "cover.jpg"] {
+            assert!(!is_video_name(name) && is_junk_name(name), "{name}");
+        }
+        assert!(!is_junk_name("video") && !is_junk_name("video.bin") && !is_junk_name("Show - 01.mkv.part"));
+    }
+
+    #[test]
+    fn extras_are_recognized_by_whole_words() {
+        for name in [
+            "Show - NCOP1.mkv",
+            "Show/Extras/NCED 02 [1080p].mkv",
+            "[Grp] Show - NCOP1a.mkv",
+            "Show [BD]/Creditless/OP1.mkv",
+            "Show - ED2.mkv",
+            "movie.sample.mkv",
+            "Sample/movie-sample.mkv",
+            "Show - Trailer.mp4",
+            "Show [Menu].m2ts",
+            "Show - PV 01.mkv",
+        ] {
+            assert!(is_extra_name(name), "{name}");
+        }
+        for name in ["Show - 01.mkv", "Opening Night (2007).mkv", "Edens Zero - 05.mkv", "Sampler Story - 01.mkv", "Show S01E02.mkv", "Show - 07 [ED2K].mkv"] {
+            assert!(!is_extra_name(name), "{name}");
+        }
+    }
+
+    #[test]
+    fn picks_the_episode_over_bigger_extras_and_skips_junk() {
+        // A BD episode with a long creditless OP+ED file next to it: the episode, even if smaller.
+        let f = files(&[("Show - 03.mkv", 300), ("Extras/NCOP.mkv", 900), ("Extras/Menu 01.m2ts", 50)]);
+        assert_eq!(pick_file(&f), Some(0));
+        // Only extras: still something to play.
+        assert_eq!(pick_file(&files(&[("NCOP.mkv", 10), ("NCED.mkv", 20)])), Some(1));
+        // Unknown / missing extension: the largest file that is not known to be something else.
+        let f = files(&[("release.nfo", 5), ("cover.jpg", 900), ("video", 700), ("subs.srt", 1)]);
+        assert_eq!(pick_file(&f), Some(2));
+        // RAR'd release, ISO only: nothing playable rather than a wrong file.
+        assert_eq!(pick_file(&files(&[("x.rar", 50), ("x.r00", 50), ("x.r01", 50), ("x.sfv", 1)])), None);
+        assert_eq!(pick_file(&files(&[("disc.iso", 9000), ("readme.txt", 1)])), None);
+        // Season pack in nested folders: the largest episode, wherever it lives.
+        let f = files(&[("S1/Disc1/Show - 01.mkv", 500), ("S1/Disc2/Show - 02.mkv", 520), ("S1/Disc2/Sample/Show - 02 sample.mkv", 30)]);
+        assert_eq!(pick_file(&f), Some(1));
     }
 }

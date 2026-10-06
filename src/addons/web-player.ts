@@ -10,7 +10,11 @@ import type { StreamItem } from './protocol';
 /** `direct` = a media file / playlist the native player opens; `page` = an HTML player page. */
 export type MediaGuess = 'direct' | 'page' | 'unknown';
 
-const MEDIA_EXT = /\.(m3u8|mp4|m4v|mkv|webm|mov|avi|ts|mpd|mp3|m4a|flac)$/i;
+// Every container the player handles (AVPlayer or mpv, see engines/policy.ts), plus audio files.
+const MEDIA_EXTS =
+  'm3u8|m3u|mpd|mp4|m4v|3gp|f4v|mov|mkv|mk3d|webm|avi|divx|xvid|ts|m2ts|mts|m2t|mpg|mpeg|m2v|vob|evo|ogv|ogm|flv|wmv|asf|rmvb|rm|mp3|m4a|aac|flac|ogg|opus|wav|mka';
+const MEDIA_EXT = new RegExp(`\\.(${MEDIA_EXTS})$`, 'i');
+const MEDIA_IN_QUERY = new RegExp(`[?&][^=]+=[^&]*\\.(${MEDIA_EXTS})(&|$)`, 'i');
 const PAGE_EXT = /\.(html?|php|aspx?|jsp)$/i;
 // Path shapes of embed players (`/embed/…`, `/e/…`, `/player/…`).
 const EMBED_PATH = /\/(embed|embed-[^/]+|e|player|iframe)(\/|$)/i;
@@ -32,7 +36,7 @@ export function guessFromUrl(url: string, filename?: string): MediaGuess {
   const path = pathOf(url);
   if (MEDIA_EXT.test(path) || (filename && MEDIA_EXT.test(filename))) return 'direct';
   // A media extension hidden in the query (`…/get?file=video.mp4`, `…/stream?type=.m3u8`).
-  if (/[?&][^=]+=[^&]*\.(m3u8|mp4|mkv|webm|mov)(&|$)/i.test(url)) return 'direct';
+  if (MEDIA_IN_QUERY.test(url)) return 'direct';
   if (PAGE_EXT.test(path) || EMBED_PATH.test(path)) return 'page';
   return 'unknown';
 }
@@ -42,7 +46,7 @@ export function guessFromContentType(ct: string | null | undefined): MediaGuess 
   const t = (ct ?? '').split(';')[0].trim().toLowerCase();
   if (!t) return 'unknown';
   if (t.startsWith('video/') || t.startsWith('audio/')) return 'direct';
-  if (/^application\/(vnd\.apple\.mpegurl|x-mpegurl|mpegurl|dash\+xml|octet-stream|mp4)$/.test(t)) return 'direct';
+  if (/^application\/(vnd\.apple\.mpegurl|x-mpegurl|mpegurl|dash\+xml|octet-stream|mp4|ogg|x-matroska|vnd\.rn-realmedia(-vbr)?|x-ms-asf|force-download|binary)$/.test(t)) return 'direct';
   if (t === 'text/html' || t === 'application/xhtml+xml') return 'page';
   return 'unknown';
 }

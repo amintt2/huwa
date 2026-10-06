@@ -1,11 +1,15 @@
 // Source probing for the engine policy: URL extension, then one `Range: bytes=0-4095` request
-// (Content-Type + magic bytes + MP4 sample entries). Results are cached per URL.
+// (Content-Type + magic bytes + MP4 sample entries). An MP4 whose `moov` does not fit in those
+// bytes (at the end of the file, or a long one) gets a second Range request for it: its audio
+// sample entries tell DTS / TrueHD / MP3, which AVPlayer drops silently. Results are cached per URL.
 import { engineHashOf } from '@/torrent/stream-input';
 
-import { conclusiveWithoutSniff, containerFromMime, containerFromUrl, sniff, type Probe } from './policy';
+import { conclusiveWithoutSniff, containerFromMime, containerFromUrl, mp4Codecs, mp4MoovRange, sniff, type Probe } from './policy';
 
 const PROBE_BYTES = 4096;
 const TIMEOUT_MS = 3500;
+/** The moov read shares the probe budget, with at least this much of its own. */
+const MOOV_MIN_MS = 1500;
 const MAX_CACHE = 200;
 
 const cache = new Map<string, Probe>();
@@ -15,6 +19,15 @@ function remember(url: string, p: Probe): Probe {
   cache.set(url, p);
   if (cache.size > MAX_CACHE) cache.delete(cache.keys().next().value!);
   return p;
+}
+
+/**
+ * Reads a local file (`file://`, downloaded episode) for `probeSource`: registered by
+ * local-probe.ts (expo-file-system), absent in unit tests.
+ */
+let localSniffer: ((url: string) => Probe | null) | null = null;
+export function setLocalSniffer(f: ((url: string) => Probe | null) | null) {
+  localSniffer = f;
 }
 
 export function cachedProbe(url: string): Probe | undefined {
@@ -28,7 +41,7 @@ type Head = { status: number; contentType: string | null; bytes: Uint8Array | nu
  * server that ignores `Range` would make us download the entire video. Here the request is
  * aborted as soon as the headers show a non-206 answer.
  */
-function readHead(url: string, headers: Record<string, string> | undefined): Promise<Head> {
+function readHead(url: string, headers: Record<string, string> | undefined, start = 0, end = PROBE_BYTES - 1, timeoutMs = TIMEOUT_MS): Promise<Head> {
   return new Promise((resolve) => {
     const xhr = new XMLHttpRequest();
     let done = false;
@@ -41,11 +54,11 @@ function readHead(url: string, headers: Record<string, string> | undefined): Pro
     const timer = setTimeout(() => {
       xhr.abort();
       finish({ status: 0, contentType: null, bytes: null });
-    }, TIMEOUT_MS);
+    }, timeoutMs);
     xhr.open('GET', url);
     xhr.responseType = 'arraybuffer';
     for (const [k, v] of Object.entries(headers ?? {})) xhr.setRequestHeader(k, v);
-    xhr.setRequestHeader('Range', `bytes=0-${PROBE_BYTES - 1}`);
+    xhr.setRequestHeader('Range', `bytes=${start}-${end}`);
     xhr.onreadystatechange = () => {
       if (xhr.readyState === 2 && xhr.status !== 206) {
         // Full-body answer (or error): keep the Content-Type, drop the body.
@@ -79,6 +92,17 @@ function fromUrl(url: string): Probe {
   return { container: containerFromUrl(url), codecs: [], via: 'ext', ...(torrent ? { torrent } : null) };
 }
 
+/** Adds the codecs of a `moov` the first bytes did not hold (whatever was learned is kept on failure). */
+async function withMoov(url: string, headers: Record<string, string> | undefined, headBytes: Uint8Array, s: Probe, t0: number): Promise<Probe> {
+  const range = mp4MoovRange(headBytes);
+  if (!range) return s;
+  const left = Math.max(MOOV_MIN_MS, TIMEOUT_MS - (Date.now() - t0));
+  const r = await readHead(url, headers, range.start, range.end, left);
+  if (r.status !== 206 || !r.bytes?.length) return s;
+  const more = mp4Codecs(r.bytes);
+  return more.length ? { ...s, codecs: [...new Set([...s.codecs, ...more])] } : s;
+}
+
 /** Never throws; `{ container: 'unknown' }` when nothing could be learned. */
 export async function probeSource(url: string, headers?: Record<string, string>): Promise<Probe> {
   const hit = cache.get(url);
@@ -88,11 +112,18 @@ export async function probeSource(url: string, headers?: Record<string, string>)
   if (quick) return remember(url, quick);
   const fromExt = fromUrl(url);
   const torrent = fromExt.torrent;
+  // Downloaded MP4: its sample entries tell DTS / Hi10P… as for a remote file.
+  if (/^file:/i.test(url) && localSniffer) {
+    const p = localSniffer(url);
+    if (p && p.container !== 'unknown') return remember(url, p);
+  }
   if (!/^https?:/i.test(url)) return fromExt;
 
+  const t0 = Date.now();
   const head = await readHead(url, headers);
   if (head.bytes && head.bytes.length) {
-    const s = sniff(head.bytes);
+    let s = sniff(head.bytes);
+    if (s.container === 'mp4' || s.container === 'mov') s = await withMoov(url, headers, head.bytes, s, t0);
     if (s.container !== 'unknown') return remember(url, torrent ? { ...s, torrent } : s);
   }
   const mime = containerFromMime(head.contentType);

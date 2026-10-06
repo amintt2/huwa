@@ -4,6 +4,8 @@ import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
 import { gzipSync } from 'node:zlib';
 
+import { strToU8, zipSync } from 'fflate';
+
 import { parseAss } from '../ass';
 import { decodeSingleByte, decodeSubtitleBytes } from '../decode';
 import { parseAssColor, splitTags } from '../inline';
@@ -249,6 +251,45 @@ test('gzip: .srt.gz and .ass.gz are inflated then decoded', () => {
   const srt = parseSubtitleBytes(gzipSync(encode1(SRT_FR, 'windows-1252')));
   assert.equal(srt.encoding, 'windows-1252');
   assert.equal(srt.doc.events[0].plain, 'Ça va ? Déjà l’été, garçon… « Où es-tu ? » Œuvre');
+});
+
+test('ZIP archives (OpenSubtitles downloads): the subtitle inside, ASS before SRT, junk ignored', () => {
+  const zip = zipSync({
+    'Readme.nfo': strToU8('release notes'),
+    '__MACOSX/._ep.srt': strToU8('mac junk'),
+    'Show - 01.srt': encode1(SRT_FR, 'windows-1252'),
+  });
+  const parsed = parseSubtitleBytes(zip, formatFromName('https://subs.example/dl/123.zip'));
+  assert.equal(parsed.zipEntry, 'Show - 01.srt');
+  assert.equal(parsed.encoding, 'windows-1252');
+  assert.equal(parsed.doc.events[0].plain, 'Ça va ? Déjà l’été, garçon… « Où es-tu ? » Œuvre');
+  const both = parseSubtitleBytes(zipSync({ 'a.srt': strToU8(SRT_FR), 'Fansub/a.ass': fixture('fansub.ass') }));
+  assert.equal(both.doc.format, 'ass');
+  assert.match(both.text, /^\[Script Info\]/);
+  assert.throws(() => parseSubtitleBytes(zipSync({ 'cover.jpg': new Uint8Array([1, 2, 3]) })), /Aucun sous-titre dans cette archive/);
+});
+
+test('MicroDVD (.sub, frames) and MPL2 (deciseconds) become timed cues', () => {
+  const sub = '{1}{1}25\r\n{25}{75}Huwa : {y:i}première ligne|seconde ligne\r\n{100}{150}Fin\r\n';
+  const doc = parseSubtitleBytes(encode1(sub, 'windows-1252')).doc;
+  assert.equal(doc.events.length, 2);
+  near(doc.events[0].start, 1);
+  near(doc.events[0].end, 3);
+  assert.equal(doc.events[0].plain, 'Huwa : première ligne\nseconde ligne');
+  assert.ok(doc.events[0].spans.some((s) => s.style.italic));
+  // No frame-rate line: 23.976.
+  near(parseSubtitleText('{24}{48}a\n{50}{60}b\n').events[0].start, 24 / 23.976, 1e-3);
+  const mpl = parseSubtitleText('[10][25]Bonjour\n[30][45]/En italique|deux\n');
+  assert.deepEqual(mpl.events.map((e) => [e.start, e.end, e.plain]), [[1, 2.5, 'Bonjour'], [3, 4.5, 'En italique\ndeux']]);
+  assert.ok(mpl.events[1].spans.some((s) => s.style.italic));
+});
+
+test('bitmap subtitle files get a clear message instead of garbage', () => {
+  const vobsub = new Uint8Array([0, 0, 1, 0xba, 0x44, 0, 4, 0, 4, 1, 1, 0x89, 0xc3, 0xf8]);
+  assert.throws(() => parseSubtitleBytes(vobsub), /VobSub \/ PGS/);
+  assert.throws(() => parseSubtitleBytes(strToU8('# VobSub index file, v7 (do not modify this line!)\nsize: 720x480\n')), /VobSub \/ PGS/);
+  const pgs = new Uint8Array([0x50, 0x47, 0, 0, 0x23, 0x28, 0, 0, 0, 0, 0x16, 0, 0x13, 7]);
+  assert.throws(() => parseSubtitleBytes(pgs), /VobSub \/ PGS/);
 });
 
 test('unreadable files throw a clear error', () => {

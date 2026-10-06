@@ -61,6 +61,15 @@ test('extension and expired links', () => {
   assert.equal(extensionOf('https://h/master.m3u8'), 'movpkg');
   assert.equal(extensionOf('https://h/dl/123', 'Show.E01.1080p.mkv'), 'mkv');
   assert.equal(extensionOf('https://h/dl/123'), 'mp4');
+  // Every container keeps its own extension (the offline player decides AVPlayer / mpv from it).
+  assert.equal(extensionOf('https://h/a.WMV'), 'wmv');
+  assert.equal(extensionOf('https://h/Show%20-%2001.vob'), 'vob');
+  assert.equal(extensionOf('https://h/a.flv'), 'flv');
+  assert.equal(extensionOf('https://h/a.m2ts'), 'm2ts');
+  assert.equal(extensionOf('https://h/dl/123', 'Show - 01.rmvb'), 'rmvb');
+  assert.equal(extensionOf('http://127.0.0.1:5000/abcd/0', 'Show - 01 [Hi10P].ogm'), 'ogm');
+  assert.equal(extensionOf('https://h/dl/123', 'Show - 01.nfo'), 'mp4');
+  assert.equal(extensionOf('https://h/manifest.mpd'), 'mp4');
   assert.ok(isExpiredError(403));
   assert.ok(isExpiredError(undefined, 'HTTP 410 Gone'));
   assert.ok(!isExpiredError(500, 'timeout'));

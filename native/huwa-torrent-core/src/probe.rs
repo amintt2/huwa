@@ -41,7 +41,7 @@ use tokio::{
     task::JoinHandle,
 };
 
-use crate::engine::{build_magnet, is_video_name, normalize_hash, pick_file, Engine};
+use crate::engine::{build_magnet, is_junk_name, is_video_name, normalize_hash, pick_file, video_candidates, Engine};
 
 /// Probes actually running at once (more are queued). JS asks for 4 on Wi-Fi (8 once the race
 /// widens because every candidate looks weak), 2 on cellular (3 widened).
@@ -420,15 +420,17 @@ pub fn episode_match(name: &str, ep: u32) -> u8 {
 
 /// File the stream would play, or why this torrent does not have it.
 /// Order: the addon's `fileIdx`, then its `filename`, then (season pack) the episode number, then
-/// the largest video. Small extra videos (samples, NCOP/NCED: under a quarter of the largest one)
-/// do not make a torrent a pack.
+/// the largest video. Extras (samples, trailers, NCOP/NCED, menus — by name, see `is_extra_name`)
+/// and small extra videos (under a quarter of the largest one) do not make a torrent a pack and are
+/// never matched to an episode. Files without a video extension count when there is no named video
+/// (see `video_candidates`).
 pub fn pick_probe_file(files: &[(String, u64)], file_idx: Option<usize>, filename: Option<&str>, episode: Option<u32>) -> FilePick {
     if files.is_empty() {
         return FilePick::NoFile("empty torrent");
     }
     if let Some(i) = file_idx {
         return match files.get(i) {
-            Some((n, _)) if is_video_name(n) => FilePick::File(i),
+            Some((n, _)) if is_video_name(n) || !is_junk_name(n) => FilePick::File(i),
             Some(_) => FilePick::NoFile("not a video"),
             None => FilePick::NoFile("file index out of range"),
         };
@@ -439,7 +441,7 @@ pub fn pick_probe_file(files: &[(String, u64)], file_idx: Option<usize>, filenam
             return FilePick::File(i);
         }
     }
-    let videos: Vec<usize> = (0..files.len()).filter(|&i| is_video_name(&files[i].0)).collect();
+    let videos = video_candidates(files);
     let Some(largest) = videos.iter().map(|&i| files[i].1).max() else {
         return FilePick::NoFile("no video file");
     };
@@ -845,6 +847,28 @@ mod tests {
         assert_eq!(pick_probe_file(&files, None, None, Some(17)), FilePick::File(0));
         assert_eq!(pick_probe_file(&[f("notes.txt", 3)], None, None, Some(1)), FilePick::NoFile("no video file"));
         assert_eq!(pick_probe_file(&[], None, None, None), FilePick::NoFile("empty torrent"));
+    }
+
+    #[test]
+    fn big_bd_extras_are_not_episodes() {
+        // Creditless OP/ED as big as an episode (BD remux) would have made it a "pack" where
+        // "NCOP 1" matched episode 1.
+        let files = vec![f("Show - 01.mkv", 1000), f("Extras/NCOP 1.mkv", 900), f("Extras/NCED 1.mkv", 900)];
+        assert_eq!(pick_probe_file(&files, None, None, Some(1)), FilePick::File(0));
+        let pack = vec![f("Show - 01.mkv", 1000), f("Show - 02.mkv", 1000), f("Extras/NCOP 2.mkv", 900)];
+        assert_eq!(pick_probe_file(&pack, None, None, Some(2)), FilePick::File(1));
+    }
+
+    #[test]
+    fn files_without_a_video_extension() {
+        // Extension-less video next to its .nfo: playable, also through an explicit fileIdx.
+        let files = vec![f("Show - 01", 1000), f("Show - 01.nfo", 2)];
+        assert_eq!(pick_probe_file(&files, None, None, Some(1)), FilePick::File(0));
+        assert_eq!(pick_probe_file(&files, Some(0), None, None), FilePick::File(0));
+        assert_eq!(pick_probe_file(&files, Some(1), None, None), FilePick::NoFile("not a video"));
+        // A RAR'd release has no file to stream.
+        let rar = vec![f("x.rar", 500), f("x.r00", 500), f("x.nfo", 1)];
+        assert_eq!(pick_probe_file(&rar, None, None, Some(1)), FilePick::NoFile("no video file"));
     }
 
     #[test]

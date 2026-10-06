@@ -45,6 +45,19 @@ public class HuwaMpvModule: Module {
       AsyncFunction("setSubtitleTrack") { (view: HuwaMpvView, id: Int) in
         view.setString("sid", id < 0 ? "no" : String(id))
       }
+      /// Subtitle look / timing from the app's subtitle settings. Only `sub-…` options.
+      AsyncFunction("setSubtitleOption") { (view: HuwaMpvView, name: String, value: String) in
+        guard name.hasPrefix("sub-") else { return }
+        view.setString(name, value)
+      }
+      /// Local subtitle file drawn by libass (styled ASS from an addon), selected at once. Applies
+      /// to the current file only (mpv drops external tracks on the next load).
+      AsyncFunction("addSubtitleFile") { (view: HuwaMpvView, path: String, title: String, lang: String) in
+        view.command(["sub-add", path, "select", title, lang])
+      }
+      AsyncFunction("removeSubtitle") { (view: HuwaMpvView, id: Int) in
+        view.command(["sub-remove", String(id)])
+      }
       /// Zoom to fill the screen (crops top/bottom or sides) or back to the whole picture.
       AsyncFunction("setFill") { (view: HuwaMpvView, fill: Bool) in
         view.setString("panscan", fill ? "1.0" : "0.0")

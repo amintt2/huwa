@@ -10,6 +10,7 @@ import { getSettings } from '@/settings/settings';
 
 import HuwaMpv, { getMpvNativeView, type MpvLoadedEvent, type MpvProgressEvent, type MpvStateEvent, type MpvTrack, type MpvViewHandle } from '../../../../modules/huwa-mpv';
 
+import './local-probe';
 import { decideEngine, type DeviceCaps, type Engine } from './policy';
 import { getEnginePref, setActiveEngine } from './prefs';
 import { cachedProbe, probeSource } from './probe';
@@ -60,6 +61,12 @@ function parseTracks(json: string): MpvTrack[] {
   }
 }
 const mpvId = (t: { id?: string } | null | undefined) => (t?.id?.startsWith('mpv:') ? Number(t.id.slice(4)) : -1);
+/** Title of the external subtitle file handed to libass (hidden from the track lists). */
+const EXT_SUB_TITLE = 'huwa-external';
+/** View calls added after the first mpv builds: absent on an older binary. */
+const quiet = (p: Promise<void> | undefined) => {
+  p?.catch(() => {});
+};
 
 const NATIVE_LOAD_TIMEOUT = 15_000;
 /** A player is released only after its VideoView had time to unmount. */
@@ -127,6 +134,12 @@ export class HybridPlayer implements EventEmitter<VideoPlayerEvents> {
   private firstFrameListeners = new Set<() => void>();
   /** The first native player belongs to `useVideoPlayer` (released by the hook); later ones to us. */
   private ownsNative = false;
+  /** `sub-…` options for the subtitles mpv draws (user's look, sync offset). */
+  private subOpts: Record<string, string> = {};
+  /** Styled ASS file drawn by libass instead of the overlay, and its mpv track id once added. */
+  private extSub: { path: string; lang: string } | null = null;
+  private extSubId = -1;
+  private mpvLoaded = false;
   /** Hidden native player warming a better source (seamless upgrade). */
   private staged: { player: VideoPlayer; src: Src } | null = null;
   /** Native players to render, bottom to top (the staged one sits under the visible one). */
@@ -304,11 +317,48 @@ export class HybridPlayer implements EventEmitter<VideoPlayerEvents> {
       this.native.subtitleTrack = t;
       return;
     }
+    // "No embedded track" while libass draws the external file: that file stays selected.
+    if (!t && this.extSub) {
+      const old = this.m.subtitleTrack;
+      this.m.subtitleTrack = null;
+      if (old) this.emit('subtitleTrackChange', { subtitleTrack: null, oldSubtitleTrack: old });
+      return;
+    }
     if (mpvId(t) === mpvId(this.m.subtitleTrack)) return;
     const old = this.m.subtitleTrack;
     this.m.subtitleTrack = t;
     this.view?.setSubtitleTrack(mpvId(t)).catch(() => {});
     this.emit('subtitleTrackChange', { subtitleTrack: t, oldSubtitleTrack: old });
+  }
+
+  // ---------- subtitles drawn by mpv ----------
+
+  /** The user's subtitle look and sync offset (see mpv-subtitles.ts), applied to every mpv file. */
+  setMpvSubtitleOptions(opts: Record<string, string>) {
+    const changed = Object.entries(opts).filter(([k, v]) => this.subOpts[k] !== v);
+    this.subOpts = { ...opts };
+    if (this.engine !== 'mpv' || !this.view) return;
+    for (const [k, v] of changed) quiet(this.view.setSubtitleOption?.(k, v));
+  }
+
+  /** Whether this mpv build can draw a subtitle file itself (libass). */
+  canDrawSubtitleFiles(): boolean {
+    return deviceCaps().mpvAvailable && (!this.view || typeof this.view.addSubtitleFile === 'function');
+  }
+
+  /**
+   * Local subtitle file (styled ASS) that mpv draws with libass, instead of the overlay; null to
+   * go back to the embedded track chosen (or none). Kept across loads: re-added to each new file.
+   */
+  setMpvSubtitleFile(file: { path: string; lang: string } | null) {
+    if (file?.path === this.extSub?.path) return;
+    this.extSub = file;
+    const view = this.view;
+    if (this.engine !== 'mpv' || !view || !this.mpvLoaded) return;
+    if (this.extSubId >= 0) quiet(view.removeSubtitle?.(this.extSubId));
+    this.extSubId = -1;
+    if (file) quiet(view.addSubtitleFile?.(file.path, EXT_SUB_TITLE, file.lang));
+    else view.setSubtitleTrack(mpvId(this.m.subtitleTrack)).catch(() => {});
   }
 
   /** Zoom to fill (mpv: panscan). The native engine zooms through VideoView `contentFit`. */
@@ -618,6 +668,8 @@ export class HybridPlayer implements EventEmitter<VideoPlayerEvents> {
     this.m = freshMpv();
     this.m.time = start;
     this.mpvStart = start;
+    this.mpvLoaded = false;
+    this.extSubId = -1;
     this.detail = '';
     this.setEngine('mpv', reason);
     this.emit('statusChange', { status: 'loading', oldStatus: old.status });
@@ -632,6 +684,7 @@ export class HybridPlayer implements EventEmitter<VideoPlayerEvents> {
     view.setVolume(this.vol).catch(() => {});
     try {
       await view.load(src.uri, src.headers ?? {}, start, true);
+      for (const [k, v] of Object.entries(this.subOpts)) quiet(view.setSubtitleOption?.(k, v));
     } catch (e) {
       this.mpv.onMpvError({ nativeEvent: { message: e instanceof Error ? e.message : 'mpv indisponible' } });
     }
@@ -662,7 +715,10 @@ export class HybridPlayer implements EventEmitter<VideoPlayerEvents> {
     const oldAudio = this.m.audio;
     const oldSubs = this.m.subs;
     const audio = tracks.filter((t) => t.type === 'audio');
-    const subs = tracks.filter((t) => t.type === 'sub');
+    // The external file drawn by libass is not one of the video's tracks.
+    const ext = tracks.find((t) => t.type === 'sub' && t.external && t.title === EXT_SUB_TITLE);
+    this.extSubId = ext ? ext.id : -1;
+    const subs = tracks.filter((t) => t.type === 'sub' && t !== ext);
     this.m.audio = audio.map(toTrack);
     this.m.subs = subs.map(toTrack);
     const selA = audio.find((t) => t.selected);
@@ -680,7 +736,9 @@ export class HybridPlayer implements EventEmitter<VideoPlayerEvents> {
       const { duration, videoCodec, hwdec } = e.nativeEvent;
       const tracks = parseTracks(e.nativeEvent.tracks);
       this.m.duration = duration;
+      this.mpvLoaded = true;
       this.applyTracks(tracks);
+      if (this.extSub && this.view) quiet(this.view.addSubtitleFile?.(this.extSub.path, EXT_SUB_TITLE, this.extSub.lang));
       this.pickDefaultAudio(tracks);
       this.setDetail(videoCodec, hwdec);
       this.emit('sourceLoad', {

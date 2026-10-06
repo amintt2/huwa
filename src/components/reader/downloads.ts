@@ -147,7 +147,9 @@ export function offlinePages(chapterId: string): string[] | undefined {
 }
 
 const extOf = (url: string) => {
-  const m = /\.(jpe?g|png|webp|gif|avif|heic)(?:[?#]|$)/i.exec(url);
+  // The name only matters to people browsing the folder: expo-image recognizes its formats
+  // (JPEG, PNG, GIF, WebP, AVIF, HEIC/HEIF…) from the bytes, whatever the extension.
+  const m = /\.(jpe?g|png|webp|gif|avif|heic|heif|bmp)(?:[?#]|$)/i.exec(url);
   return m ? m[1].toLowerCase() : 'jpg';
 };
 

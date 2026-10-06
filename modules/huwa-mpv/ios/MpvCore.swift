@@ -93,6 +93,36 @@ final class MpvCore {
       let rc = mpv_set_option_string(ctx, k, v)
       if rc < 0 { NSLog("[HuwaMpv] option %@=%@: %@", k, v, String(cString: mpv_error_string(rc))) }
     }
+
+    // ---- Formats: subtitles, fonts, decoders (scripts/format-samples/README.md) ----
+    // Apart from the start/cache options above on purpose: those are tuned for start time.
+    var formatOptions: [(String, String)] = [
+      // ASS keeps the file's own styling, only scaled to the video (mpv's default, pinned):
+      // `force` (the user's style instead) is set from JS when "respect the video's style" is off.
+      ("sub-ass-override", "scale"),
+      // System fonts through CoreText; fonts attached to the MKV / in an ASS [Fonts] section
+      // first (`embeddedfonts` above).
+      ("sub-font-provider", "auto"),
+      // Legacy code pages of text subtitles (Windows-125x, Shift-JIS…) detected by uchardet.
+      ("sub-codepage", "auto"),
+      // VideoToolbox rejects some profiles (Hi10P = 10-bit H.264, HEVC 4:2:2…): check the profile
+      // before trying it, and go to software decoding at the first failed frame, not the third.
+      ("vd-lavc-check-hw-profile", "yes"),
+      ("hwdec-software-fallback", "yes"),
+      // Software decoding (Hi10P, AV1 without hardware, MPEG-4 ASP…): one thread per core.
+      ("vd-lavc-threads", String(max(2, min(ProcessInfo.processInfo.activeProcessorCount, 8)))),
+    ]
+    // Extra fonts for libass (Application Support/subtitle-fonts), created empty.
+    if let dir = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first?.appendingPathComponent("subtitle-fonts", isDirectory: true),
+       (try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)) != nil {
+      formatOptions.append(("sub-fonts-dir", dir.path))
+    }
+    for (k, v) in formatOptions {
+      let rc = mpv_set_option_string(ctx, k, v)
+      if rc < 0 { NSLog("[HuwaMpv] option %@=%@: %@", k, v, String(cString: mpv_error_string(rc))) }
+    }
+    // ---- end formats ----
+
     mpv_request_log_messages(ctx, "error")
 
     guard mpv_initialize(ctx) >= 0 else {
