@@ -2,6 +2,8 @@
 # Les modules natifs (rocksdb-native, udx-native, sodium-native) sont livrés précompilés (image Debian/glibc : les prébuilds musl d’Alpine faisaient planter le relais) pour
 # linux-x64 / linux-arm64 (glibc et musl).
 FROM node:22-bookworm-slim
+# rocksdb-native (linux-arm64) a besoin de libatomic.so.1, absent de l’image slim.
+RUN apt-get update && apt-get install -y --no-install-recommends libatomic1 && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci --omit=dev && npm cache clean --force
