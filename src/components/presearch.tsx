@@ -4,7 +4,8 @@
 // in a hidden muted player (warm pool) that the watch screen takes over.
 // One target at a time for the whole app (`PresearchHost`, mounted once in the root layout):
 // screens propose a target while focused (`usePresearch`), the highest priority wins
-// (detail page > "Reprendre" row > home hero). Bounded:
+// (detail page > "Reprendre" row > home hero). An addon added while a series page is open (even
+// under the add sheet) gets its sources asked at once (see ./presearch-targets.ts). Bounded:
 // - nothing at all when streaming is not allowed (offline, "Wi-Fi seulement" on cellular),
 // - no on-device torrent engine start, no hosted web player loaded (only its link checked),
 // - the target changes or disappears: the race and the warm player stop; addon requests already
@@ -12,43 +13,15 @@
 import { useIsFocused } from 'expo-router';
 import { useEffect, useSyncExternalStore } from 'react';
 
-import { useSubtitles } from '@/addons/registry';
+import { useAddonSetHash, useSubtitles } from '@/addons/registry';
 import { useSource } from '@/addons/use-source';
 import { WarmPlayer } from '@/components/player/warm-player';
 import { useStreamPolicy, useUnmetered } from '@/settings/network';
 import { getState } from '@/store/store';
 
-export type PresearchTarget = {
-  seriesId: string;
-  /** Episode id (watch route), episode number. */
-  episodeId: string;
-  episode: number;
-  /** Shown by the system media controls once the warm player is taken over. */
-  meta?: { title?: string; artist?: string; artwork?: string };
-};
+import { getWinner, park, propose, subscribeWinner, unpark, withdraw, type PresearchTarget } from './presearch-targets';
 
-export const PRIORITY = { hero: 1, continue: 2, detail: 3 } as const;
-
-type Slot = { target: PresearchTarget; priority: number; at: number };
-const slots = new Map<string, Slot>();
-const listeners = new Set<() => void>();
-let winner: Slot | null = null;
-
-function pickWinner() {
-  let best: Slot | null = null;
-  for (const s of slots.values()) if (!best || s.priority > best.priority || (s.priority === best.priority && s.at > best.at)) best = s;
-  if (best?.target.episodeId === winner?.target.episodeId && best?.priority === winner?.priority) return;
-  winner = best;
-  listeners.forEach((l) => l());
-}
-
-const subscribe = (l: () => void) => {
-  listeners.add(l);
-  return () => {
-    listeners.delete(l);
-  };
-};
-const getWinner = () => winner;
+export { PRIORITY, type PresearchTarget } from './presearch-targets';
 
 /**
  * Proposes `target` while the calling screen is focused and `active`, after `dwellMs` (a card
@@ -56,19 +29,22 @@ const getWinner = () => winner;
  */
 export function usePresearch(owner: string, target: PresearchTarget | null | undefined, priority: number, { dwellMs = 1000, active = true } = {}) {
   const focused = useIsFocused();
-  const episodeId = focused && active ? target?.episodeId : undefined;
+  const mountedEpisodeId = active ? target?.episodeId : undefined;
+  const episodeId = focused ? mountedEpisodeId : undefined;
+  // Kept while mounted, focused or not: a new addon warms this target up at once (see
+  // `warmUpNewAddon`), e.g. when it was added from a sheet covering the series page.
+  useEffect(() => {
+    if (!mountedEpisodeId || !target) return;
+    park(owner, target, priority);
+    return () => unpark(owner, mountedEpisodeId);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [owner, mountedEpisodeId, priority]);
   useEffect(() => {
     if (!episodeId || !target) return;
-    const t = setTimeout(() => {
-      slots.set(owner, { target, priority, at: Date.now() });
-      pickWinner();
-    }, dwellMs);
+    const t = setTimeout(() => propose(owner, target, priority), dwellMs);
     return () => {
       clearTimeout(t);
-      if (slots.get(owner)?.target.episodeId === episodeId) {
-        slots.delete(owner);
-        pickWinner();
-      }
+      withdraw(owner, episodeId);
     };
     // The target object may be rebuilt on every render: the episode identifies it.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -77,10 +53,13 @@ export function usePresearch(owner: string, target: PresearchTarget | null | und
 
 /** Runs the winning pre-search. Mounted once (root layout). */
 export function PresearchHost() {
-  const slot = useSyncExternalStore(subscribe, getWinner, getWinner);
+  const slot = useSyncExternalStore(subscribeWinner, getWinner, getWinner);
   const policy = useStreamPolicy();
+  // A new installed set starts a fresh decision (never a source picked before the add); the
+  // addon answers already known are reused, only the new addon is asked.
+  const setHash = useAddonSetHash();
   if (!slot || !policy.allowed) return null;
-  return <Presearch key={slot.target.episodeId} target={slot.target} />;
+  return <Presearch key={`${slot.target.episodeId}#${setHash}`} target={slot.target} />;
 }
 
 function Presearch({ target }: { target: PresearchTarget }) {

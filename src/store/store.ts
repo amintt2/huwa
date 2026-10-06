@@ -5,6 +5,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useEffect, useState, useSyncExternalStore } from 'react';
 
 import { getSeries } from '@/data/catalog';
+import { pruneEpisodeReminders, refreshEpisodeReminders, reminderKey, type EpisodeReminder, type PlannedEpisode } from '@/notifications/plan';
 
 import { debouncedWriter } from './persist';
 
@@ -32,6 +33,10 @@ export type State = {
   episodes: Record<string, EpisodeProgress>;
   chapters: Record<string, ChapterProgress>;
   myList: string[];
+  /** Series with « Me rappeler » on (notified even outside "Ma liste"). */
+  seriesReminders: string[];
+  /** Single not-yet-aired episodes with a bell, keyed `<seriesId>:<episode>`. */
+  episodeReminders: Record<string, EpisodeReminder>;
   comments: Comment[];
   liked: Record<string, true>;
 };
@@ -43,6 +48,8 @@ const initial: State = {
   episodes: {},
   chapters: {},
   myList: [],
+  seriesReminders: [],
+  episodeReminders: {},
   comments: [],
   liked: {},
 };
@@ -54,7 +61,9 @@ const listeners = new Set<() => void>();
 const saver = debouncedWriter(() => AsyncStorage.setItem(KEY, JSON.stringify(state)), 400);
 
 function set(updater: (s: State) => State) {
-  state = updater(state);
+  const next = updater(state);
+  if (next === state) return;
+  state = next;
   listeners.forEach((l) => l());
   saver.schedule();
 }
@@ -130,6 +139,32 @@ export function toggleMyList(seriesId: string) {
     ...s,
     myList: s.myList.includes(seriesId) ? s.myList.filter((x) => x !== seriesId) : [seriesId, ...s.myList],
   }));
+}
+
+export function setSeriesReminder(seriesId: string, on: boolean) {
+  set((s) => {
+    const has = s.seriesReminders.includes(seriesId);
+    if (has === on) return s;
+    return { ...s, seriesReminders: on ? [seriesId, ...s.seriesReminders] : s.seriesReminders.filter((x) => x !== seriesId) };
+  });
+}
+
+export function setEpisodeReminder(r: EpisodeReminder, on: boolean) {
+  const key = reminderKey(r.seriesId, r.episode);
+  set((s) => {
+    if (!on && !s.episodeReminders[key]) return s;
+    const next = { ...s.episodeReminders };
+    if (on) next[key] = r;
+    else delete next[key];
+    return { ...s, episodeReminders: next };
+  });
+}
+
+/** Episode bells: airing times AniList moved are updated, the ones already aired dropped. */
+export function tidyEpisodeReminders(upcoming: readonly PlannedEpisode[] = [], now = Date.now()) {
+  const cur = state.episodeReminders;
+  const next = pruneEpisodeReminders(refreshEpisodeReminders(cur, upcoming), now);
+  if (next !== cur) set((s) => ({ ...s, episodeReminders: next }));
 }
 
 /** Progress removed by `removeFromHistory`, for "Annuler". */

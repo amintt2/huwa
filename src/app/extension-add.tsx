@@ -284,7 +284,7 @@ function AddonFound({ found, busy, onInstall, onConfigure }: { found: Extract<Fo
         <Button label="Configurer sur son site" icon="settings-outline" onPress={onConfigure} />
       ) : (
         <>
-          <Button label={busy ? 'Installation…' : found.existing ? 'Mettre à jour' : 'Installer'} icon="add" onPress={onInstall} />
+          <Button label={busy ? 'Ajout…' : found.existing ? 'Mettre à jour' : 'Installer'} icon="add" onPress={onInstall} />
           {m.behaviorHints?.configurable && <Button small variant="soft" icon="settings-outline" label="Configurer d’abord" onPress={onConfigure} />}
         </>
       )}

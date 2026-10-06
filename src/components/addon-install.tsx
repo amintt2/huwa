@@ -131,7 +131,7 @@ export function AddonInstallSheet({ url }: { url: string }) {
             <Button label={busy === 'configure' ? 'Ouverture…' : 'Configurer sur son site'} icon="settings-outline" onPress={configure} />
           ) : (
             <>
-              <Button label={busy === 'install' ? 'Installation…' : cur.data?.existing ? 'Mettre à jour' : 'Installer'} icon="add" onPress={install} />
+              <Button label={busy === 'install' ? 'Ajout…' : cur.data?.existing ? 'Mettre à jour' : 'Installer'} icon="add" onPress={install} />
               {m.behaviorHints?.configurable && (
                 <Button small variant="soft" icon="settings-outline" label={busy === 'configure' ? 'Ouverture…' : 'Configurer d’abord'} onPress={configure} />
               )}

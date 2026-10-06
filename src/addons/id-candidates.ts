@@ -2,10 +2,35 @@
 // Formats: `anilist:<id>:<ep>`, `kitsu:<id>:<ep>`, `mal:<id>:<ep>` (per-entry numbering, as
 // AniList), and IMDb `tt…:<season>:<episode>` (TheTVDB numbering: split-cour parts continue the
 // season, hence `epOffset`), plus a second IMDb guess with TMDB's numbering when it differs.
+// Long-runners kept as one AniList entry (One Piece) have no TheTVDB season: their IMDb id comes
+// from the season model's verified numbering (data/imdb-episode.ts), resolved when the request
+// is made (`LazyId`) so the other id formats never wait for it.
 import type { AnimeIds } from './ids';
 import { prefixesFor, supports, type Manifest, type Resource } from './protocol';
 
-export type AddonRequest = { type: string; id: string };
+/**
+ * An id known only once asked (IMDb numbering of an absolute entry): `resolve` gives it (null: no
+ * IMDb id for this episode), `peek` what is already known without waiting (undefined: not yet).
+ */
+export type LazyId = { resolve: () => Promise<string | null>; peek: () => string | null | undefined };
+
+/** `id` is a placeholder when `lazy` is set (the job key); the request goes out with the resolved id. */
+export type AddonRequest = { type: string; id: string; lazy?: LazyId };
+
+/** One AniList entry numbered absolutely over the whole IMDb show: no TheTVDB season, no offset. */
+export const absoluteNumbering = (ids: AnimeIds | null | undefined): boolean =>
+  !!ids?.imdb && ids.media !== 'MOVIE' && ids.season == null && ids.epOffset == null && !ids.alt;
+
+/**
+ * IMDb video id of an absolute entry's episode: the verified slot (`pair`) when there is one;
+ * none when the verified numbering has no slot for it (`null`: One Piece 590); unverified
+ * (`undefined`): the guess of `imdbIds` (season 1 of a short show, nothing past episode 26).
+ */
+export function imdbIdFrom(ids: AnimeIds, episode: number, pair: { season: number; episode: number } | null | undefined): string | null {
+  if (pair) return `${ids.imdb}:${pair.season}:${pair.episode}`;
+  if (pair === null) return null;
+  return imdbIds(ids, episode)[0] ?? null;
+}
 
 const anilistOf = (seriesId: string) => {
   const m = /^al(\d+)$/.exec(seriesId);
@@ -36,15 +61,26 @@ export function imdbIds(ids: AnimeIds | null | undefined, episode: number): stri
  *   aggregators often find videos only for IMDb ids.
  * - Addons without prefixes: IMDb first (the Stremio default), then kitsu, then anilist.
  * The alternative IMDb numbering always comes last (last resort).
+ * `lazy`: IMDb id of an absolute entry from the season model (see `absoluteNumbering`), taking
+ * the IMDb slot above (asked in the first pair, alongside the first anime id).
  */
-export function requestsFor(m: Manifest, resource: Resource, seriesId: string, episode: number, ids: AnimeIds | null): AddonRequest[] {
+export function requestsFor(
+  m: Manifest,
+  resource: Resource,
+  seriesId: string,
+  episode: number,
+  ids: AnimeIds | null,
+  lazy?: LazyId,
+): AddonRequest[] {
   const al = anilistOf(seriesId);
   const movie = ids?.media === 'MOVIE';
   const ep = (base: string) => (movie ? base : `${base}:${episode}`);
   const anilistId = al != null ? ep(`anilist:${al}`) : null;
   const kitsu = ids?.kitsu ? ep(`kitsu:${ids.kitsu}`) : null;
   const mal = ids?.mal ? ep(`mal:${ids.mal}`) : null;
-  const [imdb, imdbAlt] = imdbIds(ids, episode);
+  const deferred = !!lazy && !movie && absoluteNumbering(ids);
+  // Placeholder: keys the request (job, order); the id sent is the resolved one.
+  const [imdb, imdbAlt] = deferred ? [`${ids!.imdb}:abs:${episode}`] : imdbIds(ids, episode);
   const types = movie ? ['movie', 'anime'] : ['series', 'anime'];
   const typeOf = (id: string) => types.find((t) => supports(m, resource, t, id));
   let order: (string | null | undefined)[];
@@ -57,7 +93,7 @@ export function requestsFor(m: Manifest, resource: Resource, seriesId: string, e
   for (const id of order) {
     if (!id || out.some((r) => r.id === id)) continue;
     const type = typeOf(id);
-    if (type) out.push({ type, id });
+    if (type) out.push(deferred && id === imdb ? { type, id, lazy } : { type, id });
   }
   return out;
 }

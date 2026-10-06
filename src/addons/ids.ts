@@ -110,6 +110,17 @@ async function cached(key: string, load: () => Promise<AnimeIds | null>): Promis
   return job;
 }
 
+/**
+ * ARM ids of an AniList anime already in the cache (stale ones too), without the episode
+ * offsets: undefined when not cached or the cache is not loaded yet (`loadIdsCache`).
+ */
+export function peekIds(anilist: number): AnimeIds | null | undefined {
+  return cache?.[`anilist:${anilist}`]?.ids;
+}
+
+/** Loads the ids cache from disk (once). */
+export const loadIdsCache = (): Promise<void> => loadCache().then(() => {});
+
 /** Adds the episode offsets of split-cour shows (see ./episode-map.ts). */
 export async function withEpisodeMapping(ids: AnimeIds | null): Promise<AnimeIds | null> {
   if (!ids?.anidb || ids.media === 'MOVIE') return ids;

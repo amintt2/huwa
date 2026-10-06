@@ -8,13 +8,16 @@ import { DEMO_SEASONS } from '@/demo/seasons';
 
 import { hydrateExtraSeries, makeChapters, makeEpisodes, registerSeries, setCatalog, type Palette, type Series } from './catalog';
 import { prequelOf } from './anilist-relations';
+import { airedEpisodeCount } from './airing';
 import { estimateCoverage } from './mapping';
+import { fuzzyDate } from './seasons';
 
 export const ENDPOINT = 'https://graphql.anilist.co';
 const CACHE_KEY = 'huwa/catalog/v2';
-const MAX_EPISODES = 200;
+/** Bound for broken data only: long-runners (One Piece, Detective Conan) are past 1200. */
+const MAX_EPISODES = 5000;
 
-export const NODE = `id type format status countryOfOrigin episodes chapters averageScore genres seasonYear
+export const NODE = `id type format status countryOfOrigin episodes chapters averageScore genres seasonYear startDate { year month day }
   title { english userPreferred } description(asHtml: false)
   coverImage { extraLarge color } bannerImage nextAiringEpisode { episode airingAt }`;
 
@@ -36,6 +39,7 @@ export type Media = {
   averageScore: number | null;
   genres: string[] | null;
   seasonYear: number | null;
+  startDate?: { year: number | null; month: number | null; day: number | null } | null;
   title: { english: string | null; userPreferred: string };
   description: string | null;
   coverImage: { extraLarge: string; color: string | null };
@@ -72,8 +76,8 @@ const clean = (html: string | null) =>
 const title = (m: Media) => m.title.english ?? m.title.userPreferred;
 const status = (m: Media): Series['status'] =>
   m.status === 'FINISHED' || m.status === 'CANCELLED' ? 'completed' : m.status === 'NOT_YET_RELEASED' ? 'upcoming' : 'ongoing';
-export const episodeCount = (m: Media) =>
-  Math.min(MAX_EPISODES, m.episodes ?? (m.nextAiringEpisode ? m.nextAiringEpisode.episode - 1 : 0));
+/** Episodes out (not the announced total of a season still airing), see data/airing.ts. */
+export const episodeCount = (m: Media) => Math.min(MAX_EPISODES, airedEpisodeCount(m.episodes, m.nextAiringEpisode));
 export const isManhwa = (m: Media) => m.type === 'MANGA' && m.countryOfOrigin === 'KR';
 
 export { isTvLike, prequelOf, sequelOf } from './anilist-relations';
@@ -94,7 +98,8 @@ export function build(anime: Media | null, manhwa: Media | null, trendRank: numb
     title: title(lead),
     synopsis: clean(lead.description) || clean(manhwa?.description ?? null),
     genres: (lead.genres ?? []).slice(0, 3),
-    year: lead.seasonYear ?? 0,
+    year: lead.seasonYear ?? lead.startDate?.year ?? 0,
+    start: fuzzyDate(lead.startDate),
     rating: (lead.averageScore ?? 0) / 10,
     palette: palette(lead.coverImage.color),
     author: manhwa ? `Manhwa · Corée du Sud` : 'Anime',

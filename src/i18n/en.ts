@@ -108,6 +108,9 @@ export const en: Record<Key, string> = {
   'notif.body': 'Episode {n} is out now.',
   'notif.scheduled': '{n} notifications scheduled',
   'notif.unsupported': 'Notifications aren’t available on this platform.',
+  'notif.reminderDeniedTitle': 'Notifications are off',
+  'notif.reminderDenied': 'To get this reminder, allow notifications for Huwa in your phone’s settings.',
+  'notif.openSettings': 'Open Settings',
 
   'settings.title': 'Settings',
   'settings.general': 'General',

@@ -10,6 +10,9 @@ const EXCLUDED_KEYS = new Set([
   'huwa/ids/v2', // id mapping cache
   'huwa/franchise/v1', // AniList relations cache
   'huwa/franchise/seasons/v1', // AniList relations cache (whole franchises)
+  'huwa/franchise/v2',
+  'huwa/franchise/seasons/v2',
+  'huwa/franchise/specials/v1', // specials of each franchise (season picker)
   'huwa/episode-offsets/v1', // downloaded offsets index
   'huwa/downloads/v1', // index of chapter files on this device (files are not exported)
   'huwa/p2p/bare/migrated',
@@ -17,6 +20,7 @@ const EXCLUDED_KEYS = new Set([
 ]);
 const EXCLUDED_PREFIXES = [
   'huwa/streams/', // resolved stream links (may hold debrid download URLs)
+  'huwa/cinemeta/', // episode listings (titles, air dates), re-fetchable
   'huwa/pb/state/', // extension cookies / session state
   'huwa/secure/', // web fallback of the secure store
   'huwa/passkey/', // passkey record of this device's account

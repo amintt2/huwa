@@ -5,24 +5,32 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useEffect, useState } from 'react';
 
+import { idsForAnilist, loadIdsCache, peekIds } from '@/addons/ids';
 import { isDemo } from '@/demo/flags';
 import { DEMO_CHAINS } from '@/demo/seasons';
 import { getState, useStore } from '@/store/store';
 
 import { NODE, type Media } from './anilist';
 import { gql, seriesFromMedia } from './anilist-api';
-import { franchiseChain, prequelOf, walkRelation } from './anilist-relations';
+import { franchiseChain, isListedSpecial, prequelOf, specialRelationsOf, walkRelation } from './anilist-relations';
 import { getSeries, refreshCatalog, registerSeries, useCatalog, type Series } from './catalog';
-import { playTarget, type PlayTarget } from './play-target';
+import { playTarget, type Numbering, type PlayTarget } from './play-target';
+import { episodeNumbering, fuzzyDate, labelSeasons, seasonNumberIn, sortSpecials, type DisplaySeason, type SeasonEntry, type SpecialItem } from './seasons';
 
-const KEY = 'huwa/franchise/v1';
+// v2: one-shots and short ONAs are no longer seasons (One Piece's 1-episode "MONSTERS" was
+// "Saison 1"): chains cached by v1 are walked again.
+const KEY = 'huwa/franchise/v2';
 /** Whole chains (prequels + sequels), separate key: the prequel chains above stay compatible. */
-const SEASONS_KEY = 'huwa/franchise/seasons/v1';
+const SEASONS_KEY = 'huwa/franchise/seasons/v2';
+/** Specials of each franchise (movies, OVAs, recaps): last entry of the season picker. */
+const SPECIALS_KEY = 'huwa/franchise/specials/v1';
 
 /** series id → ids of its earlier seasons, first season first. */
 let chains: Record<string, string[]> = {};
 /** series id → ids of every season of its franchise (itself included), first season first. */
 let seasons: Record<string, string[]> = {};
+/** series id → specials of its franchise, in airing order. */
+let specials: Record<string, SpecialItem[]> = {};
 let loaded: Promise<void> | null = null;
 const inflight = new Map<string, Promise<string[]>>();
 const seasonsInflight = new Map<string, Promise<string[]>>();
@@ -34,6 +42,8 @@ const seasonsFailed = new Set<string>();
 const anilistId = (s: Series) => (/^al\d+$/.test(s.id) ? Number(s.id.slice(2)) : null);
 
 function load() {
+  // Chains cached before one-shots stopped counting as seasons.
+  if (!loaded) for (const k of ['huwa/franchise/v1', 'huwa/franchise/seasons/v1']) AsyncStorage.removeItem(k).catch(() => {});
   loaded ??= Promise.all([
     AsyncStorage.getItem(KEY)
       .then((raw) => {
@@ -46,6 +56,11 @@ function load() {
     AsyncStorage.getItem(SEASONS_KEY)
       .then((raw) => {
         if (raw) seasons = { ...JSON.parse(raw), ...seasons };
+      })
+      .catch(() => {}),
+    AsyncStorage.getItem(SPECIALS_KEY)
+      .then((raw) => {
+        if (raw) specials = { ...JSON.parse(raw), ...specials };
       })
       .catch(() => {}),
   ]).then(() => {});
@@ -151,26 +166,39 @@ export function knownSeasons(s: Series): Series[] | undefined {
   return list.every(Boolean) ? (list as Series[]) : undefined;
 }
 
+const specialOf = (m: Media): SpecialItem => ({
+  anilistId: m.id,
+  title: m.title.english ?? m.title.userPreferred,
+  format: m.format ?? null,
+  episodes: m.episodes,
+  start: fuzzyDate(m.startDate),
+  year: m.seasonYear ?? m.startDate?.year ?? undefined,
+  image: m.coverImage?.extraLarge ?? undefined,
+});
+
 async function walkSeasons(s: Series): Promise<string[]> {
   await load();
   const known = knownSeasons(s);
-  if (known) return known.map((x) => x.id);
-  // Prequels first (shared with the play button, often already known): only the sequels are left.
-  await resolvePrequels(s);
-  const before = failed.has(s.id) ? undefined : knownPrequels(s);
-  const chain = await franchiseChain(anilistId(s)!, fetchMedia, { prequels: !before });
+  if (known && specials[s.id]) return known.map((x) => x.id);
+  // The whole chain is walked (each entry's relations give the specials); the prequels shared
+  // with the play button are usually fetched already this session.
+  const chain = await franchiseChain(anilistId(s)!, fetchMedia);
   if (!chain.ok) throw new Error('franchise unavailable');
-  const list = [...(before ?? toSeasons(chain.before)), s, ...toSeasons(chain.after)];
+  const list = [...toSeasons(chain.before), s, ...toSeasons(chain.after)];
   const fresh = list.filter((x) => !getSeries(x.id));
   if (fresh.length) registerSeries(fresh);
   const ids = list.map((x) => x.id);
+  const entries = [...chain.before, chain.self!, ...chain.after];
+  const seasonIds = new Set(entries.map((m) => m.id));
+  const extra = sortSpecials([...chain.skipped.filter(isListedSpecial), ...entries.flatMap(specialRelationsOf)].map(specialOf), seasonIds);
   // Every season of the chain shares it, and knows its own prequels (no extra request for them).
   ids.forEach((id, i) => {
     seasons[id] = ids;
-    if (id === s.id && !before) chains[id] = ids.slice(0, i);
-    else chains[id] ??= ids.slice(0, i);
+    specials[id] = extra;
+    chains[id] = ids.slice(0, i);
   });
   AsyncStorage.setItem(SEASONS_KEY, JSON.stringify(seasons)).catch(() => {});
+  AsyncStorage.setItem(SPECIALS_KEY, JSON.stringify(specials)).catch(() => {});
   AsyncStorage.setItem(KEY, JSON.stringify(chains)).catch(() => {});
   refreshCatalog();
   return ids;
@@ -181,6 +209,12 @@ export function resolveSeasons(s: Series): Promise<string[]> {
   let p = seasonsInflight.get(s.id);
   if (!p) {
     p = walkSeasons(s).catch(() => {
+      const known = knownSeasons(s);
+      // Seasons already known (only the specials were missing): keep them, no specials this session.
+      if (known) {
+        specials[s.id] ??= [];
+        return known.map((x) => x.id);
+      }
       seasonsFailed.add(s.id);
       return [s.id];
     });
@@ -194,11 +228,11 @@ export function resolveSeasons(s: Series): Promise<string[]> {
  * Seasons of the franchise of `s` and its position among them, undefined while loading (the
  * season picker stays hidden until then).
  */
-export function useFranchiseSeasons(s: Series | undefined): { seasons: Series[]; index: number } | undefined {
+export function useFranchiseSeasons(s: Series | undefined): { seasons: Series[]; index: number; specials: SpecialItem[] } | undefined {
   const catalogVersion = useCatalog();
   const [, setTick] = useState(0);
   const known = s ? knownSeasons(s) : undefined;
-  const unknown = !!s && known === undefined;
+  const unknown = !!s && (known === undefined || (!isDemo && anilistId(s) !== null && !seasonsFailed.has(s.id) && !specials[s.id]));
 
   useEffect(() => {
     if (!s || !unknown) return;
@@ -210,19 +244,71 @@ export function useFranchiseSeasons(s: Series | undefined): { seasons: Series[];
   }, [unknown, s, catalogVersion]);
 
   if (!s || !known) return undefined;
-  return { seasons: known, index: Math.max(0, known.findIndex((x) => x.id === s.id)) };
+  return { seasons: known, index: Math.max(0, known.findIndex((x) => x.id === s.id)), specials: specials[s.id] ?? [] };
+}
+
+// ---------- season numbers of buttons and cards ----------
+// The season model's numbering (data/seasons.ts `labelSeasons`): parts are one season, TheTVDB
+// numbers once every entry's ids are known (AoT Final Season Part 2 = "S4", not the 6th entry).
+
+const entryOf = (s: Series): SeasonEntry => {
+  const al = anilistId(s);
+  const ids = al === null ? null : peekIds(al);
+  return {
+    id: s.id,
+    title: s.title,
+    episodes: s.anime?.episodes.length ?? 0,
+    start: s.start,
+    year: s.year || undefined,
+    map: ids === undefined ? undefined : ids?.imdb && ids.media !== 'MOVIE' ? { imdb: ids.imdb, season: ids.season } : null,
+  };
+};
+
+/** Seasons to number with: the whole franchise when walked already, else the prequels and the series. */
+function numberingChain(s: Series, prequels: Series[]): Series[] {
+  const full = knownSeasons(s);
+  return full && full.length > prequels.length + 1 ? full : [...prequels, s];
+}
+
+const labelSeasonsOf = (s: Series, prequels: Series[]) => labelSeasons(numberingChain(s, prequels).map(entryOf));
+const numberingOf = (seasons: DisplaySeason[]): Numbering => (id, n) => episodeNumbering(seasons, id, n);
+
+/**
+ * Ids of a chain's entries for its numbering: from the disk cache, also fetched (ARM) when
+ * `fetch` (the hero slide on screen); rails of cards never send one request per season.
+ */
+function useChainIds(chain: Series[] | undefined, fetch: boolean) {
+  const [, setTick] = useState(0);
+  const missing = (chain ?? []).map(anilistId).filter((al): al is number => al !== null && peekIds(al) === undefined);
+  const key = missing.join(',');
+  useEffect(() => {
+    if (!key) return;
+    let alive = true;
+    const bump = () => {
+      if (alive) setTick((n) => n + 1);
+    };
+    void loadIdsCache().then(() => {
+      bump();
+      if (!fetch) return;
+      for (const al of key.split(',').map(Number)) if (peekIds(al) === undefined) idsForAnilist(al).then(bump, () => {});
+    });
+    return () => {
+      alive = false;
+    };
+  }, [key, fetch]);
 }
 
 /** Episode to open for a series and its whole franchise, with the label that goes with it. */
 export function franchiseTarget(s: Series, watched = getState().episodes): PlayTarget | undefined {
   const prequels = knownPrequels(s);
-  return playTarget([...(prequels ?? []), s], watched);
+  return playTarget([...(prequels ?? []), s], watched, prequels ? numberingOf(labelSeasonsOf(s, prequels)) : undefined);
 }
 
 /**
  * Play target for a series. While earlier seasons are unknown and the user has never watched
  * this one, `pending` is true (label "Regarder", the press waits for the resolution).
- * `active`: only fetch for the slide that is on screen.
+ * `active`: only fetch for the slide that is on screen. Season numbers follow the season model
+ * (title signals alone while the ids of the chain are not known).
  */
 export function useFranchiseTarget(s: Series, active: boolean) {
   const watched = useStore((st) => st.episodes);
@@ -241,9 +327,11 @@ export function useFranchiseTarget(s: Series, active: boolean) {
     };
   }, [active, unknown, s, catalogVersion]);
 
+  useChainIds(prequels ? numberingChain(s, prequels) : undefined, active);
+  const seasons = prequels ? labelSeasonsOf(s, prequels) : undefined;
   const watchedSelf = s.anime?.episodes.some((e) => watched[e.id]) ?? false;
-  const target = unknown && !watchedSelf ? undefined : playTarget([...(prequels ?? []), s], watched);
-  return { target, pending: unknown && !watchedSelf, seasonNumber: prequels ? prequels.length + 1 : undefined };
+  const target = unknown && !watchedSelf ? undefined : playTarget([...(prequels ?? []), s], watched, seasons ? numberingOf(seasons) : undefined);
+  return { target, pending: unknown && !watchedSelf, seasonNumber: seasons ? seasonNumberIn(seasons, s.id) : undefined };
 }
 
 /** Season number of a series inside its franchise (1 = first), once its prequels are known. */
@@ -259,7 +347,8 @@ export function useSeasonNumber(s: Series, active = true): number | undefined {
       alive = false;
     };
   }, [active, unknown, s]);
-  return prequels ? prequels.length + 1 : undefined;
+  useChainIds(prequels ? numberingChain(s, prequels) : undefined, false);
+  return prequels ? seasonNumberIn(labelSeasonsOf(s, prequels), s.id) : undefined;
 }
 
 /** Episode 1 of the franchise's first season (fetches the prequels if needed). */

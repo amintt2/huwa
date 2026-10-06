@@ -1,7 +1,7 @@
 // Loading and installing a pack, one extension at a time, through the regular install paths
 // (Stremio manifest fetch + validation, Paperback repository + source install).
 import { needsConfiguration, normalizeAddonUrl } from '@/addons/protocol';
-import { getAddonByBase, installAddon, previewAddon, setPrefs, type InstalledAddon } from '@/addons/registry';
+import { getAddonByBase, hydrateAddons, installAddon, previewAddon, setPrefs, type InstalledAddon } from '@/addons/registry';
 import { isBlockedHost, parseHttpUrl } from '@/manga-ext/net';
 import {
   addRepo,
@@ -76,6 +76,8 @@ const reason = (e: unknown) => {
 export async function installVideo(e: PackVideo): Promise<RowResult> {
   try {
     const base = normalizeAddonUrl(e.manifest);
+    // Compared with the saved list, not the defaults of a cold start (pack link opening the app).
+    await hydrateAddons();
     if (getAddonByBase(base)) return { state: 'already' };
     const { manifest, existing } = await previewAddon(base);
     // Same addon already installed with another URL: keep the user's own configuration.

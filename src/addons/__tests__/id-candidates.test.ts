@@ -5,7 +5,7 @@ import { test } from 'node:test';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 import { buildOffsetIndex, mappingFrom } from '../episode-map';
-import { imdbIds, requestsFor } from '../id-candidates';
+import { absoluteNumbering, imdbIdFrom, imdbIds, requestsFor } from '../id-candidates';
 import { withEpisodeMapping, type AnimeIds } from '../ids';
 import type { Manifest } from '../protocol';
 
@@ -85,4 +85,29 @@ test('movies use bare ids and the movie type', () => {
   const ids: AnimeIds = { anilist: 199, kitsu: 176, imdb: 'tt0245429', media: 'MOVIE' };
   const reqs = requestsFor(torrentio, 'stream', 'al199', 1, ids);
   assert.deepEqual(reqs, [{ type: 'movie', id: 'kitsu:176' }, { type: 'movie', id: 'tt0245429' }]);
+});
+
+test('absolute entries (One Piece): IMDb only from the season model, never guessed past episode 26', async () => {
+  const op: AnimeIds = { anilist: 21, kitsu: 12, mal: 21, imdb: 'tt0388629', media: 'TV' };
+  assert.ok(absoluteNumbering(op));
+  // Without the season model: the old safety, no IMDb id past episode 26.
+  assert.deepEqual(requestsFor(torrentio, 'stream', 'al21', 1000, op).map((r) => r.id), ['kitsu:12:1000']);
+  // With it: one lazy IMDb request in the IMDb slot (asked alongside kitsu, first for plain addons).
+  const lazy = { resolve: async () => 'tt0388629:21:109', peek: () => undefined };
+  const reqs = requestsFor(torrentio, 'stream', 'al21', 1000, op, lazy);
+  assert.deepEqual(reqs.map((r) => r.id), ['kitsu:12:1000', 'tt0388629:abs:1000']);
+  assert.equal(reqs[1].lazy, lazy);
+  assert.equal(reqs[0].lazy, undefined);
+  assert.equal(await reqs[1].lazy!.resolve(), 'tt0388629:21:109');
+  assert.deepEqual(requestsFor(noPrefixes, 'stream', 'al21', 1000, op, lazy).map((r) => r.id), ['tt0388629:abs:1000', 'kitsu:12:1000', 'anilist:21:1000']);
+  assert.deepEqual(requestsFor(animeOnly, 'stream', 'al21', 1000, op, lazy).map((r) => r.id), ['anilist:21:1000', 'kitsu:12:1000']);
+  // Entries with a TheTVDB season keep their direct numbering.
+  const spy: AnimeIds = { anilist: 142838, kitsu: 45619, imdb: 'tt13706018', season: 1, epOffset: 12 };
+  assert.ok(!absoluteNumbering(spy));
+  assert.ok(requestsFor(torrentio, 'stream', 'al142838', 1, spy, lazy).every((r) => !r.lazy));
+  // What gets sent: the verified slot; none for a verified hole (590); unverified: the old guess.
+  assert.equal(imdbIdFrom(op, 1000, { season: 21, episode: 109 }), 'tt0388629:21:109');
+  assert.equal(imdbIdFrom(op, 590, null), null);
+  assert.equal(imdbIdFrom(op, 1000, undefined), null);
+  assert.equal(imdbIdFrom(op, 3, undefined), 'tt0388629:1:3');
 });
