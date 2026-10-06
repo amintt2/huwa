@@ -36,7 +36,10 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::Notify;
 use tracing::{info, warn};
 
-use crate::cache;
+use crate::{
+    cache,
+    probe::{MetaCache, Probes},
+};
 
 /// Session-wide configuration, sent by the Expo module at `initialize`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -234,6 +237,9 @@ pub struct Engine {
     port: AtomicU64,
     torrents_dir: PathBuf,
     server: parking_lot::Mutex<Option<ServerHandle>>,
+    /// Swarm probes (see `probe.rs`) and the metadata they resolved, reused by `start_stream`.
+    pub probes: Probes,
+    pub meta_cache: MetaCache,
 }
 
 impl Drop for Engine {
@@ -364,6 +370,8 @@ impl Engine {
             port: AtomicU64::new(0),
             torrents_dir,
             server: parking_lot::Mutex::new(None),
+            probes: Probes::default(),
+            meta_cache: MetaCache::default(),
         });
         engine.restore_entries();
         engine.spawn_janitor();
@@ -545,15 +553,28 @@ impl Engine {
 
         let engine = self.clone();
         let magnet = build_magnet(&hex, &trackers, req.name.as_deref());
+        // Probed a moment ago (torrent race): no magnet resolution, the peers that answered the
+        // probe are dialled first, and only the wanted file is allocated.
+        let probed = self.meta_cache.get(&hex, std::time::Instant::now());
         let task_entry = entry.clone();
         let task = self.runtime.spawn(async move {
             let entry = task_entry;
-            let opts = AddTorrentOptions {
+            let mut opts = AddTorrentOptions {
                 overwrite: true,
                 trackers: if trackers.is_empty() { None } else { Some(trackers.clone()) },
                 ..Default::default()
             };
-            let result = engine.session.add_torrent(AddTorrent::from_url(magnet), Some(opts)).await;
+            let add = match probed {
+                Some(m) => {
+                    opts.only_files = entry.requested_file.filter(|i| *i < m.files.len()).or_else(|| pick_file(&m.files)).map(|i| vec![i]);
+                    if !m.peers.is_empty() {
+                        opts.initial_peers = Some(m.peers.clone());
+                    }
+                    AddTorrent::from_bytes(m.torrent_bytes)
+                }
+                None => AddTorrent::from_url(magnet),
+            };
+            let result = engine.session.add_torrent(add, Some(opts)).await;
             match result {
                 Ok(resp) => match resp.into_handle() {
                     // Removed while resolving (normally aborted before this point, see `remove`):
@@ -857,7 +878,12 @@ impl Engine {
         self.persist_entries();
         let server = self.server.lock().take();
         let resolvers: Vec<_> = self.entries.read().values().filter_map(|e| e.resolver.lock().take()).collect();
+        let probes = self.probes.take_tasks();
         self.runtime.block_on(async {
+            for t in probes {
+                t.abort();
+                let _ = t.await;
+            }
             if let Some(ServerHandle { stop, mut task }) = server {
                 let _ = stop.send(());
                 // Graceful first (in-flight responses end); a video stream can last for ever, so

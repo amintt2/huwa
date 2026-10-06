@@ -13,11 +13,18 @@
 // them refetches the addons once and gives that source another chance before dropping it.
 // `preview` (pre-search from a detail page / the home screen): same search and race, but a
 // torrent is only resolved through a debrid service (never the on-device engine).
+// Torrent race: when only torrents the on-device engine would download remain (nothing cached by
+// a debrid service, no direct link), the best few (language first) are probed in parallel by the
+// engine — metadata + answering peers, no piece — and the first healthy swarm is started; the
+// others are cancelled at once (src/torrent/peer-race.ts, use-peer-race.ts).
 import { useEffect, useMemo, useRef, useState } from 'react';
 
 import { useSettings } from '@/settings/settings';
-import { useRaceBudget } from '@/settings/network';
+import { useRaceBudget, useTorrentProbeBudget } from '@/settings/network';
 import { resolveTorrent, resolveTorrentViaDebrid, useCachedHashes, useTorrentResolver } from '@/debrid/resolve';
+import { canProbeTorrents, useTorrentSettings } from '@/torrent';
+import { decidePeerRace, peerLabel, probeTargets, wrongTorrents, type PeerCandidate, type PeerProbe } from '@/torrent/peer-race';
+import { peerClock, usePeerRace, type PeerTarget } from '@/torrent/use-peer-race';
 
 import { langScore } from './audio';
 import { isExternal, isPlayable, isTorrent, isYouTube, type AddonStream } from './protocol';
@@ -71,6 +78,10 @@ export function useSource(seriesId: string, episode: number, { enabled = true, p
   const cached = useCachedHashes(streams.filter(isTorrent).map((s) => s.infoHash!));
   const probed = useProbedUrls(streams, enabled);
   const budget = useRaceBudget();
+  const torrentBudget = useTorrentProbeBudget();
+  // Re-render when the engine is switched on/off or "Wi-Fi only" changes (`canProbeTorrents`).
+  useTorrentSettings();
+  const peerScope = `${seriesId}:${episode}`;
 
   const ranked = useMemo(
     () => rankStreams(streams, {
@@ -93,6 +104,9 @@ export function useSource(seriesId: string, episode: number, { enabled = true, p
   const [skipUpgrade, setSkipUpgrade] = useState<string[]>([]);
   /** Cached links that failed, waiting for the addons' fresh answer (refresh generation). */
   const [suspended, setSuspended] = useState<{ keys: string[]; gen: number }>({ keys: [], gen: -1 });
+  /** Torrents the probes showed not to contain this episode (never started), per episode. */
+  const [wrong, setWrong] = useState<{ scope: string; keys: string[] }>({ scope: peerScope, keys: [] });
+  const wrongKeys = wrong.scope === peerScope ? wrong.keys : [];
   /** Cached links already given their second chance. */
   const retried = useRef(new Set<string>());
   // The fresh answer arrived: suspended links compete again (same link = retried once).
@@ -194,12 +208,12 @@ export function useSource(seriesId: string, episode: number, { enabled = true, p
 
   // ---- pool: safe sources first (direct link, cached torrent), dead links out ----
   const pool = useMemo(() => {
-    const alive = candidates.filter((s) => !deadKeys.has(streamKey(s)));
+    const alive = candidates.filter((s) => !deadKeys.has(streamKey(s)) && !wrongKeys.includes(streamKey(s)));
     // Only hosted players: the best of them (quality, then addon priority).
     const web = alive.length ? [] : ranked.filter((s) => !!autoWebPlayerUrl(s, probed) && !bad.includes(streamKey(s)) && !probing(s));
     return alive.some(safe) ? alive.filter(safe) : alive.length ? alive : web;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [candidates, deadKeys, ranked, probed, bad]);
+  }, [candidates, deadKeys, ranked, probed, bad, wrongKeys]);
 
   const binge = lastBinge.get(seriesId);
   const [tick, setTick] = useState(0);
@@ -237,7 +251,48 @@ export function useSource(seriesId: string, episode: number, { enabled = true, p
   const lockedListed = locked && !bad.includes(locked) ? ranked.find((s) => streamKey(s) === locked) : undefined;
   if (lockedListed && lockedListed !== lastLocked) setLastLocked(lockedListed);
   const lockedStream = lockedListed ?? (locked && !bad.includes(locked) && lastLocked && streamKey(lastLocked) === locked ? lastLocked : undefined);
-  const auto = decision?.key ? pool.find((s) => streamKey(s) === decision.key) : undefined;
+
+  // ---- torrent race (on-device engine): uncached torrents probed in parallel ----
+  const engineTorrent = (s: AddonStream) => isTorrent(s) && cachedOf(s) !== true;
+  const peerOn =
+    enabled && !preview && !manual && !lockedStream && torrentBudget > 0 && canProbeTorrents() && pool.some(engineTorrent) && !pool.some(safe);
+  const peerPool = peerOn ? pool.filter(engineTorrent) : [];
+  const peerKeys = probeTargets(peerPool.map((s) => ({ key: streamKey(s) })), torrentBudget).join('\n');
+  const peerTargets = useMemo<PeerTarget[]>(
+    () =>
+      peerKeys
+        ? peerKeys.split('\n').flatMap((k) => {
+            const s = pool.find((x) => streamKey(x) === k);
+            return s
+              ? [{ key: k, infoHash: s.infoHash!, sources: s.sources, name: s.behaviorHints?.filename ?? s.title?.split('\n')[0], fileIdx: s.fileIdx, filename: s.behaviorHints?.filename, episode }]
+              : [];
+          })
+        : [],
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [peerKeys, episode],
+  );
+  const peerCands = (probes: Record<string, PeerProbe>): PeerCandidate[] =>
+    peerPool.map((s) => ({ key: streamKey(s), lang: langOf(s), probe: probes[streamKey(s)] }));
+  const decidePeers = (probes: Record<string, PeerProbe>, startedAt: number | null) =>
+    decidePeerRace(peerCands(probes), startedAt != null ? peerClock() - startedAt : 0);
+  const peer = usePeerRace(peerScope, peerTargets, peerOn, (probes, at) => {
+    const d = decidePeers(probes, at);
+    return d.key !== null || 'exhausted' in d;
+  });
+  const peerDecision = peerOn ? decidePeers(peer.probes, peer.startedAt) : null;
+  const peerWaitMs = peerDecision && peerDecision.key === null && 'waitMs' in peerDecision ? peerDecision.waitMs : 0;
+  useEffect(() => {
+    if (!peerWaitMs) return;
+    const t = setTimeout(() => setTick((n) => n + 1), peerWaitMs + 10);
+    return () => clearTimeout(t);
+  }, [peerWaitMs, peer.probes]);
+  // Wrong torrent (episode not inside): out of the pool, the next candidate gets probed.
+  const newlyWrong = wrongTorrents(peer.probes).filter((k) => !wrongKeys.includes(k));
+  if (newlyWrong.length) setWrong({ scope: peerScope, keys: [...wrongKeys, ...newlyWrong] });
+
+  // No verdict from the probes (none playable): the plain ranking, as before.
+  const peerPick = peerDecision?.key ? pool.find((s) => streamKey(s) === peerDecision.key) : undefined;
+  const auto = peerPick ?? (peerWaitMs ? undefined : decision?.key ? pool.find((s) => streamKey(s) === decision.key) : undefined);
 
   const current = (manual ? ranked.find((s) => streamKey(s) === manual) : undefined) ?? lockedStream ?? auto;
   const currentKey = current ? streamKey(current) : undefined;
@@ -277,7 +332,9 @@ export function useSource(seriesId: string, episode: number, { enabled = true, p
     const done = resolved[currentKey ?? ''];
     if (!enabled || !current || !currentKey || !isTorrent(current) || !resolverLabel || done?.url || done?.error) return;
     const ctrl = new AbortController();
-    const ref = { infoHash: current.infoHash!, fileIdx: current.fileIdx, filename: current.behaviorHints?.filename, sources: current.sources, episode };
+    // A season pack without `fileIdx`: the file the probe found for this episode.
+    const fileIdx = current.fileIdx ?? peer.probes[currentKey]?.fileIdx ?? undefined;
+    const ref = { infoHash: current.infoHash!, fileIdx, filename: current.behaviorHints?.filename, sources: current.sources, episode };
     // Pre-search: debrid only (an on-device torrent would start downloading).
     (preview ? resolveTorrentViaDebrid(ref, ctrl.signal) : resolveTorrent(ref, ctrl.signal))
       .then((r) => r && setResolved((m) => ({ ...m, [currentKey]: { url: r.url, via: r.via } })))
@@ -381,7 +438,8 @@ export function useSource(seriesId: string, episode: number, { enabled = true, p
   /** Speed label for the sources menu ("⚡ 1,2 s · 38 Mb/s", "lent", "hors ligne (404)", "test…"). */
   const speedInfo = (s: AddonStream): { label: string; speed?: Speed } | null => {
     const u = raceUrlOf(s);
-    if (!u) return null;
+    // Torrent probed by the engine: "12 pairs", "aucun pair", "recherche de pairs…".
+    if (!u) return isTorrent(s) ? peerLabel(peer.probes[streamKey(s)]) : null;
     const speed = speedOf(s);
     const label = speedLabel(race.results[u], speed, race.probing.has(u));
     return label ? { label, speed } : null;
@@ -405,6 +463,8 @@ export function useSource(seriesId: string, episode: number, { enabled = true, p
     failed,
     /** Links are being measured before the first one starts. */
     racing: !current && race.probing.size > 0,
+    /** Torrent race: the engine is looking for peers before one torrent is started. */
+    peerRacing: !current && peerWaitMs > 0,
     /** Playable candidates exist and one is about to be picked (race grace window, deadline). */
     deciding: !current && pool.length > 0,
     /** Links measured / dead so far (sources menu summary). */

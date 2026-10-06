@@ -56,3 +56,42 @@ export type TorrentSettings = {
   /** Legal notice accepted on first use. */
   legalAccepted: boolean;
 };
+
+// ---- swarm probes (native/huwa-torrent-core/src/probe.rs) ----
+
+export type ProbeState = 'queued' | 'resolving' | 'healthy' | 'weak' | 'noFile' | 'failed' | 'cancelled';
+
+export type ProbeInput = {
+  infoHash: string;
+  sources?: string[];
+  name?: string;
+  fileIdx?: number | null;
+  /** Stremio `behaviorHints.filename`. */
+  filename?: string;
+  /** Finds the file in a season pack without `fileIdx` / `filename`. */
+  episode?: number;
+  /** 1000..30000, default 8000. */
+  timeoutMs?: number;
+  /** Answering peers needed for `healthy` (default 3). */
+  minPeers?: number;
+};
+
+export type ProbeStatus = {
+  id: number;
+  infoHash: string;
+  state: ProbeState;
+  /** Time to metadata (0 = already known). */
+  metaMs: number | null;
+  /** Peers discovered (DHT, trackers). */
+  peers: number;
+  /** Peers that answered a BitTorrent handshake for this torrent. */
+  connected: number;
+  fileIdx: number | null;
+  fileName: string | null;
+  fileSize: number | null;
+  fileCount: number | null;
+  /** The file is already complete on the device. */
+  local: boolean;
+  elapsedMs: number;
+  error: string | null;
+};
