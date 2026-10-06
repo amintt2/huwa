@@ -26,7 +26,17 @@ export type TorrentStatus = {
   addedAt: number;
   lastAccess: number;
   sizeOnDisk: number;
+  /**
+   * Streaming health from the engine's monitor: `searching` = no peer connected, `stalled` = the
+   * player has been waiting for data for > 6 s, `recovering` = automatic re-announce (pause +
+   * resume) in progress, `idle` = not streamed right now. Absent with an older native build.
+   */
+  health?: TorrentHealth;
+  /** Automatic recoveries since the torrent was added (this app run). */
+  recoveries?: number;
 };
+
+export type TorrentHealth = 'ok' | 'searching' | 'stalled' | 'recovering' | 'idle';
 
 export type EngineStats = {
   version: string;

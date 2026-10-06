@@ -10,6 +10,8 @@
 //! - `engine`: session, torrent registry, cache quota, persistence of our own metadata.
 //! - `probe`: parallel swarm probes (metadata + answering peers, no piece downloaded).
 //! - `server`: axum router bound to 127.0.0.1:<random port>.
+//! - `streaming`: read-ahead walker, container-index prefetch, stall detection and recovery.
+//! - `trackers`: public UDP/HTTPS trackers added to magnets that carry few.
 //! - `api`: JSON dispatch used by both FFI flavours.
 //! - `ffi`: C ABI (iOS / static library). `jni_android`: JNI exports (Android).
 //!
@@ -24,6 +26,8 @@ pub mod priorities;
 pub mod probe;
 pub mod range;
 pub mod server;
+pub mod streaming;
+pub mod trackers;
 
 #[cfg(target_os = "android")]
 pub mod jni_android;

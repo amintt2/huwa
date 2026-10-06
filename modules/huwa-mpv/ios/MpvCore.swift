@@ -155,6 +155,11 @@ final class MpvCore {
       mpv_set_property_string(ctx, "sid", "no")
       // The rotation nudge (refreshOutputSize) leaves an aspect override: never carry it to the next file.
       mpv_set_property_string(ctx, "video-aspect-override", "no")
+      // Built-in torrent engine (loopback URL): a read may legitimately wait for a piece (swarm
+      // hiccup, automatic re-announce after ~12–20 s without peers). 20 s would turn that wait
+      // into a stream error; remote URLs keep the short timeout.
+      let loopback = url.hasPrefix("http://127.0.0.1:")
+      mpv_set_property_string(ctx, "network-timeout", loopback ? "120" : "20")
       runCommand(ctx, ["loadfile", url, "replace"])
     }
   }
