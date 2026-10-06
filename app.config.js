@@ -21,5 +21,8 @@ module.exports = ({ config }) => {
   }
   // Build flavor read by src/config/channel.ts.
   const channel = process.env.HUWA_LITE === '1' ? 'store' : 'full';
-  return { ...config, updates, extra: { ...config.extra, channel } };
+  // Optional GIPHY API key for the comment GIF search (never committed: set HUWA_GIF_API_KEY at build
+  // time). Without it, the picker only takes pasted GIPHY / Tenor links.
+  const gifApiKey = process.env.HUWA_GIF_API_KEY || undefined;
+  return { ...config, updates, extra: { ...config.extra, channel, gifApiKey } };
 };
