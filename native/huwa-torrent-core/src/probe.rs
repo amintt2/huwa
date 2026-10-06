@@ -296,12 +296,14 @@ pub struct CachedMeta {
     pub files: Vec<(String, u64)>,
     /// Peers that answered first, then the other discovered ones.
     pub peers: Vec<SocketAddr>,
+    /// Addresses the probe discovered (swarm size seen from here), for `streaming::peer_limit_for`.
+    pub swarm: usize,
     at: Instant,
 }
 
 impl CachedMeta {
     pub fn new(torrent_bytes: Bytes, files: Vec<(String, u64)>, peers: Vec<SocketAddr>, at: Instant) -> Self {
-        Self { torrent_bytes, files, peers, at }
+        Self { torrent_bytes, files, peers, swarm: 0, at }
     }
 }
 
@@ -343,6 +345,7 @@ impl MetaCache {
                 }
             }
             m.peers = out;
+            m.swarm = m.swarm.max(seen.len());
         }
     }
 
@@ -901,6 +904,7 @@ mod tests {
         c.insert("h", CachedMeta::new(Bytes::from_static(b"x"), vec![f("a.mkv", 1)], vec![], t0));
         c.set_peers("h", &[b], &[a, b]);
         assert_eq!(c.get("h", t0).unwrap().peers, vec![b, a]);
+        assert_eq!(c.get("h", t0).unwrap().swarm, 2);
         assert!(c.get("h", t0 + META_TTL + Duration::from_secs(1)).is_none());
         assert!(c.get("h", t0).is_none(), "expired entry dropped");
         for i in 0..META_CAP + 3 {

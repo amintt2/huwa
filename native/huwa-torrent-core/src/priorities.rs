@@ -416,13 +416,23 @@ fn assignment_for(ctx: &PriorityContext, distance: i32, immediate_pieces: i32, h
 /// Duration is unknown to the engine, so the window is a share of the file: 1/12 is about two
 /// minutes of a 24-minute episode at any quality (and more for longer files, up to the cap),
 /// which rides out a swarm hiccup or a peer churn. librqbit's own look-ahead is a fixed 32 MiB
-/// (≈ 25 s of a 10 Mbit/s remux). Bounded to a quarter of the cache quota. Beyond the window
-/// pieces still download in natural order (the whole selected file is wanted anyway), so this
-/// changes the order, not the data usage.
+/// (≈ 25 s of a 10 Mbit/s remux). Bounded to a quarter of the cache quota. On an unmetered
+/// network, beyond the window pieces still download in natural order (the whole selected file is
+/// wanted), so this changes the order, not the data usage.
+///
+/// On a metered network (cellular) the file is *not* selected in librqbit (see
+/// `Engine::sync_selection`): only the stream windows download, and the window is ~60–90 s of
+/// video: 1/16 of the file (90 s of a 24-minute episode), between 32 MiB (librqbit's own fixed
+/// look-ahead of the serving stream, which cannot be made smaller) and 64 MiB.
 pub const MIN_READAHEAD_BYTES: u64 = 48 * 1024 * 1024;
 pub const MAX_READAHEAD_BYTES: u64 = 256 * 1024 * 1024;
+pub const METERED_MIN_READAHEAD_BYTES: u64 = 32 * 1024 * 1024;
+pub const METERED_MAX_READAHEAD_BYTES: u64 = 64 * 1024 * 1024;
 
-pub fn readahead_target_bytes(file_size: u64, cache_limit_bytes: u64) -> u64 {
+pub fn readahead_target_bytes(file_size: u64, cache_limit_bytes: u64, metered: bool) -> u64 {
+    if metered {
+        return (file_size / 16).clamp(METERED_MIN_READAHEAD_BYTES, METERED_MAX_READAHEAD_BYTES).min(file_size);
+    }
     let mut target = (file_size / 12).clamp(MIN_READAHEAD_BYTES, MAX_READAHEAD_BYTES);
     if cache_limit_bytes > 0 {
         target = target.min((cache_limit_bytes / 4).max(MIN_STARTUP_BYTES));
@@ -650,14 +660,28 @@ mod tests {
         let mib = 1024 * 1024;
         // 1.4 GiB episode → 1/12 ≈ 119 MiB.
         let ep = 1400 * mib;
-        assert_eq!(readahead_target_bytes(ep, 0), ep / 12);
+        assert_eq!(readahead_target_bytes(ep, 0, false), ep / 12);
         // Small file → floor, but never more than the file.
-        assert_eq!(readahead_target_bytes(300 * mib, 0), MIN_READAHEAD_BYTES);
-        assert_eq!(readahead_target_bytes(10 * mib, 0), 10 * mib);
+        assert_eq!(readahead_target_bytes(300 * mib, 0, false), MIN_READAHEAD_BYTES);
+        assert_eq!(readahead_target_bytes(10 * mib, 0, false), 10 * mib);
         // Large file → cap.
-        assert_eq!(readahead_target_bytes(20 * 1024 * mib, 0), MAX_READAHEAD_BYTES);
+        assert_eq!(readahead_target_bytes(20 * 1024 * mib, 0, false), MAX_READAHEAD_BYTES);
         // A small cache quota bounds it.
-        assert_eq!(readahead_target_bytes(20 * 1024 * mib, 400 * mib), 100 * mib);
+        assert_eq!(readahead_target_bytes(20 * 1024 * mib, 400 * mib, false), 100 * mib);
+    }
+
+    #[test]
+    fn metered_readahead_is_about_a_minute_and_a_half() {
+        let mib = 1024 * 1024;
+        // 350 MiB episode: 1/16 ≈ 22 MiB, raised to the 32 MiB floor (librqbit's own look-ahead).
+        assert_eq!(readahead_target_bytes(350 * mib, 0, true), METERED_MIN_READAHEAD_BYTES);
+        // 1 GiB, 24 min (≈ 0.7 MiB/s): 64 MiB ≈ 90 s.
+        assert_eq!(readahead_target_bytes(1024 * mib, 0, true), 64 * mib);
+        // 1.4 GiB / 20 GiB: capped at 64 MiB whatever the size, far below the unmetered window.
+        assert_eq!(readahead_target_bytes(1400 * mib, 0, true), METERED_MAX_READAHEAD_BYTES);
+        assert_eq!(readahead_target_bytes(20 * 1024 * mib, 0, true), METERED_MAX_READAHEAD_BYTES);
+        assert!(readahead_target_bytes(1400 * mib, 0, true) < readahead_target_bytes(1400 * mib, 0, false));
+        assert_eq!(readahead_target_bytes(10 * mib, 0, true), 10 * mib);
     }
 
     #[test]

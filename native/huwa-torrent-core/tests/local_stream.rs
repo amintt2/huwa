@@ -46,6 +46,10 @@ fn pseudo_random(len: usize, seed: u64) -> Vec<u8> {
 }
 
 fn fixture(tag: &str, len: usize) -> Fixture {
+    fixture_on(tag, len, false)
+}
+
+fn fixture_on(tag: &str, len: usize, metered: bool) -> Fixture {
     let dir = std::env::temp_dir().join(format!("huwa-local-{tag}-{}-{}", std::process::id(), now_secs()));
     let _ = std::fs::remove_dir_all(&dir);
     let config: Config = serde_json::from_value(serde_json::json!({ "dataDir": dir })).unwrap();
@@ -72,7 +76,7 @@ fn fixture(tag: &str, len: usize) -> Fixture {
 
     let port = engine.runtime.block_on(huwa_torrent_core::server::start(engine.clone())).unwrap();
     let resp = engine
-        .start_stream(StartStreamRequest { info_hash: hex.clone(), file_idx: None, sources: vec![], name: None })
+        .start_stream(StartStreamRequest { info_hash: hex.clone(), file_idx: None, sources: vec![], name: None, metered })
         .unwrap();
     let path = format!("/{}", resp.url.splitn(4, '/').nth(3).unwrap());
     Fixture { engine, port, hex, path, data }
@@ -202,6 +206,35 @@ fn health_is_reported_in_status() {
     assert_eq!(st.recoveries, 0);
     let json = serde_json::to_value(&st).unwrap();
     assert!(json.get("health").is_some() && json.get("recoveries").is_some());
+}
+
+/// Unmetered: the window narrows librqbit to the stream queues until its first bytes are served,
+/// then the whole file is selected again. Metered: never (only the windows download).
+#[test]
+fn selection_follows_the_window_and_the_network() {
+    use huwa_torrent_core::engine::{SELECTION_STREAMS_ONLY, SELECTION_WHOLE_FILE};
+    use std::sync::atomic::Ordering;
+    let wait_for = |f: &Fixture, want: u8| {
+        let entry = f.engine.entry(&f.hex).unwrap();
+        let end = Instant::now() + Duration::from_secs(5);
+        while entry.selection.load(Ordering::Acquire) != want && Instant::now() < end {
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        entry.selection.load(Ordering::Acquire)
+    };
+    let f = fixture_on("sel-wifi", 8 * MIB, false);
+    let mut c = connect(f.port);
+    assert_eq!(request(&mut c, &f.path, Some("bytes=0-1")).status, 206);
+    assert_eq!(wait_for(&f, SELECTION_WHOLE_FILE), SELECTION_WHOLE_FILE, "first bytes served: natural order resumes");
+    assert_eq!(f.engine.status(&f.hex).unwrap().state, "finished");
+
+    let f = fixture_on("sel-cell", 8 * MIB, true);
+    let mut c = connect(f.port);
+    assert_eq!(request(&mut c, &f.path, Some("bytes=0-1")).status, 206);
+    std::thread::sleep(Duration::from_millis(2500)); // two monitor ticks
+    assert_eq!(wait_for(&f, SELECTION_STREAMS_ONLY), SELECTION_STREAMS_ONLY, "metered: windows only");
+    // Nothing selected must not hide progress: the file is complete on disk.
+    assert_eq!(f.engine.status(&f.hex).unwrap().state, "finished");
 }
 
 /// Loopback throughput of a fully available file (body chunking / `FileStream` read path).

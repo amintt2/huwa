@@ -102,7 +102,7 @@ fn live_time_to_first_bytes_and_seek() {
 
     let t0 = Instant::now();
     let resp = engine
-        .start_stream(StartStreamRequest { info_hash: hash.clone(), file_idx, sources: trackers, name: None })
+        .start_stream(StartStreamRequest { info_hash: hash.clone(), file_idx, sources: trackers, name: None, metered: false })
         .unwrap();
     let path = resp.url.splitn(4, '/').nth(3).map(|p| format!("/{p}")).unwrap();
 

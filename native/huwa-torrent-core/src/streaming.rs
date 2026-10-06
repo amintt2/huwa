@@ -20,6 +20,22 @@
 //! - **Container index prefetch**: once per playback, the last `tail_prefetch_bytes` of the file
 //!   (MP4 `moov` at the end, MKV Cues) are fetched alongside the head so the player's tail probe
 //!   does not wait. Kept small: every extra stream halves the head's share of the priority list.
+//! - **Windows and first bytes** (startup and seeks): a request that opens a new window (first
+//!   request, seek) makes the torrent select *nothing* in librqbit until that window delivers its
+//!   first bytes (`Engine::sync_selection`, re-selected by the monitor afterwards on unmetered
+//!   networks). Before that only the serving stream's queue (+ the MP4 index) is requested: with
+//!   many peers, the natural-order queue, the walker and an MKV tail used to fan the first
+//!   connected peers out over dozens of pieces, each getting a sliver of the downlink, and piece 0
+//!   came last: popular swarms started slower than obscure ones. The walker and the MKV index wait
+//!   for the window's first bytes; an MP4 `moov` (needed before the first frame) is fetched at once.
+//! - **Seeks**: the responses of the previous window that are still open and far from the new
+//!   position are ended (their `FileStream` queues leave librqbit's priority list at once), the
+//!   tail prefetch is stopped and the walker restarts at the new offset. librqbit has no API to
+//!   cancel pieces already requested from peers; those few complete and are kept.
+//! - **Metered networks**: nothing is selected at all, so only the windows download (librqbit's
+//!   fixed 32 MiB look-ahead of the serving stream + the walker up to `readahead_target_bytes`,
+//!   ~60-90 s). Past the target the walker parks its stream on the playhead (no extra pieces, but an
+//!   open stream keeps the peers connected).
 //! - **Health / recovery**: a 1 Hz monitor flags torrents with active streams as `searching`
 //!   (no connected peer) or `stalled` (a player request waiting for data for > `STALL_AFTER`).
 //!   When no peer is connected for `RECOVER_NO_PEERS_AFTER` or a stall lasts
@@ -35,12 +51,15 @@ use std::{
         atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering},
         Arc, OnceLock, Weak,
     },
-    task::Poll,
+    task::{Poll, Waker},
     time::{Duration, Instant},
 };
 
 use parking_lot::Mutex;
-use tokio::io::{AsyncRead, AsyncReadExt, AsyncSeekExt};
+use tokio::{
+    io::{AsyncRead, AsyncReadExt, AsyncSeekExt},
+    sync::Notify,
+};
 use tracing::{debug, info, warn};
 
 use crate::{
@@ -59,6 +78,25 @@ pub const BLOCKING_PERMITS: usize = 64;
 /// so a shorter timeout churns through them several times faster. Live peers answer a TCP SYN in
 /// well under a second even on cellular.
 pub const PEER_CONNECT_TIMEOUT: Duration = Duration::from_secs(4);
+/// A swarm where the probe discovered at least this many addresses is "popular"…
+pub const BIG_SWARM: usize = 40;
+/// …and is streamed from at most this many peers at once. librqbit hands each peer a whole piece
+/// (no block-level split of a piece across peers) and the first connected peers all start on the
+/// head window at the same time: with 50–60 peers connected in the first second (public trackers,
+/// faster dialling) the phone's downlink was shared by as many in-flight pieces and piece 0 — the
+/// only one the player waits for — arrived at a fiftieth of the link. 12 peers of a healthy swarm
+/// still exceed a mobile downlink; small swarms keep the configured limit (every peer counts there).
+pub const BIG_SWARM_PEERS: usize = 12;
+
+/// Per-torrent connected-peer limit for a stream, from the swarm size its probe saw.
+pub fn peer_limit_for(swarm: usize, configured: Option<usize>) -> Option<usize> {
+    if swarm >= BIG_SWARM {
+        Some(configured.map_or(BIG_SWARM_PEERS, |c| c.min(BIG_SWARM_PEERS)))
+    } else {
+        configured
+    }
+}
+
 /// DHT routing-table dump interval (librqbit default 60 s): a first launch that is killed early
 /// still leaves a table for a warm bootstrap next time.
 pub const DHT_DUMP_INTERVAL: Duration = Duration::from_secs(20);
@@ -84,6 +122,9 @@ const PLAYBACK_IDLE_TTL: Duration = Duration::from_secs(90);
 /// The walker re-evaluates the playhead at least this often while waiting for a piece.
 const WALKER_TICK: Duration = Duration::from_secs(2);
 const TAIL_BUDGET: Duration = Duration::from_secs(90);
+/// A response of an older window this far from the new window start is stale after a seek
+/// (librqbit's per-stream look-ahead: closer than that, its queue overlaps the new window anyway).
+pub const STALE_DISTANCE: u64 = 32 * 1024 * 1024;
 
 fn now_ms() -> u64 {
     static BASE: OnceLock<Instant> = OnceLock::new();
@@ -141,7 +182,19 @@ pub struct Playback {
     open_responses: AtomicUsize,
     last_activity_ms: AtomicU64,
     tail_started: AtomicBool,
+    tail: Mutex<Option<tokio::task::AbortHandle>>,
     walker: Mutex<Option<Walker>>,
+    /// Generation of the latest response that opened a window (first request, seek), and where.
+    window_gen: AtomicU64,
+    window_start: AtomicU64,
+    /// Highest generation whose response delivered bytes.
+    data_gen: AtomicU64,
+    data_ready: Notify,
+    /// Wakers of blocked playback responses (by reader id): a seek wakes them so stale ones end.
+    blocked: Mutex<HashMap<u64, Waker>>,
+    next_reader: AtomicU64,
+    /// Metered network: smaller read-ahead, nothing selected (see the module docs).
+    pub metered: AtomicBool,
 }
 
 impl Playback {
@@ -156,7 +209,66 @@ impl Playback {
             open_responses: AtomicUsize::new(0),
             last_activity_ms: AtomicU64::new(now_ms()),
             tail_started: AtomicBool::new(false),
+            tail: Mutex::new(None),
             walker: Mutex::new(None),
+            window_gen: AtomicU64::new(0),
+            window_start: AtomicU64::new(0),
+            data_gen: AtomicU64::new(0),
+            data_ready: Notify::new(),
+            blocked: Mutex::new(HashMap::new()),
+            next_reader: AtomicU64::new(1),
+            metered: AtomicBool::new(false),
+        }
+    }
+
+    /// The latest window delivered its first bytes (startup / seek done).
+    pub fn settled(&self) -> bool {
+        self.data_gen.load(Ordering::Acquire) >= self.window_gen.load(Ordering::Acquire)
+    }
+
+    /// Opens a new window at `start` for response `generation`: older responses far from it become
+    /// stale and are woken to end; a seek also stops the tail prefetch.
+    pub fn open_window(&self, generation: u64, start: u64, seek: bool) {
+        self.window_start.store(start, Ordering::Release);
+        self.window_gen.fetch_max(generation, Ordering::AcqRel);
+        if seek {
+            if let Some(t) = self.tail.lock().take() {
+                t.abort();
+            }
+        }
+        for (_, w) in self.blocked.lock().drain() {
+            w.wake();
+        }
+    }
+
+    /// A response of generation `generation`, now at `pos`, was superseded by a newer window far
+    /// from it: the player moved on, its stream only steals priority from the new position.
+    pub fn is_stale(&self, generation: u64, pos: u64) -> bool {
+        generation != 0
+            && generation < self.window_gen.load(Ordering::Acquire)
+            && pos.abs_diff(self.window_start.load(Ordering::Acquire)) > STALE_DISTANCE
+    }
+
+    fn on_data(&self, generation: u64) {
+        if generation == 0 {
+            return;
+        }
+        let before = self.data_gen.fetch_max(generation, Ordering::AcqRel);
+        if before < generation {
+            self.data_ready.notify_waiters();
+        }
+    }
+
+    /// Waits until the window opened by `generation` (or a later one) delivered bytes. False when
+    /// the playback is gone.
+    async fn wait_data(pb: &Weak<Playback>, generation: u64) -> bool {
+        loop {
+            let Some(p) = pb.upgrade() else { return false };
+            if p.data_gen.load(Ordering::Acquire) >= generation {
+                return true;
+            }
+            // Holds the playback at most 250 ms (then re-checked through the weak ref).
+            let _ = tokio::time::timeout(Duration::from_millis(250), p.data_ready.notified()).await;
         }
     }
 
@@ -184,6 +296,9 @@ impl Drop for Playback {
     fn drop(&mut self) {
         if let Some(w) = self.walker.get_mut().take() {
             w.task.abort();
+        }
+        if let Some(t) = self.tail.get_mut().take() {
+            t.abort();
         }
     }
 }
@@ -228,6 +343,9 @@ impl Streaming {
 
     /// Called by the HTTP server for every request, before the body is streamed. Returns the
     /// playback and the response generation (for `TrackedReader`).
+    /// `index_first`: the container index may be needed before the first frame (MP4 `moov` at the
+    /// end of the file), so it is fetched in parallel with the head; otherwise (MKV Cues, only used
+    /// for seeking) once the head arrived.
     #[allow(clippy::too_many_arguments)]
     pub fn on_request(
         &self,
@@ -238,6 +356,8 @@ impl Streaming {
         start: u64,
         intent: PlaybackIntent,
         cache_limit_bytes: u64,
+        metered: bool,
+        index_first: bool,
     ) -> Option<(Arc<Playback>, u64)> {
         let geometry = Geometry::of(handle, file_idx)?;
         let pb = {
@@ -255,6 +375,7 @@ impl Streaming {
             }
         };
         pb.last_activity_ms.store(now_ms(), Ordering::Relaxed);
+        pb.metered.store(metered, Ordering::Relaxed);
 
         let generation = match intent {
             // Tail probes and background reads neither move the playhead nor the walker.
@@ -262,7 +383,10 @@ impl Streaming {
             _ => {
                 let g = pb.generation.fetch_add(1, Ordering::AcqRel) + 1;
                 pb.playhead.store(start, Ordering::Release);
-                self.ensure_walker(runtime, &pb, handle, start, cache_limit_bytes);
+                if matches!(intent, PlaybackIntent::DirectInitial | PlaybackIntent::DirectSeek) {
+                    pb.open_window(g, start, intent == PlaybackIntent::DirectSeek);
+                }
+                self.ensure_walker(runtime, &pb, handle, start, cache_limit_bytes, metered, g);
                 g
             }
         };
@@ -273,14 +397,21 @@ impl Streaming {
             // Pointless when the tail is within the head's own 32 MiB look-ahead.
             if tail > 0 && tail_start > start.saturating_add(32 * 1024 * 1024) {
                 let handle = handle.clone();
-                runtime.spawn(async move {
-                    let job = walk_pieces(handle, file_idx, geometry, tail_start, geometry.file_len);
+                let weak = Arc::downgrade(&pb);
+                let task = runtime.spawn(async move {
+                    let job = async {
+                        if !index_first && !Playback::wait_data(&weak, generation).await {
+                            return Ok(());
+                        }
+                        walk_pieces(handle, file_idx, geometry, tail_start, geometry.file_len).await
+                    };
                     match tokio::time::timeout(TAIL_BUDGET, job).await {
                         Ok(Ok(())) => debug!(tail_start, "container index prefetched"),
                         Ok(Err(e)) => debug!("tail prefetch failed: {e:#}"),
                         Err(_) => debug!("tail prefetch timed out"),
                     }
                 });
+                *pb.tail.lock() = Some(task.abort_handle());
             }
         }
         Some((pb, generation))
@@ -288,6 +419,7 @@ impl Streaming {
 
     /// Keeps the current walker when `start` falls inside its window (sequential continuation),
     /// otherwise replaces it (seek): the stale window stops being prioritised immediately.
+    #[allow(clippy::too_many_arguments)]
     fn ensure_walker(
         &self,
         runtime: &tokio::runtime::Runtime,
@@ -295,6 +427,8 @@ impl Streaming {
         handle: &ManagedTorrentHandle,
         start: u64,
         cache_limit_bytes: u64,
+        metered: bool,
+        generation: u64,
     ) {
         let g = pb.geometry;
         let mut slot = pb.walker.lock();
@@ -306,8 +440,16 @@ impl Streaming {
             w.task.abort();
         }
         let frontier = Arc::new(AtomicU64::new(start));
-        let target = readahead_target_bytes(g.file_len, cache_limit_bytes);
-        let task = runtime.spawn(run_walker(handle.clone(), pb.file_idx, g, start, target, Arc::downgrade(pb), frontier.clone()));
+        let target = readahead_target_bytes(g.file_len, cache_limit_bytes, metered);
+        let walk = run_walker(handle.clone(), pb.file_idx, g, start, target, Arc::downgrade(pb), frontier.clone(), metered);
+        let weak = Arc::downgrade(pb);
+        // Before the window's first bytes the walker would only duplicate the serving stream's queue
+        // and then widen the fan-out: it starts once they arrived.
+        let task = runtime.spawn(async move {
+            if Playback::wait_data(&weak, generation).await {
+                walk.await
+            }
+        });
         debug!(start, target, "read-ahead walker (re)started");
         *slot = Some(Walker { origin: start, frontier, task: task.abort_handle() });
     }
@@ -330,6 +472,7 @@ pub async fn walk_pieces(handle: ManagedTorrentHandle, file_idx: usize, g: Geome
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn run_walker(
     handle: ManagedTorrentHandle,
     file_idx: usize,
@@ -338,6 +481,7 @@ async fn run_walker(
     target_ahead: u64,
     pb: Weak<Playback>,
     frontier_out: Arc<AtomicU64>,
+    metered: bool,
 ) {
     let mut stream = None;
     let mut frontier = origin;
@@ -354,8 +498,15 @@ async fn run_walker(
             frontier = playhead;
         }
         if frontier - playhead >= target_ahead {
-            // Enough buffered ahead: stop prioritising (natural order continues), re-check later.
-            stream = None;
+            if metered {
+                // Nothing selected: parked on the playhead its queue only covers pieces already
+                // there (plus the 32 MiB the serving stream asks for anyway), and the open stream
+                // keeps librqbit from dropping the peers.
+                park(&mut stream, playhead).await;
+            } else {
+                // Enough buffered ahead: stop prioritising (natural order continues).
+                stream = None;
+            }
             tokio::time::sleep(WALKER_TICK).await;
             continue;
         }
@@ -391,6 +542,13 @@ async fn run_walker(
     }
 }
 
+/// Moves an open walker stream to `pos` (librqbit's `FileStream` type is not exported).
+async fn park<S: tokio::io::AsyncSeek + Unpin>(stream: &mut Option<S>, pos: u64) {
+    if let Some(s) = stream.as_mut() {
+        let _ = s.seek(SeekFrom::Start(pos)).await;
+    }
+}
+
 /// `AsyncRead` wrapper for player responses: moves the playhead as bytes are served and records
 /// how long the response has been blocked on a missing piece (stall detection).
 pub struct TrackedReader<R> {
@@ -399,6 +557,7 @@ pub struct TrackedReader<R> {
     generation: u64,
     pos: u64,
     waiting: bool,
+    id: u64,
 }
 
 impl<R> TrackedReader<R> {
@@ -407,10 +566,12 @@ impl<R> TrackedReader<R> {
             Some((p, g)) => (Some(p), g),
             None => (None, 0),
         };
+        let mut id = 0;
         if let Some(p) = &playback {
             p.open_responses.fetch_add(1, Ordering::AcqRel);
+            id = p.next_reader.fetch_add(1, Ordering::Relaxed);
         }
-        Self { inner, playback, generation, pos: start, waiting: false }
+        Self { inner, playback, generation, pos: start, waiting: false, id }
     }
 
     fn set_waiting(&mut self, waiting: bool) {
@@ -433,6 +594,7 @@ impl<R> Drop for TrackedReader<R> {
     fn drop(&mut self) {
         self.set_waiting(false);
         if let Some(p) = &self.playback {
+            p.blocked.lock().remove(&self.id);
             p.open_responses.fetch_sub(1, Ordering::AcqRel);
             p.last_activity_ms.store(now_ms(), Ordering::Relaxed);
         }
@@ -445,15 +607,33 @@ impl<R: AsyncRead + Unpin> AsyncRead for TrackedReader<R> {
         cx: &mut std::task::Context<'_>,
         buf: &mut tokio::io::ReadBuf<'_>,
     ) -> Poll<std::io::Result<()>> {
+        if self.playback.as_ref().is_some_and(|p| p.is_stale(self.generation, self.pos)) {
+            // Seeked away: end this body so its `FileStream` (and its 32 MiB queue) goes away now
+            // instead of competing with the new position until the player closes the connection.
+            debug!(pos = self.pos, "stale response ended after a seek");
+            self.set_waiting(false);
+            return Poll::Ready(Err(std::io::Error::new(std::io::ErrorKind::ConnectionAborted, "superseded by a seek")));
+        }
         let before = buf.filled().len();
         let res = std::pin::Pin::new(&mut self.inner).poll_read(cx, buf);
         match &res {
-            Poll::Pending => self.set_waiting(true),
+            Poll::Pending => {
+                self.set_waiting(true);
+                if let Some(p) = &self.playback {
+                    if self.generation != 0 {
+                        p.blocked.lock().insert(self.id, cx.waker().clone());
+                    }
+                }
+            }
             Poll::Ready(_) => {
                 self.set_waiting(false);
                 let n = (buf.filled().len() - before) as u64;
                 self.pos += n;
                 if let Some(p) = &self.playback {
+                    p.blocked.lock().remove(&self.id);
+                    if n > 0 {
+                        p.on_data(self.generation);
+                    }
                     if self.generation != 0 && p.generation.load(Ordering::Acquire) == self.generation {
                         p.playhead.store(self.pos, Ordering::Release);
                     }
@@ -465,7 +645,7 @@ impl<R: AsyncRead + Unpin> AsyncRead for TrackedReader<R> {
 }
 
 /// 1 Hz health monitor + recovery. Holds only a `Weak<Engine>`.
-pub fn spawn_monitor(engine: &Arc<Engine>) {
+pub fn spawn_monitor(engine: &Arc<Engine>) -> tokio::task::JoinHandle<()> {
     let weak = Arc::downgrade(engine);
     engine.runtime.spawn(async move {
         let mut tick = tokio::time::interval(Duration::from_secs(1));
@@ -475,7 +655,7 @@ pub fn spawn_monitor(engine: &Arc<Engine>) {
             let Some(engine) = weak.upgrade() else { return };
             monitor_once(&engine);
         }
-    });
+    })
 }
 
 /// What the monitor decides for one torrent, from plain observations (unit-tested).
@@ -567,6 +747,16 @@ fn monitor_once(engine: &Arc<Engine>) {
 
     for entry in entries {
         let Some(handle) = entry.handle() else { continue };
+        // A window got its first bytes: on unmetered networks the rest of the file downloads again
+        // in natural order (see the module docs); metered ones stay on the windows only.
+        if let Some(pb) = streaming.playback(&entry.hex) {
+            let whole = !entry.metered.load(Ordering::Relaxed) && pb.settled();
+            let want = if whole { crate::engine::SELECTION_WHOLE_FILE } else { crate::engine::SELECTION_STREAMS_ONLY };
+            if entry.selection.load(Ordering::Acquire) != want {
+                let (engine2, entry2, handle2) = (engine.clone(), entry.clone(), handle.clone());
+                engine.runtime.spawn(async move { engine2.sync_selection(&entry2, &handle2, whole).await });
+            }
+        }
         let obs = observe(engine, &entry, &handle, now);
         let recover = {
             let mut map = streaming.health.lock();
@@ -600,7 +790,8 @@ fn observe(engine: &Engine, entry: &Entry, handle: &ManagedTorrentHandle, now: u
         now_ms: now,
         streaming: entry.active_streams.load(Ordering::Relaxed) > 0,
         live: live.is_some(),
-        finished: stats.finished,
+        // Nothing selected (startup, metered) reads as `finished` in librqbit.
+        finished: crate::engine::selected_file_complete(&stats.file_progress, handle, *entry.selected_file.read()).unwrap_or(stats.finished),
         peers_live: live.map(|l| l.snapshot.peer_stats.live).unwrap_or(0),
         progress_bytes: stats.progress_bytes,
         waiting_for: playback.and_then(|p| p.waiting_for()),
@@ -621,6 +812,111 @@ mod tests {
             progress_bytes: progress,
             waiting_for: waiting_s.map(Duration::from_secs),
         }
+    }
+
+    fn playback() -> Arc<Playback> {
+        Arc::new(Playback::new(0, Geometry { file_offset: 0, file_len: 1 << 30, piece_len: 1 << 20 }))
+    }
+
+    /// Never has data (a piece no peer delivers).
+    struct Starved;
+    impl AsyncRead for Starved {
+        fn poll_read(self: std::pin::Pin<&mut Self>, _: &mut std::task::Context<'_>, _: &mut tokio::io::ReadBuf<'_>) -> Poll<std::io::Result<()>> {
+            Poll::Pending
+        }
+    }
+
+    struct CountWake(AtomicUsize);
+    impl futures::task::ArcWake for CountWake {
+        fn wake_by_ref(this: &Arc<Self>) {
+            this.0.fetch_add(1, Ordering::SeqCst);
+        }
+    }
+
+    fn poll_once<R: AsyncRead + Unpin>(r: &mut TrackedReader<R>, waker: &Waker) -> Poll<std::io::Result<usize>> {
+        let mut cx = std::task::Context::from_waker(waker);
+        let mut raw = [0u8; 16];
+        let mut buf = tokio::io::ReadBuf::new(&mut raw);
+        std::pin::Pin::new(r).poll_read(&mut cx, &mut buf).map(|res| res.map(|_| buf.filled().len()))
+    }
+
+    #[test]
+    fn a_seek_ends_the_stale_blocked_response_and_keeps_near_ones() {
+        let pb = playback();
+        let mib = 1024 * 1024;
+        pb.open_window(1, 0, false);
+        let counter = Arc::new(CountWake(AtomicUsize::new(0)));
+        let waker = futures::task::waker(counter.clone());
+        // Old window: one response blocked at 10 MiB, one at 600 MiB (near the seek target).
+        let mut old = TrackedReader::new(Starved, Some((pb.clone(), 1)), 10 * mib);
+        let mut near = TrackedReader::new(Starved, Some((pb.clone(), 1)), 600 * mib);
+        assert!(poll_once(&mut old, &waker).is_pending());
+        assert!(poll_once(&mut near, &waker).is_pending());
+        assert_eq!(pb.blocked.lock().len(), 2);
+        // Seek to 590 MiB: blocked responses are woken at once (no piece will wake them)…
+        pb.open_window(2, 590 * mib, true);
+        assert_eq!(counter.0.load(Ordering::SeqCst), 2);
+        // …the far one ends (its FileStream leaves the priority list), the near one keeps waiting.
+        match poll_once(&mut old, &waker) {
+            Poll::Ready(Err(e)) => assert_eq!(e.kind(), std::io::ErrorKind::ConnectionAborted),
+            other => panic!("stale response still alive: {other:?}"),
+        }
+        assert!(poll_once(&mut near, &waker).is_pending());
+        // The new window's own response and the tail probes (generation 0) are never stale.
+        assert!(!pb.is_stale(2, 0));
+        assert!(!pb.is_stale(0, 0));
+    }
+
+    #[test]
+    fn a_seek_stops_the_tail_prefetch() {
+        let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+        rt.block_on(async {
+            let pb = playback();
+            let task = tokio::spawn(tokio::time::sleep(Duration::from_secs(60)));
+            *pb.tail.lock() = Some(task.abort_handle());
+            pb.open_window(1, 0, false);
+            assert!(pb.tail.lock().is_some(), "startup keeps it");
+            pb.open_window(2, 1 << 29, true);
+            assert!(pb.tail.lock().is_none());
+            assert!(task.await.unwrap_err().is_cancelled());
+        });
+    }
+
+    #[test]
+    fn a_window_settles_on_its_first_bytes() {
+        let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+        rt.block_on(async {
+            let pb = playback();
+            pb.open_window(1, 0, false);
+            assert!(!pb.settled(), "nothing delivered yet: stream windows only, walker waiting");
+            let weak = Arc::downgrade(&pb);
+            let waiter = tokio::spawn(async move { Playback::wait_data(&weak, 1).await });
+            tokio::task::yield_now().await;
+            assert!(!waiter.is_finished());
+            let data: &[u8] = b"0123456789";
+            let mut r = TrackedReader::new(data, Some((pb.clone(), 1)), 0);
+            let mut out = [0u8; 4];
+            r.read_exact(&mut out).await.unwrap();
+            assert!(pb.settled());
+            assert!(tokio::time::timeout(Duration::from_secs(1), waiter).await.unwrap().unwrap());
+            // A seek opens a new window: unsettled again until it delivers.
+            pb.open_window(2, 1 << 29, true);
+            assert!(!pb.settled());
+            // Tail probes (generation 0) do not settle a playback window.
+            let mut tail = TrackedReader::new(data, Some((pb.clone(), 0)), 0);
+            tail.read_exact(&mut out).await.unwrap();
+            assert!(!pb.settled());
+        });
+    }
+
+    #[test]
+    fn popular_swarms_are_streamed_from_fewer_peers() {
+        assert_eq!(peer_limit_for(200, Some(60)), Some(BIG_SWARM_PEERS));
+        assert_eq!(peer_limit_for(BIG_SWARM, None), Some(BIG_SWARM_PEERS));
+        assert_eq!(peer_limit_for(200, Some(8)), Some(8), "never above the app's limit");
+        // Mid / obscure swarms (and unprobed torrents, swarm 0) keep the configured limit.
+        assert_eq!(peer_limit_for(12, Some(60)), Some(60));
+        assert_eq!(peer_limit_for(0, None), None);
     }
 
     #[test]
