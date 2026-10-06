@@ -601,6 +601,13 @@ fn mpv_core_options() -> Vec<(String, String)> {
         ("terminal", "no"),
         ("load-scripts", "no"),
         ("config", "no"),
+        // MpvCore format block (subtitles, fonts, decoders).
+        ("sub-ass-override", "scale"),
+        ("sub-font-provider", "auto"),
+        ("sub-codepage", "auto"),
+        ("vd-lavc-check-hw-profile", "yes"),
+        ("hwdec-software-fallback", "yes"),
+        ("vd-lavc-threads", "8"),
     ]
     .iter()
     .map(|(k, v)| (k.to_string(), v.to_string()))
