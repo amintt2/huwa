@@ -7,17 +7,29 @@
 // decision in place of the HTTP race.
 import type { ProbeState, ProbeStatus } from './types';
 
+// Time budget (time to first frame: < 2 s for a popular title, < 5 s for any): the race commits
+// as soon as a swarm is healthy (popular: ~0.5 s), at `SOFT_COMMIT_MS` on the best swarm with at
+// least one answering peer, at `PEER_RACE_DEADLINE_MS` on anything playable. Then the stream needs
+// ~1–2.5 s to its first frame (native/huwa-torrent-core/src/startup_sim.rs, which mirrors these
+// constants; the timeline is tested in __tests__/race-timeline.test.ts).
+
 /** Answering peers that make a swarm "healthy" (sent to the engine as `minPeers`). */
 export const MIN_CONNECTED = 3;
-/** Engine-side probe deadline. */
-export const PROBE_TIMEOUT_MS = 8000;
-/** JS-side deadline: the engine's plus polling slack. */
-export const PEER_RACE_DEADLINE_MS = PROBE_TIMEOUT_MS + 1000;
+/** Engine-side probe deadline (the race usually cancels the probes before). */
+export const PROBE_TIMEOUT_MS = 3000;
+/** No healthy swarm by then: the best one with an answering peer wins. */
+export const SOFT_COMMIT_MS = 1500;
+/** Hard deadline: the best playable swarm (metadata + file), else the plain ranking. */
+export const PEER_RACE_DEADLINE_MS = 2500;
+/** Every candidate still looks weak by then: more are probed (see `shouldWiden`). */
+export const WIDEN_AFTER_MS = 800;
+/** Engine probes polled this often: a healthy swarm is seen at most this long after the engine. */
+export const PEER_POLL_MS = 200;
 /**
  * A healthy torrent in a worse language waits this long for a better-language one still
  * probing (never past the deadline).
  */
-export const LANG_GRACE_MS = 1500;
+export const LANG_GRACE_MS = 500;
 
 /** What the decision needs from a probe (+ when it ended, ms since the race started). */
 export type PeerProbe = Pick<ProbeStatus, 'state' | 'peers' | 'connected' | 'local'> & {
@@ -36,8 +48,12 @@ export type PeerDecision =
 
 const PENDING: ProbeState[] = ['queued', 'resolving'];
 export const isPending = (p: PeerProbe | undefined) => !!p && PENDING.includes(p.state);
-/** Has the metadata and the wanted file (playable, maybe slowly). */
-const playable = (p: PeerProbe | undefined) => !!p && (p.state === 'healthy' || p.state === 'weak' || p.local);
+/**
+ * Has the metadata and the wanted file (playable, maybe slowly). A probe still resolving has them
+ * once the engine reported the file it found (`fileIdx`).
+ */
+const playable = (p: PeerProbe | undefined) =>
+  !!p && (p.state === 'healthy' || p.state === 'weak' || p.local || (p.state === 'resolving' && p.fileIdx != null));
 
 /**
  * A list of stream keys as one string (React dependency). Keys embed the addon's name / title,
@@ -58,9 +74,30 @@ function first(cands: PeerCandidate[]): PeerCandidate | undefined {
   return best;
 }
 
-export function decidePeerRace(cands: PeerCandidate[], elapsedMs: number, deadlineMs = PEER_RACE_DEADLINE_MS): PeerDecision {
+/** Time until the next moment the decision can change on its own (widening, soft, hard deadline). */
+function nextCheckpoint(elapsedMs: number, deadlineMs: number, softMs: number) {
+  const next = [WIDEN_AFTER_MS, softMs, deadlineMs].filter((t) => t > elapsedMs);
+  return Math.max(50, (next.length ? Math.min(...next) : deadlineMs) - elapsedMs);
+}
+
+/** Best of slow swarms: language, answering peers, discovered peers, then the caller's order. */
+function bestSlow(cands: PeerCandidate[]): PeerCandidate {
+  return cands.reduce((a, b) => {
+    if (b.lang !== a.lang) return b.lang < a.lang ? b : a;
+    if (b.probe!.connected !== a.probe!.connected) return b.probe!.connected > a.probe!.connected ? b : a;
+    if (b.probe!.peers !== a.probe!.peers) return b.probe!.peers > a.probe!.peers ? b : a;
+    return a;
+  });
+}
+
+export function decidePeerRace(
+  cands: PeerCandidate[],
+  elapsedMs: number,
+  deadlineMs = PEER_RACE_DEADLINE_MS,
+  softMs = SOFT_COMMIT_MS,
+): PeerDecision {
   const probed = cands.filter((c) => c.probe && c.probe.state !== 'cancelled');
-  if (!probed.length) return cands.some((c) => c.probe) ? { key: null, exhausted: true } : { key: null, waitMs: Math.max(50, deadlineMs - elapsedMs) };
+  if (!probed.length) return cands.some((c) => c.probe) ? { key: null, exhausted: true } : { key: null, waitMs: nextCheckpoint(elapsedMs, deadlineMs, softMs) };
 
   // Already complete on the device: nothing to wait for.
   const local = first(probed.filter((c) => c.probe!.local));
@@ -80,19 +117,30 @@ export function decidePeerRace(cands: PeerCandidate[], elapsedMs: number, deadli
     return { key: best.key, why: 'healthy' };
   }
 
-  if (pending.length && !late) return { key: null, waitMs: Math.max(50, deadlineMs - elapsedMs) };
-
-  // Deadline (or every probe done): the best of the slow ones — language, answering peers,
-  // discovered peers, then the caller's order.
   const weak = probed.filter((c) => playable(c.probe));
+  // Soft deadline: no healthy swarm yet (obscure title), waiting longer rarely finds one and costs
+  // the first frame. The best swarm that has the file and an answering peer wins.
+  const answering = weak.filter((c) => c.probe!.connected > 0);
+  if (pending.length && !late && elapsedMs >= softMs && answering.length) return { key: bestSlow(answering).key, why: 'best' };
+
+  if (pending.length && !late) return { key: null, waitMs: nextCheckpoint(elapsedMs, deadlineMs, softMs) };
+
+  // Deadline (or every probe done): the best of the slow ones.
   if (!weak.length) return { key: null, exhausted: true };
-  const pick = weak.reduce((a, b) => {
-    if (b.lang !== a.lang) return b.lang < a.lang ? b : a;
-    if (b.probe!.connected !== a.probe!.connected) return b.probe!.connected > a.probe!.connected ? b : a;
-    if (b.probe!.peers !== a.probe!.peers) return b.probe!.peers > a.probe!.peers ? b : a;
-    return a;
-  });
-  return { key: pick.key, why: 'best' };
+  return { key: bestSlow(weak).key, why: 'best' };
+}
+
+/**
+ * Obscure titles: every candidate looks weak (no healthy swarm, fewer than `MIN_CONNECTED`
+ * answering peers each) after `WIDEN_AFTER_MS`, or every probe already ended without a healthy
+ * one. The race then probes more candidates (`TorrentProbeBudget.max`: packs, other qualities),
+ * still committing by the same deadlines.
+ */
+export function shouldWiden(probes: (PeerProbe | undefined)[], elapsedMs: number): boolean {
+  const list = probes.filter((p): p is PeerProbe => !!p && p.state !== 'cancelled');
+  if (!list.length) return false;
+  if (list.some((p) => p.state === 'healthy' || p.local || p.connected >= MIN_CONNECTED)) return false;
+  return elapsedMs >= WIDEN_AFTER_MS || list.every((p) => !isPending(p));
 }
 
 /** Keys whose torrent does not contain the episode: never started. */

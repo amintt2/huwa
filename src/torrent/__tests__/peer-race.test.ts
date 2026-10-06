@@ -10,6 +10,9 @@ import {
   PEER_RACE_DEADLINE_MS,
   peerLabel,
   probeTargets,
+  shouldWiden,
+  SOFT_COMMIT_MS,
+  WIDEN_AFTER_MS,
   wrongTorrents,
   type PeerCandidate,
   type PeerProbe,
@@ -26,7 +29,9 @@ test('probes the first N candidates (already sorted, language first)', () => {
 });
 
 test('waits while nothing is probed yet or everything is still resolving', () => {
-  assert.deepEqual(decidePeerRace([c('a', 0), c('b', 0)], 0), { key: null, waitMs: PEER_RACE_DEADLINE_MS });
+  // Re-evaluated at the next checkpoint (widening, soft commit, deadline).
+  assert.deepEqual(decidePeerRace([c('a', 0), c('b', 0)], 0), { key: null, waitMs: WIDEN_AFTER_MS });
+  assert.deepEqual(decidePeerRace([c('a', 0), c('b', 0)], 1000), { key: null, waitMs: SOFT_COMMIT_MS - 1000 });
   const d = decidePeerRace([c('a', 0, p('resolving', { peers: 40 })), c('b', 0, p('queued'))], 2000);
   assert.equal(d.key, null);
   assert.ok('waitMs' in d && d.waitMs === PEER_RACE_DEADLINE_MS - 2000);
@@ -69,11 +74,32 @@ test('at the deadline: the best slow swarm (language, answering peers, discovere
     c('c', 0, p('resolving', { peers: 50 })),
     c('d', 1, p('weak', { connected: 2, peers: 99 })),
   ];
-  assert.equal(decidePeerRace(cands, 5000).key, null, 'still probing before the deadline');
+  assert.equal(decidePeerRace(cands, 1000).key, null, 'still probing before the soft deadline');
+  // Soft deadline: no healthy one, the best with an answering peer wins without waiting for 'c'.
+  assert.deepEqual(decidePeerRace(cands, SOFT_COMMIT_MS), { key: 'b', why: 'best' });
   assert.deepEqual(decidePeerRace(cands, PEER_RACE_DEADLINE_MS), { key: 'b', why: 'best' });
   // Every probe over before the deadline: no need to wait.
   const over = [c('a', 0, p('weak', { connected: 0, peers: 10 })), c('b', 0, p('weak', { connected: 0, peers: 30 }))];
   assert.deepEqual(decidePeerRace(over, 3000), { key: 'b', why: 'best' });
+});
+
+test('soft deadline needs an answering peer; a probe still resolving counts once it found the file', () => {
+  const none = [c('a', 0, p('weak', { peers: 9 })), c('b', 0, p('resolving', { peers: 4 }))];
+  assert.equal(decidePeerRace(none, SOFT_COMMIT_MS).key, null, 'nobody answered yet: keep probing until the deadline');
+  assert.deepEqual(decidePeerRace(none, PEER_RACE_DEADLINE_MS), { key: 'a', why: 'best' });
+  const resolving = [c('a', 0, p('resolving', { connected: 1, peers: 2, fileIdx: 3 })), c('b', 0, p('resolving', { connected: 2 }))];
+  // 'b' has peers but no metadata yet (no file): not playable.
+  assert.deepEqual(decidePeerRace(resolving, SOFT_COMMIT_MS), { key: 'a', why: 'best' });
+});
+
+test('widens the race when every candidate looks weak', () => {
+  const weak = [p('resolving', { connected: 1 }), p('weak', { connected: 2 })];
+  assert.equal(shouldWiden(weak, WIDEN_AFTER_MS - 1), false, 'too early to tell');
+  assert.equal(shouldWiden(weak, WIDEN_AFTER_MS), true);
+  assert.equal(shouldWiden([...weak, p('resolving', { connected: 3 })], WIDEN_AFTER_MS), false, 'one swarm is fine');
+  assert.equal(shouldWiden([...weak, p('healthy', { connected: 3 })], WIDEN_AFTER_MS), false);
+  assert.equal(shouldWiden([p('failed'), p('noFile')], 300), true, 'every probe already over');
+  assert.equal(shouldWiden([], 5000), false);
 });
 
 test('nothing playable: exhausted (the caller falls back to the plain ranking)', () => {

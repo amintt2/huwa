@@ -3,7 +3,10 @@ import { NetworkStateType, useNetworkState } from 'expo-network';
 
 import type { RaceBudget } from '@/addons/race-runner';
 
+import { torrentProbeBudget, type TorrentProbeBudget } from './network-budget';
 import { useSettings } from './settings';
+
+export type { TorrentProbeBudget } from './network-budget';
 
 /** `false` only when we know for sure there is no connection (unknown ⇒ assume online). */
 export function useOnline(): boolean {
@@ -66,14 +69,13 @@ export function useRaceBudget(): RaceBudget {
 }
 
 /**
- * Torrents the on-device engine may probe at once before one is streamed ("course des
- * torrents", src/torrent/peer-race.ts): metadata and peers only, never a piece. None when
- * streaming is not allowed (offline, "Wi-Fi seulement" on cellular); the torrent engine's own
- * "Wi-Fi only" setting is checked by `canProbeTorrents`.
+ * Torrents the on-device engine may probe before one is streamed ("course des torrents",
+ * src/torrent/peer-race.ts): metadata and peers only, never a piece. None when streaming is not
+ * allowed (offline, "Wi-Fi seulement" on cellular); the torrent engine's own "Wi-Fi only" setting
+ * is checked by `canProbeTorrents`. `max` applies when every candidate looks weak.
  */
-export function useTorrentProbeBudget(): number {
+export function useTorrentProbeBudget(): TorrentProbeBudget {
   const policy = useStreamPolicy();
   const net = useNetworkState();
-  if (!policy.allowed) return 0;
-  return net.type === NetworkStateType.CELLULAR ? 2 : 4;
+  return torrentProbeBudget(policy.allowed, net.type === NetworkStateType.CELLULAR);
 }
