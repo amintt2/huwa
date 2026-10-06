@@ -382,11 +382,11 @@ const styles = StyleSheet.create({
     borderWidth: 1, borderColor: C.border, color: C.text, ...F.medium, fontSize: 16, boxShadow: 'inset 0px 1px 2px rgba(0,0,0,0.35)',
   },
   count: { minWidth: 20, height: 20, paddingHorizontal: 6, borderRadius: 10, backgroundColor: C.accent, alignItems: 'center', justifyContent: 'center' },
-  rank: { gap: S.md, padding: S.lg, borderRadius: R.card, borderCurve: 'continuous', backgroundColor: C.surface, borderWidth: 1, borderColor: C.border },
+  rank: { gap: S.md, padding: S.lg, borderRadius: R.card, borderCurve: 'continuous', backgroundColor: C.surface, borderWidth: 1, borderColor: C.border, boxShadow: `${SHADOW.raised}, ${SHADOW.inset}` },
   badges: { flexDirection: 'row', flexWrap: 'wrap', gap: S.sm },
   badge: {
     width: '31.8%', alignItems: 'center', gap: 6, paddingVertical: S.md, paddingHorizontal: S.sm,
-    borderRadius: R.card, borderCurve: 'continuous', backgroundColor: C.surface, borderWidth: 1, borderColor: C.border,
+    borderRadius: R.card, borderCurve: 'continuous', backgroundColor: C.surface, borderWidth: 1, borderColor: C.border, boxShadow: SHADOW.inset,
   },
   badgeIcon: {
     width: 42, height: 42, borderRadius: 21, alignItems: 'center', justifyContent: 'center',

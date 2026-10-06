@@ -6,7 +6,7 @@ import { ScrollView, View } from 'react-native';
 import { Avatar, Field, ScreenHeader } from '@/components/social';
 import { Button, Txt } from '@/components/ui';
 import { social, useMe } from '@/p2p/hooks';
-import { C, S } from '@/theme/tokens';
+import { C, S, SHADOW } from '@/theme/tokens';
 
 export default function ProfileEdit() {
   const me = useMe();
@@ -43,8 +43,10 @@ export default function ProfileEdit() {
       <ScreenHeader title="Modifier le profil" close />
       <View style={{ paddingHorizontal: S.lg, gap: S.xl }}>
         <View style={{ alignItems: 'center', gap: S.sm }}>
-          <Avatar seed={me.key} name={name || me.name} size={72} />
-          <Txt v="small">{`Empreinte ${me.fingerprint} · ne change jamais`}</Txt>
+          <View style={{ borderRadius: 48, padding: 4, backgroundColor: C.elevated, boxShadow: SHADOW.raised }}>
+            <Avatar seed={me.key} name={name || me.name} size={80} />
+          </View>
+          <Txt v="footnote" color={C.text3} tabular>{`Empreinte ${me.fingerprint} · ne change jamais`}</Txt>
         </View>
         <Field
           label="Pseudo"
@@ -68,10 +70,8 @@ export default function ProfileEdit() {
           maxLength={160}
           counter={bio.length}
         />
-        <Txt v="small" style={{ lineHeight: 18 }}>Ton profil est signé par ta clé et partagé avec les pairs que tu croises. Les anciennes versions peuvent rester en cache chez eux.</Txt>
-        <View style={{ opacity: dirty ? 1 : 0.45 }}>
-          <Button label={busy ? 'Enregistrement…' : 'Enregistrer'} icon="checkmark" onPress={dirty ? save : undefined} />
-        </View>
+        <Txt v="footnote" color={C.text3} style={{ lineHeight: 17 }}>Ton profil est signé par ta clé et partagé avec les pairs que tu croises. Les anciennes versions peuvent rester en cache chez eux.</Txt>
+        <Button label="Enregistrer" icon="checkmark" loading={busy} disabled={!dirty} onPress={save} />
       </View>
     </ScrollView>
   );
