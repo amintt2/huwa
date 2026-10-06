@@ -4,10 +4,11 @@ import { useCallback, useEffect, useState } from 'react';
 import { Alert, ScrollView, StyleSheet, View } from 'react-native';
 import QRCode from 'react-native-qrcode-svg';
 
-import { Loading, ScreenHeader } from '@/components/social';
+import { SheetTitle } from '@/components/screen';
+import { DANGER, Loading } from '@/components/social';
 import { Button, Txt } from '@/components/ui';
 import { social } from '@/p2p/hooks';
-import { C, R, S } from '@/theme/tokens';
+import { C, S, SHADOW } from '@/theme/tokens';
 
 const TTL = 10 * 60;
 
@@ -48,15 +49,16 @@ export default function Pair() {
   const mm = `${Math.floor(left / 60)}:${String(left % 60).padStart(2, '0')}`;
 
   return (
-    <View style={{ flex: 1, backgroundColor: C.surface }}>
-      <ScreenHeader title="Lier un appareil" close />
-      <ScrollView contentContainerStyle={{ paddingHorizontal: S.lg, paddingBottom: S.xxl, gap: S.xl, alignItems: 'center' }}>
-        <Txt v="body" style={{ textAlign: 'center' }}>
+    // Form sheet: the header lives inside the ScrollView (a sibling above it is drawn under it).
+    <ScrollView style={{ flex: 1, backgroundColor: C.surface }} contentContainerStyle={{ paddingBottom: S.xxl }}>
+      <SheetTitle title="Lier un appareil" />
+      <View style={{ paddingHorizontal: S.lg, paddingTop: S.sm, gap: S.lg, alignItems: 'center' }}>
+        <Txt v="body" style={{ textAlign: 'center', maxWidth: 340 }}>
           Sur le nouvel appareil, ouvre Huwa, touche « J’ai déjà un compte », puis « Scanner depuis mon autre appareil ».
         </Txt>
         <View style={styles.qr} accessible accessibilityLabel="QR code d’appairage">
           {error ? (
-            <Txt v="small" color="#FF6B6B" style={{ textAlign: 'center' }}>{error}</Txt>
+            <Txt v="small" color={DANGER} style={{ textAlign: 'center' }}>{error}</Txt>
           ) : !invite ? (
             <Loading />
           ) : (
@@ -88,14 +90,14 @@ export default function Pair() {
             }
           />
         )}
-      </ScrollView>
-    </View>
+      </View>
+    </ScrollView>
   );
 }
 
 const styles = StyleSheet.create({
   qr: {
-    width: 264, height: 264, alignItems: 'center', justifyContent: 'center', borderRadius: R.card,
-    borderCurve: 'continuous', backgroundColor: C.white, overflow: 'hidden',
+    width: 264, height: 264, alignItems: 'center', justifyContent: 'center', borderRadius: 20,
+    borderCurve: 'continuous', backgroundColor: C.white, overflow: 'hidden', boxShadow: SHADOW.float,
   },
 });

@@ -13,6 +13,7 @@ import {
   type CatalogDef,
   type InstalledAddon,
 } from '@/addons/registry';
+import { Skeleton } from '@/components/feedback';
 import { Button, Cover, IconButton, Press, SectionHeader, Txt } from '@/components/ui';
 import { getSeries, useCatalog, type Palette } from '@/data/catalog';
 import { C, F, R, S } from '@/theme/tokens';
@@ -120,7 +121,11 @@ function CatalogRowView({ def }: { def: CatalogDef }) {
           }}
         />
       )}
-      {row.state === 'loading' && <ActivityIndicator color={C.accentText} style={{ alignSelf: 'flex-start', marginLeft: S.lg }} />}
+      {row.state === 'loading' && (
+        <View style={{ flexDirection: 'row', gap: S.sm, paddingHorizontal: S.lg, overflow: 'hidden' }}>
+          {[0, 1, 2, 3].map((i) => <Skeleton key={i} width={W} height={Math.round(W * 1.42)} radius={R.poster} />)}
+        </View>
+      )}
       {row.state === 'error' && <Txt v="small" style={{ paddingHorizontal: S.lg }}>Catalogue injoignable.</Txt>}
       {row.state === 'ok' && row.metas.length === 0 && <Txt v="small" style={{ paddingHorizontal: S.lg }}>Vide.</Txt>}
       <Posters addon={def.addon} metas={row.metas} onEnd={row.loadMore} loadingMore={row.busy} />

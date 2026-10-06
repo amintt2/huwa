@@ -1,20 +1,19 @@
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { router } from 'expo-router';
 import { useEffect, useState } from 'react';
-import { Alert, ScrollView, StyleSheet, Switch, View } from 'react-native';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { Alert, StyleSheet, Switch, View } from 'react-native';
 
-import { DANGER, Group, Loading, Row, ScreenHeader, WARN } from '@/components/social';
+import { Group, Loading, PillAction, Row, WARN } from '@/components/social';
+import { Screen } from '@/components/screen';
 import { Button, Chip, Txt } from '@/components/ui';
 import { cloudBackup, cloudBackupSupported, useCloudBackup } from '@/p2p/cloud-backup';
 import { social, useMe, useSecurity } from '@/p2p/hooks';
 import { canCarryAccount, passkeySupport, usePasskeyRecord } from '@/p2p/passkey';
-import { C, R, S } from '@/theme/tokens';
+import { C, R, S, SHADOW } from '@/theme/tokens';
 
 const date = (t: number) => new Date(t).toLocaleDateString('fr-FR', { day: 'numeric', month: 'short', year: 'numeric' });
 
 export default function Security() {
-  const insets = useSafeAreaInsets();
   const me = useMe();
   const { state, devices } = useSecurity();
 
@@ -81,10 +80,7 @@ export default function Security() {
   };
 
   return (
-    <View style={{ flex: 1, backgroundColor: C.bg }}>
-      <ScreenHeader title="Sécurité" />
-      <ScrollView
-        contentContainerStyle={{ paddingHorizontal: S.lg, paddingBottom: insets.bottom + S.xxl, gap: S.xl }}>
+    <Screen title="Sécurité">
         {!state ? (
           <Loading />
         ) : (
@@ -176,11 +172,9 @@ export default function Security() {
               detail={d.revoked ? 'Révoqué' : `${d.current ? 'Cet appareil · ' : ''}ajouté le ${date(d.addedAt)}`}
               right={
                 d.current ? (
-                  <Chip kind="accent" label="ACTUEL" />
+                  <Chip kind="accent" label="Actuel" />
                 ) : d.revoked ? undefined : (
-                  <Txt v="small" color={DANGER} onPress={() => revoke(d.key, d.name)} accessibilityRole="button" style={{ padding: S.sm }}>
-                    Révoquer
-                  </Txt>
+                  <PillAction tone="danger" label="Révoquer" accessibilityLabel={`Révoquer ${d.name}`} onPress={() => revoke(d.key, d.name)} />
                 )
               }
             />
@@ -197,12 +191,11 @@ export default function Security() {
         <Group footer="Efface ton identité et tes données de cet appareil, et si tu veux la copie iCloud. Tout est expliqué avant de confirmer.">
           <Row icon="trash-outline" label="Supprimer mon compte" destructive onPress={() => router.push('/settings/delete-account')} last />
         </Group>
-      </ScrollView>
-    </View>
+      </Screen>
   );
 }
 
 const styles = StyleSheet.create({
-  status: { gap: S.md, padding: S.lg, borderRadius: R.card, borderCurve: 'continuous', backgroundColor: C.surface, borderWidth: 1 },
+  status: { gap: S.md, padding: S.lg, borderRadius: R.card, borderCurve: 'continuous', backgroundColor: C.surface, borderWidth: 1, boxShadow: `${SHADOW.raised}, ${SHADOW.inset}` },
   statusIcon: { width: 44, height: 44, borderRadius: 22, alignItems: 'center', justifyContent: 'center' },
 });

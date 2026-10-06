@@ -2,14 +2,16 @@
 // Same language as ui.tsx: dark steel surfaces, one blue accent, grouped inset lists.
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { router } from 'expo-router';
-import type { ReactNode } from 'react';
-import { ActivityIndicator, Pressable, StyleSheet, Switch, TextInput, View, type TextInputProps } from 'react-native';
+import { useState, type ReactNode } from 'react';
+import { Pressable, StyleSheet, Switch, TextInput, View, type TextInputProps } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import type { Badge } from '@/social/badges';
 import type { RankResult } from '@/social/rank';
-import { C, F, R, S } from '@/theme/tokens';
+import { C, F, R, S, SHADOW } from '@/theme/tokens';
 
+import { EmptyState, SkeletonRows } from './feedback';
+import { SheetTitle } from './screen';
 import { IconButton, Press, Progress, Txt, type IconName } from './ui';
 
 export const DANGER = '#FF6B6B';
@@ -50,83 +52,120 @@ export function NameLine({ name, fingerprint, size = 15 }: { name: string; finge
   );
 }
 
-/** Pushed-screen header: glass back button + title. */
+/** Pushed-screen header (static). Prefer `Screen` (components/screen) for a collapsing title. */
 export function ScreenHeader({ title, right, close }: { title: string; right?: ReactNode; close?: boolean }) {
   const insets = useSafeAreaInsets();
+  if (close) return <SheetTitle title={title} right={right} />;
   return (
-    <View style={[styles.header, { paddingTop: close ? S.lg : insets.top + S.sm }]}>
-      <IconButton icon={close ? 'close' : 'chevron-back'} label={close ? 'Fermer' : 'Retour'} tone={close ? 'solid' : 'glass'} onPress={() => router.back()} />
-      {close ? (
-        <Txt v="title" numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.7} style={{ flex: 1, fontSize: 20 }}>{title}</Txt>
-      ) : (
-        <Txt v="display" numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.6} style={{ flex: 1, fontSize: 26 }}>{title}</Txt>
-      )}
+    <View style={[styles.header, { paddingTop: insets.top + S.xs }]}>
+      <IconButton icon="chevron-back" label="Retour" size={40} onPress={() => router.back()} />
+      <Txt v="display" accessibilityRole="header" numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.7} style={{ flex: 1, fontSize: 26, lineHeight: 31 }}>{title}</Txt>
       {right}
     </View>
   );
 }
 
-/** Grouped inset list section (iOS Settings style). */
-export function Group({ title, footer, children }: { title?: string; footer?: ReactNode; children: ReactNode }) {
+/** Grouped inset list section (iOS Settings style): overline title, raised card, footnote. */
+export function Group({ title, footer, children, right }: { title?: string; footer?: ReactNode; children: ReactNode; right?: ReactNode }) {
   return (
     <View style={{ gap: S.sm }}>
-      {title ? <Txt v="caption" style={{ paddingHorizontal: S.xs }}>{title}</Txt> : null}
-      <View style={styles.group}>{children}</View>
-      {footer ? (typeof footer === 'string' ? <Txt v="small" style={{ paddingHorizontal: S.xs, lineHeight: 18 }}>{footer}</Txt> : footer) : null}
+      {title || right ? (
+        <View style={styles.groupHead}>
+          {title ? <Txt v="caption" accessibilityRole="header" style={{ flex: 1 }}>{title}</Txt> : <View style={{ flex: 1 }} />}
+          {right}
+        </View>
+      ) : null}
+      <View style={styles.groupShadow}>
+        <View style={styles.group}>{children}</View>
+      </View>
+      {footer ? (typeof footer === 'string' ? <Txt v="footnote" color={C.text3} style={styles.groupFoot}>{footer}</Txt> : footer) : null}
     </View>
   );
 }
 
+/**
+ * A row in a `Group`: tinted icon tile, label (+ detail under it), an optional trailing value,
+ * accessory and chevron. The separator is inset to the text, as on iOS; `last` drops it.
+ */
 export function Row({
   icon,
   iconColor = C.accentText,
   label,
   detail,
+  value,
   onPress,
   right,
   destructive,
   disabled,
   chevron = !!onPress,
+  external,
   last,
   accessibilityHint,
+  numberOfLines = 2,
 }: {
   icon?: IconName;
   iconColor?: string;
   label: string;
   detail?: string;
+  /** Trailing value ("Français", "2 Go"), right-aligned, secondary color. */
+  value?: string;
   onPress?: () => void;
   right?: ReactNode;
   destructive?: boolean;
   disabled?: boolean;
   chevron?: boolean;
+  /** Opens outside the app: arrow instead of chevron. */
+  external?: boolean;
   last?: boolean;
   accessibilityHint?: string;
+  numberOfLines?: number;
 }) {
+  const tint = destructive ? DANGER : iconColor;
   const body = (
-    <View style={[styles.row, !last && styles.rowLine, disabled && { opacity: 0.45 }]}>
+    <View style={[styles.row, disabled && { opacity: 0.45 }]}>
       {icon ? (
-        <View style={[styles.rowIcon, { backgroundColor: destructive ? 'rgba(255,107,107,0.14)' : C.accentSoft }]}>
-          <Ionicons name={icon} size={16} color={destructive ? DANGER : iconColor} />
+        <View style={[styles.rowIcon, { backgroundColor: destructive ? 'rgba(255,107,107,0.14)' : tint === C.accentText ? C.accentSoft : `${tint}24` }]}>
+          <Ionicons name={icon} size={17} color={tint} />
         </View>
       ) : null}
-      <View style={{ flex: 1, gap: 2 }}>
-        <Txt v="label" color={destructive ? DANGER : C.text} numberOfLines={1}>{label}</Txt>
-        {detail ? <Txt v="small" numberOfLines={2}>{detail}</Txt> : null}
+      <View style={{ flex: 1, gap: 2, paddingVertical: 2 }}>
+        <Txt v="label" color={destructive ? DANGER : C.text} numberOfLines={2}>{label}</Txt>
+        {detail ? <Txt v="small" numberOfLines={numberOfLines}>{detail}</Txt> : null}
       </View>
+      {value ? <Txt v="body" color={C.text2} tabular numberOfLines={1} style={{ maxWidth: '45%', textAlign: 'right' }}>{value}</Txt> : null}
       {right}
-      {chevron ? <Ionicons name="chevron-forward" size={16} color={C.text2} /> : null}
+      {external ? (
+        <Ionicons name="open-outline" size={15} color={C.text3} />
+      ) : chevron ? (
+        <Ionicons name="chevron-forward" size={16} color={C.text3} style={{ marginRight: -2 }} />
+      ) : null}
+      {!last && <View style={[styles.rowLine, { left: icon ? S.md + 30 + S.md : S.md }]} />}
     </View>
   );
-  if (!onPress || disabled) return <View accessible accessibilityState={{ disabled }}>{body}</View>;
+  const a11yLabel = [label, value, detail].filter(Boolean).join(', ');
+  if (!onPress || disabled) return <View accessible accessibilityLabel={a11yLabel} accessibilityState={{ disabled }}>{body}</View>;
   return (
     <Pressable
       onPress={onPress}
-      accessibilityRole="button"
-      accessibilityLabel={detail ? `${label}, ${detail}` : label}
+      accessibilityRole={external ? 'link' : 'button'}
+      accessibilityLabel={a11yLabel}
       accessibilityHint={accessibilityHint}
-      style={({ pressed }) => [pressed && { backgroundColor: 'rgba(120,140,180,0.10)' }]}>
+      style={({ pressed }) => [pressed && { backgroundColor: 'rgba(255,255,255,0.06)' }]}>
       {body}
     </Pressable>
+  );
+}
+
+/** Small trailing action inside a row ("Révoquer", "Débloquer", "Ajouter"): tinted pill, 44 pt hit area. */
+export function PillAction({ label, onPress, tone = 'accent', icon, accessibilityLabel }: { label: string; onPress: () => void; tone?: 'accent' | 'danger' | 'neutral'; icon?: IconName; accessibilityLabel?: string }) {
+  const fg = tone === 'danger' ? DANGER : tone === 'neutral' ? C.text : C.accentText;
+  const bg = tone === 'danger' ? 'rgba(255,107,107,0.12)' : tone === 'neutral' ? C.pill : C.accentSoft;
+  return (
+    <Press onPress={onPress} haptics="select" scaleTo={0.95} hitSlop={8} accessibilityRole="button" accessibilityLabel={accessibilityLabel ?? label}
+      style={[styles.pill, { backgroundColor: bg }]}>
+      {icon ? <Ionicons name={icon} size={14} color={fg} /> : null}
+      <Txt v="small" color={fg} maxFontSizeMultiplier={1.4} style={{ ...F.semibold }}>{label}</Txt>
+    </Press>
   );
 }
 
@@ -173,8 +212,8 @@ export function OptionRow({
       disabled={disabled}
       accessibilityRole="radio"
       accessibilityState={{ checked: selected, disabled }}
-      style={({ pressed }) => [pressed && { backgroundColor: 'rgba(120,140,180,0.10)' }]}>
-      <View style={[styles.row, { alignItems: 'flex-start' }, !last && styles.rowLine, disabled && { opacity: 0.5 }]}>
+      style={({ pressed }) => [pressed && { backgroundColor: 'rgba(255,255,255,0.06)' }]}>
+      <View style={[styles.row, { alignItems: 'flex-start', paddingVertical: 14 }, disabled && { opacity: 0.5 }]}>
         <Ionicons name={selected ? 'radio-button-on' : 'radio-button-off'} size={22} color={selected ? C.accentText : C.text2} style={{ marginTop: 1 }} />
         <View style={{ flex: 1, gap: 4 }}>
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: S.sm, flexWrap: 'wrap' }}>
@@ -187,28 +226,48 @@ export function OptionRow({
           </View>
           {detail ? <Txt v="small" style={{ lineHeight: 18 }}>{detail}</Txt> : null}
         </View>
+        {!last && <View style={[styles.rowLine, { left: S.md + 22 + S.md }]} />}
       </View>
     </Pressable>
   );
 }
 
-export function Field(props: TextInputProps & { label?: string; error?: string; counter?: number }) {
-  const { label, error, counter, style, ...rest } = props;
+export function Field(props: TextInputProps & { label?: string; error?: string; counter?: number; hint?: string }) {
+  const { label, error, counter, hint, style, onFocus, onBlur, ...rest } = props;
+  const [focused, setFocused] = useState(false);
   return (
     <View style={{ gap: S.sm }}>
-      {label ? <Txt v="small">{label}</Txt> : null}
+      {label ? <Txt v="small" color={C.body} style={{ paddingHorizontal: 2, ...F.semibold }}>{label}</Txt> : null}
       <TextInput
-        placeholderTextColor="#6F7A90"
+        placeholderTextColor={C.text3}
         selectionColor={C.accentText}
+        cursorColor={C.accentText}
         keyboardAppearance="dark"
         {...rest}
+        onFocus={(e) => {
+          setFocused(true);
+          onFocus?.(e);
+        }}
+        onBlur={(e) => {
+          setFocused(false);
+          onBlur?.(e);
+        }}
         accessibilityLabel={label ?? rest.accessibilityLabel}
-        style={[styles.field, rest.multiline && { minHeight: 96, paddingTop: 14, textAlignVertical: 'top' }, !!error && { borderColor: DANGER }, style]}
+        accessibilityHint={error ?? hint}
+        style={[
+          styles.field,
+          rest.multiline && { minHeight: 104, paddingTop: 14, paddingBottom: 14, textAlignVertical: 'top' },
+          focused && { borderColor: C.accentLine, backgroundColor: C.elevated },
+          !!error && { borderColor: DANGER },
+          style,
+        ]}
       />
-      {error || counter != null ? (
-        <View style={{ flexDirection: 'row', justifyContent: 'space-between', gap: S.sm }}>
-          <Txt v="small" color={DANGER} style={{ flex: 1 }}>{error ?? ''}</Txt>
-          {counter != null && props.maxLength ? <Txt v="small">{`${counter}/${props.maxLength}`}</Txt> : null}
+      {error || hint || counter != null ? (
+        <View style={{ flexDirection: 'row', justifyContent: 'space-between', gap: S.sm, paddingHorizontal: 2 }}>
+          <Txt v="footnote" color={error ? DANGER : C.text3} style={{ flex: 1 }}>{error ?? hint ?? ''}</Txt>
+          {counter != null && props.maxLength ? (
+            <Txt v="footnote" tabular color={counter >= props.maxLength ? WARN : C.text3}>{`${counter}/${props.maxLength}`}</Txt>
+          ) : null}
         </View>
       ) : null}
     </View>
@@ -216,22 +275,14 @@ export function Field(props: TextInputProps & { label?: string; error?: string; 
 }
 
 export function Empty({ icon, title, text, action }: { icon: IconName; title: string; text?: string; action?: ReactNode }) {
-  return (
-    <View style={{ alignItems: 'center', gap: S.md, paddingVertical: S.xxl, paddingHorizontal: S.xl }}>
-      <View style={styles.emptyIcon}>
-        <Ionicons name={icon} size={26} color={C.accentText} />
-      </View>
-      <Txt v="label" style={{ textAlign: 'center' }}>{title}</Txt>
-      {text ? <Txt v="small" style={{ textAlign: 'center', lineHeight: 19 }}>{text}</Txt> : null}
-      {action}
-    </View>
-  );
+  return <EmptyState icon={icon} title={title} text={text}>{action}</EmptyState>;
 }
 
-export function Loading() {
+/** Loading placeholder for a list of rows. */
+export function Loading({ rows = 4, square }: { rows?: number; square?: boolean }) {
   return (
-    <View style={{ padding: S.xxl, alignItems: 'center' }}>
-      <ActivityIndicator color={C.text2} />
+    <View style={{ paddingVertical: S.lg }}>
+      <SkeletonRows count={rows} thumb={44} square={square ?? true} />
     </View>
   );
 }
@@ -314,22 +365,28 @@ export const profileLink = (key: string) => `huwa://u/${key}`;
 
 const styles = StyleSheet.create({
   header: { flexDirection: 'row', alignItems: 'center', gap: S.md, paddingHorizontal: S.lg, paddingBottom: S.md },
-  group: { borderRadius: R.card, borderCurve: 'continuous', backgroundColor: C.surface, overflow: 'hidden', borderWidth: 1, borderColor: C.border },
-  row: { flexDirection: 'row', alignItems: 'center', gap: S.md, minHeight: 52, paddingVertical: 10, paddingHorizontal: S.md },
-  rowLine: { borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: C.border },
+  groupHead: { flexDirection: 'row', alignItems: 'center', gap: S.sm, paddingHorizontal: S.md, minHeight: 18 },
+  groupShadow: { borderRadius: R.card, borderCurve: 'continuous', boxShadow: SHADOW.raised },
+  group: {
+    borderRadius: R.card, borderCurve: 'continuous', backgroundColor: C.surface, overflow: 'hidden',
+    borderWidth: 1, borderColor: C.border, boxShadow: SHADOW.inset,
+  },
+  groupFoot: { paddingHorizontal: S.md, lineHeight: 17 },
+  row: { flexDirection: 'row', alignItems: 'center', gap: S.md, minHeight: 54, paddingVertical: 10, paddingHorizontal: S.md },
+  rowLine: { position: 'absolute', right: 0, bottom: 0, height: StyleSheet.hairlineWidth, backgroundColor: C.hairline },
   rowIcon: { width: 30, height: 30, borderRadius: 8, borderCurve: 'continuous', alignItems: 'center', justifyContent: 'center' },
+  pill: { flexDirection: 'row', alignItems: 'center', gap: 4, minHeight: 32, paddingHorizontal: 12, borderRadius: R.pill, borderCurve: 'continuous' },
   note: { paddingHorizontal: 6, paddingVertical: 2, borderRadius: R.chip, backgroundColor: C.pill, borderWidth: 1, borderColor: C.pillLine },
   field: {
-    minHeight: 50, paddingHorizontal: S.lg, borderRadius: R.card, borderCurve: 'continuous', backgroundColor: C.surface,
-    borderWidth: 1, borderColor: C.border, color: C.text, ...F.medium, fontSize: 16,
+    minHeight: 50, paddingHorizontal: 14, borderRadius: R.control, borderCurve: 'continuous', backgroundColor: C.surface,
+    borderWidth: 1, borderColor: C.border, color: C.text, ...F.medium, fontSize: 16, boxShadow: 'inset 0px 1px 2px rgba(0,0,0,0.35)',
   },
-  emptyIcon: { width: 56, height: 56, borderRadius: 28, alignItems: 'center', justifyContent: 'center', backgroundColor: C.accentSoft },
   count: { minWidth: 20, height: 20, paddingHorizontal: 6, borderRadius: 10, backgroundColor: C.accent, alignItems: 'center', justifyContent: 'center' },
-  rank: { gap: S.md, padding: S.lg, borderRadius: R.card, borderCurve: 'continuous', backgroundColor: C.surface, borderWidth: 1, borderColor: C.border },
+  rank: { gap: S.md, padding: S.lg, borderRadius: R.card, borderCurve: 'continuous', backgroundColor: C.surface, borderWidth: 1, borderColor: C.border, boxShadow: `${SHADOW.raised}, ${SHADOW.inset}` },
   badges: { flexDirection: 'row', flexWrap: 'wrap', gap: S.sm },
   badge: {
     width: '31.8%', alignItems: 'center', gap: 6, paddingVertical: S.md, paddingHorizontal: S.sm,
-    borderRadius: R.card, borderCurve: 'continuous', backgroundColor: C.surface, borderWidth: 1, borderColor: C.border,
+    borderRadius: R.card, borderCurve: 'continuous', backgroundColor: C.surface, borderWidth: 1, borderColor: C.border, boxShadow: SHADOW.inset,
   },
   badgeIcon: {
     width: 42, height: 42, borderRadius: 21, alignItems: 'center', justifyContent: 'center',

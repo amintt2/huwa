@@ -2,12 +2,13 @@
 // compression intelligente), puis le cache du moteur torrent.
 import { router } from 'expo-router';
 import { useEffect, useState } from 'react';
-import { Alert, ScrollView, StyleSheet, Switch, View } from 'react-native';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { Alert, StyleSheet, Switch, View } from 'react-native';
 
 import { EpisodeDownloads } from '@/components/downloads/downloads-screen';
+import { Screen } from '@/components/screen';
+import { Group, Row } from '@/components/social';
 import { Button, IconButton, Press, Progress, Txt } from '@/components/ui';
-import { C, F, R, S } from '@/theme/tokens';
+import { C, F, R, S, SHADOW } from '@/theme/tokens';
 
 import {
   clearCache,
@@ -30,27 +31,14 @@ import {
 } from '@/torrent';
 
 export default function Downloads() {
-  const insets = useSafeAreaInsets();
   return (
-    <ScrollView
-      style={{ flex: 1, backgroundColor: C.bg }}
-      contentContainerStyle={{ paddingTop: insets.top + S.sm, paddingHorizontal: S.lg, gap: S.xl, paddingBottom: S.xxl }}>
-      <View style={{ flexDirection: 'row', alignItems: 'center', gap: S.md }}>
-        <IconButton icon="chevron-back" label="Retour" onPress={() => router.back()} />
-        <Txt v="display" style={{ fontSize: 28 }}>Téléchargements</Txt>
-      </View>
+    <Screen title="Téléchargements">
       <EpisodeDownloads />
-      <Press onPress={() => router.push('/offline')} style={styles.card} accessibilityRole="button">
-        <View style={styles.rowBetween}>
-          <View style={{ flex: 1, gap: 2 }}>
-            <Txt v="label">Chapitres manhwa hors ligne</Txt>
-            <Txt v="small">Les chapitres téléchargés depuis le lecteur.</Txt>
-          </View>
-          <Txt v="label" color={C.text2}>›</Txt>
-        </View>
-      </Press>
+      <Group>
+        <Row icon="book-outline" label="Chapitres manhwa hors ligne" detail="Les chapitres téléchargés depuis le lecteur." onPress={() => router.push('/offline')} last />
+      </Group>
       <TorrentCacheSection />
-    </ScrollView>
+    </Screen>
   );
 }
 
@@ -226,7 +214,7 @@ function TorrentRow({ t }: { t: TorrentStatus }) {
 }
 
 const styles = StyleSheet.create({
-  card: { padding: S.md, gap: S.md, borderRadius: R.card, borderCurve: 'continuous', backgroundColor: C.surface },
+  card: { padding: S.md, gap: S.md, borderRadius: R.card, borderCurve: 'continuous', backgroundColor: C.surface, borderWidth: 1, borderColor: C.border, boxShadow: SHADOW.inset },
   rowBetween: { flexDirection: 'row', alignItems: 'center', gap: S.md },
   quota: {
     paddingVertical: 8, paddingHorizontal: 14, borderRadius: R.control, borderCurve: 'continuous',

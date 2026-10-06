@@ -3,7 +3,8 @@
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { router, useLocalSearchParams, type Href } from 'expo-router';
 import { useState } from 'react';
-import { Alert, ScrollView, Share, StyleSheet, Switch, View } from 'react-native';
+import { Alert, Share, StyleSheet, Switch, View } from 'react-native';
+import Animated from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { configureAddon } from '@/addons/configure';
@@ -11,6 +12,7 @@ import { huwaInstallLink, needsConfiguration } from '@/addons/protocol';
 import { BUILTIN_ID, moveAddon, refreshAddon, removeAddon, toggleAddon, useAddons } from '@/addons/registry';
 import { capabilities, CapChips, Card, ExtLogo, hostOf, LinkRow, logoOf, TrustNote } from '@/components/extension-ui';
 import { Empty } from '@/components/social';
+import { BAR_H, NavBar, useScreenScroll } from '@/components/screen';
 import { Button, IconButton, Press, Txt } from '@/components/ui';
 import { C, F, R, S } from '@/theme/tokens';
 
@@ -24,16 +26,12 @@ export default function ExtensionDetail() {
   const a = addons[index];
   const [busy, setBusy] = useState<'' | 'refresh' | 'configure'>('');
 
-  const header = (
-    <View style={[styles.top, { paddingTop: insets.top + S.sm }]}>
-      <IconButton icon="chevron-back" label="Retour" onPress={() => router.back()} />
-    </View>
-  );
+  const { y, onScroll } = useScreenScroll();
 
   if (!a) {
     return (
-      <View style={{ flex: 1, backgroundColor: C.bg }}>
-        {header}
+      <View style={{ flex: 1, backgroundColor: C.bg, paddingTop: insets.top + BAR_H }}>
+        <NavBar />
         <Empty icon="extension-puzzle-outline" title="Extension introuvable" text="Elle a peut-être été supprimée." action={<Button small label="Mes extensions" onPress={() => router.replace('/addons' as Href)} />} />
       </View>
     );
@@ -82,8 +80,7 @@ export default function ExtensionDetail() {
 
   return (
     <View style={{ flex: 1, backgroundColor: C.bg }}>
-      <ScrollView contentContainerStyle={{ paddingBottom: insets.bottom + S.xxl }}>
-        {header}
+      <Animated.ScrollView onScroll={onScroll} scrollEventThrottle={16} contentContainerStyle={{ paddingTop: insets.top + BAR_H, paddingBottom: insets.bottom + S.xxl }}>
         <View style={styles.wrap}>
           <View style={styles.hero}>
             <ExtLogo uri={logoOf(m)} name={m.name} size={72} icon={builtin ? 'play-circle-outline' : undefined} />
@@ -161,7 +158,8 @@ export default function ExtensionDetail() {
             <Txt v="small" style={{ lineHeight: 18 }}>Flux de démonstration libres de droits, fournis avec Huwa. Désactive-la quand tu as tes propres extensions.</Txt>
           )}
         </View>
-      </ScrollView>
+      </Animated.ScrollView>
+      <NavBar title={m.name} y={y} />
     </View>
   );
 }

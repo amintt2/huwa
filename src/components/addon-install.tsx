@@ -8,7 +8,8 @@ import { ActivityIndicator, ScrollView, StyleSheet, TextInput, View } from 'reac
 import { configureAddon } from '@/addons/configure';
 import { needsConfiguration, type Manifest } from '@/addons/protocol';
 import { installAddon, previewAddon, setPrefs } from '@/addons/registry';
-import { Button, IconButton, Txt } from '@/components/ui';
+import { Button, Txt } from '@/components/ui';
+import { SheetTitle } from './screen';
 
 import { capabilities, hostOf, installedWhat, logoOf, PreviewCard, TrustNote, type PreviewLine } from './extension-ui';
 import { C, F, R, S } from '@/theme/tokens';
@@ -91,9 +92,8 @@ export function AddonInstallSheet({ url }: { url: string }) {
 
   return (
     <ScrollView style={{ flex: 1, backgroundColor: C.surface }} contentContainerStyle={styles.wrap} keyboardShouldPersistTaps="handled">
-      <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-        <Txt v="title" style={{ flex: 1, fontSize: 20 }} accessibilityRole="header">Installer une extension</Txt>
-        <IconButton icon="close" label="Fermer" tone="solid" onPress={closeSheet} />
+      <View style={{ marginHorizontal: -S.lg, marginTop: -S.lg }}>
+        <SheetTitle title="Installer une extension" onClose={closeSheet} />
       </View>
 
       {!m && !cur.error && (
@@ -106,8 +106,8 @@ export function AddonInstallSheet({ url }: { url: string }) {
       {!!cur.error && (
         <View style={styles.error}>
           <View style={{ flexDirection: 'row', gap: S.sm, alignItems: 'flex-start' }}>
-            <Ionicons name="alert-circle-outline" size={18} color="#FF8A8A" style={{ marginTop: 1 }} />
-            <Txt v="label" color="#FF8A8A" style={{ flex: 1 }}>{cur.error}</Txt>
+            <Ionicons name="alert-circle-outline" size={18} color={C.danger} style={{ marginTop: 1 }} />
+            <Txt v="label" color={C.danger} style={{ flex: 1 }}>{cur.error}</Txt>
           </View>
           <Txt v="small" selectable numberOfLines={3}>{target}</Txt>
           <Button small variant="soft" icon="refresh" label="Réessayer" onPress={() => setAttempt((n) => n + 1)} />

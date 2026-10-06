@@ -7,11 +7,11 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { CloudAccountCard } from '@/components/cloud-account';
 import { Field } from '@/components/social';
-import { Button, Txt, type IconName } from '@/components/ui';
+import { Button, Txt, Wordmark, type IconName } from '@/components/ui';
 import { social } from '@/p2p/hooks';
 import { requestPasskeyOffer } from '@/p2p/passkey';
 import { getState } from '@/store/store';
-import { C, F, S } from '@/theme/tokens';
+import { C, F, S, SHADOW } from '@/theme/tokens';
 
 const POINTS: { icon: IconName; title: string; text: string }[] = [
   { icon: 'key-outline', title: 'Ton compte, ta clé', text: 'Ton identité est une clé créée sur ce téléphone. Aucun serveur ne la détient.' },
@@ -67,14 +67,14 @@ export default function Welcome() {
         keyboardShouldPersistTaps="handled"
         contentContainerStyle={{ flexGrow: 1, paddingTop: insets.top + S.xxl, paddingBottom: insets.bottom + S.lg, paddingHorizontal: S.xl, gap: S.xl }}>
         <View style={{ gap: S.sm }}>
-          <Txt v="display" style={{ fontSize: 40, letterSpacing: 2 }}>Huwa</Txt>
-          <Txt v="body" style={{ fontSize: 17, lineHeight: 24 }}>L’anime et le manhwa, au même endroit. Et ta communauté, sans serveur.</Txt>
+          <Wordmark size={34} />
+          <Txt v="body" color={C.body} style={{ fontSize: 17, lineHeight: 24, marginTop: S.sm }}>L’anime et le manhwa, au même endroit. Et ta communauté, sans serveur.</Txt>
         </View>
 
         <View style={{ gap: S.lg }}>
           {POINTS.map((p) => (
             <View key={p.title} style={{ flexDirection: 'row', gap: S.md }}>
-              <View style={{ width: 36, height: 36, borderRadius: 18, backgroundColor: C.accentSoft, alignItems: 'center', justifyContent: 'center' }}>
+              <View style={{ width: 40, height: 40, borderRadius: 12, borderCurve: 'continuous', backgroundColor: C.elevated, borderWidth: 1, borderColor: C.accentLine, alignItems: 'center', justifyContent: 'center', boxShadow: SHADOW.inset }}>
                 <Ionicons name={p.icon} size={18} color={C.accentText} />
               </View>
               <View style={{ flex: 1, gap: 2 }}>
@@ -104,11 +104,9 @@ export default function Welcome() {
             returnKeyType="done"
             onSubmitEditing={create}
             error={error}
+            hint="Deux personnes peuvent avoir le même pseudo : une empreinte courte s’affiche à côté pour les distinguer."
           />
-          <Txt v="small" style={{ lineHeight: 18 }}>
-            Deux personnes peuvent avoir le même pseudo : une empreinte courte s’affiche à côté pour les distinguer.
-          </Txt>
-          <Button variant={cloudCard ? 'ghost' : 'solid'} label={busy ? 'Création…' : 'Créer mon identité'} icon="sparkles" onPress={create} />
+          <Button variant={cloudCard ? 'ghost' : 'solid'} large label="Créer mon identité" loading={busy} icon="sparkles" onPress={create} />
           <Pressable
             onPress={() => router.push('/onboarding/restore')}
             accessibilityRole="button"

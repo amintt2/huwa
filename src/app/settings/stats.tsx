@@ -4,19 +4,21 @@
 // see src/stats/share.ts), behind an explicit consent sheet.
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { useMemo, useState } from 'react';
-import { ActivityIndicator, Alert, Modal, ScrollView, StyleSheet, View } from 'react-native';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { ActivityIndicator, Alert, StyleSheet, View } from 'react-native';
 
-import { DANGER, Empty, Group, Row, ScreenHeader, SwitchRow } from '@/components/social';
+import { Callout } from '@/components/feedback';
+import { Screen } from '@/components/screen';
+import { Sheet } from '@/components/sheet';
+import { DANGER, Empty, Group, Row, SwitchRow } from '@/components/social';
 import { CompareRow, Figure, MetricRow, Sparkline, StatCard } from '@/components/stats';
-import { Button, IconButton, Txt } from '@/components/ui';
+import { Button, Txt } from '@/components/ui';
 import { isDemo } from '@/demo/flags';
 import { communityView, K_MIN, WEEK_MS } from '@/stats/community';
 import { DEMO_ADDONS, DEMO_COMMUNITY, DEMO_EVENTS } from '@/stats/demo';
 import { addonTable, formatMs, formatPct, PATH_LABEL, PATHS, summarize, type Group as StatGroup } from '@/stats/model';
 import { useCommunityStats } from '@/stats/share';
 import { resetStats, setCommunity, useStats } from '@/stats/store';
-import { C, R, S } from '@/theme/tokens';
+import { C, S } from '@/theme/tokens';
 
 const ENGINE_LABEL = { native: 'Lecteur natif (AVPlayer)', mpv: 'mpv' } as const;
 const KIND_LABEL = { start: 'Nouvel épisode', resume: 'Reprise', next: 'Épisode suivant' } as const;
@@ -28,7 +30,6 @@ const detailOf = (g: StatGroup) =>
   `${g.n} lecture${g.n > 1 ? 's' : ''} · p90 ${formatMs(g.p90)}${g.success != null ? ` · ${formatPct(g.success)} réussies` : ''}`;
 
 export default function PlaybackStats() {
-  const insets = useSafeAreaInsets();
   const stored = useStats((s) => s.events);
   const storedAddons = useStats((s) => s.addons);
   const community = useStats((s) => s.community);
@@ -61,15 +62,11 @@ export default function PlaybackStats() {
   };
 
   return (
-    <View style={{ flex: 1, backgroundColor: C.bg }}>
-      <ScreenHeader title="Statistiques" />
-      <ScrollView contentContainerStyle={{ paddingHorizontal: S.lg, paddingBottom: insets.bottom + S.xxl, gap: S.xl }}>
-        <View style={styles.info}>
-          <Ionicons name="lock-closed-outline" size={18} color={C.accentText} />
-          <Txt v="small" style={{ flex: 1, lineHeight: 18 }}>
-            Ces mesures restent sur ton appareil. Elles disent combien de temps met un épisode à démarrer, selon la source et le lecteur — jamais ce que tu regardes.
-          </Txt>
-        </View>
+    <>
+    <Screen title="Statistiques">
+        <Callout icon="lock-closed-outline">
+          Ces mesures restent sur ton appareil. Elles disent combien de temps met un épisode à démarrer, selon la source et le lecteur — jamais ce que tu regardes.
+        </Callout>
 
         {events.length === 0 ? (
           <Group>
@@ -194,7 +191,7 @@ export default function PlaybackStats() {
         <Group>
           <Row icon="trash-outline" label="Réinitialiser les statistiques" destructive chevron={false} onPress={onReset} last />
         </Group>
-      </ScrollView>
+    </Screen>
 
       <ConsentSheet
         visible={consent}
@@ -205,7 +202,7 @@ export default function PlaybackStats() {
           setConsent(false);
         }}
       />
-    </View>
+    </>
   );
 }
 
@@ -220,15 +217,22 @@ function Point({ icon, children, tone = C.accentText }: { icon: 'checkmark-circl
 
 /** Exactly what "Comparer avec la communauté" shares — shown before switching it on. */
 function ConsentSheet({ visible, enabled, onClose, onAccept }: { visible: boolean; enabled: boolean; onClose: () => void; onAccept: () => void }) {
-  const insets = useSafeAreaInsets();
   return (
-    <Modal visible={visible} animationType="slide" presentationStyle="pageSheet" onRequestClose={onClose}>
-      <View style={{ flex: 1, backgroundColor: C.surface }}>
-        <View style={styles.sheetHead}>
-          <Txt v="title" style={{ flex: 1, fontSize: 20 }}>Comparer avec la communauté</Txt>
-          <IconButton icon="close" label="Fermer" tone="solid" onPress={onClose} />
-        </View>
-        <ScrollView contentContainerStyle={{ paddingHorizontal: S.lg, paddingBottom: insets.bottom + S.xl, gap: S.lg }}>
+    <Sheet
+      visible={visible}
+      onClose={onClose}
+      title="Comparer avec la communauté"
+      detents={['medium', 'large']}
+      footer={
+        enabled ? (
+          <Button label="Fermer" variant="soft" onPress={onClose} />
+        ) : (
+          <View style={{ flexDirection: 'row', gap: S.sm }}>
+            <Button label="Pas maintenant" variant="ghost" onPress={onClose} style={{ flex: 1 }} />
+            <Button label="Activer" icon="people-outline" onPress={onAccept} style={{ flex: 1.4 }} />
+          </View>
+        )
+      }>
           <Txt v="body" style={{ color: C.body }}>
             Pour savoir si tes démarrages sont rapides, Huwa peut publier sur le réseau pair-à-pair, au plus une fois par semaine, un résumé grossier et brouillé de ta semaine. Huwa n’a pas de serveur : ces résumés sont additionnés par les pairs.
           </Txt>
@@ -248,30 +252,18 @@ function ConsentSheet({ visible, enabled, onClose, onAccept }: { visible: boolea
 
           <View style={{ gap: S.sm }}>
             <Txt v="caption">À savoir</Txt>
-            <Point icon="alert-circle-outline" tone="#F5B544">Comme pour toute connexion pair-à-pair, ton adresse IP est visible des pairs connectés à ce moment-là.</Point>
-            <Point icon="alert-circle-outline" tone="#F5B544">Une contribution publiée est lisible par tous les pairs et ne peut pas être retirée, puisque rien ne la relie à toi. Désactiver arrête les suivantes.</Point>
-            <Point icon="alert-circle-outline" tone="#F5B544">{`La comparaison s’affiche à partir de ${K_MIN} contributions.`}</Point>
+            <Point icon="alert-circle-outline" tone={C.star}>Comme pour toute connexion pair-à-pair, ton adresse IP est visible des pairs connectés à ce moment-là.</Point>
+            <Point icon="alert-circle-outline" tone={C.star}>Une contribution publiée est lisible par tous les pairs et ne peut pas être retirée, puisque rien ne la relie à toi. Désactiver arrête les suivantes.</Point>
+            <Point icon="alert-circle-outline" tone={C.star}>{`La comparaison s’affiche à partir de ${K_MIN} contributions.`}</Point>
           </View>
 
-          {enabled ? (
-            <Button label="Fermer" variant="soft" onPress={onClose} />
-          ) : (
-            <View style={{ gap: S.sm }}>
-              <Button label="Activer la comparaison" icon="people-outline" onPress={onAccept} />
-              <Button label="Pas maintenant" variant="ghost" onPress={onClose} />
-            </View>
-          )}
-        </ScrollView>
-      </View>
-    </Modal>
+    </Sheet>
   );
 }
 
 const styles = StyleSheet.create({
-  info: { flexDirection: 'row', gap: S.md, padding: S.md, borderRadius: R.card, backgroundColor: C.surface, borderWidth: 1, borderColor: C.border },
   figures: { flexDirection: 'row', gap: S.md, padding: S.md },
   sparkLabel: { paddingHorizontal: S.md, paddingBottom: S.sm, fontSize: 12 },
   waiting: { flexDirection: 'row', alignItems: 'center', gap: S.md, padding: S.md, flexWrap: 'wrap' },
-  sheetHead: { flexDirection: 'row', alignItems: 'center', gap: S.md, paddingHorizontal: S.lg, paddingTop: S.lg, paddingBottom: S.md },
   point: { flexDirection: 'row', gap: S.sm, alignItems: 'flex-start' },
 });

@@ -3,12 +3,12 @@
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { Image } from 'expo-image';
 import { useState, type ReactNode } from 'react';
-import { StyleSheet, View } from 'react-native';
+import { Pressable, StyleSheet, View } from 'react-native';
 
 import { hasResource, resourceNames, type Manifest } from '@/addons/protocol';
-import { C, F, R, S } from '@/theme/tokens';
+import { C, F, R, S, SHADOW } from '@/theme/tokens';
 
-import { Press, Txt, type IconName } from './ui';
+import { Button, Press, Txt, type IconName } from './ui';
 
 export const ADDON_LEGAL =
   'Huwa ne fournit, n’héberge ni n’indexe aucun contenu, et ne vérifie pas les extensions. Une extension est un service tiers, hébergé par son auteur : ' +
@@ -168,9 +168,9 @@ export function TrustNote({ text = 'Huwa ne fournit aucun contenu : les extensio
   const [open, setOpen] = useState(false);
   return (
     <View style={styles.trust}>
-      <Ionicons name="shield-checkmark-outline" size={16} color={C.text2} style={{ marginTop: 1 }} />
+      <Ionicons name="shield-checkmark-outline" size={18} color={C.accentText} style={{ marginTop: 1 }} />
       <View style={{ flex: 1, gap: S.xs }}>
-        <Txt v="small" style={{ lineHeight: 18 }}>{text}</Txt>
+        <Txt v="small" color={C.body} style={{ lineHeight: 18 }}>{text}</Txt>
         {open ? <Txt v="small" style={{ lineHeight: 18, color: C.body }}>{more}</Txt> : null}
         <Press onPress={() => setOpen(!open)} accessibilityRole="button" accessibilityState={{ expanded: open }} hitSlop={8} style={{ alignSelf: 'flex-start' }}>
           <Txt v="small" color={C.accentText} style={F.semibold}>{open ? 'Masquer' : 'En savoir plus'}</Txt>
@@ -217,23 +217,23 @@ export function Card({ children, tinted }: { children: ReactNode; tinted?: boole
 /** Guiding empty state inside a card. */
 export function EmptyCard({ icon, text, action, onAction }: { icon: IconName; text: string; action: string; onAction: () => void }) {
   return (
-    <View style={[styles.card, { alignItems: 'center', gap: S.md, padding: S.xl }]}>
-      <View style={[styles.sectionIcon, { width: 52, height: 52, borderRadius: 16 }]}>
-        <Ionicons name={icon} size={24} color={C.accentText} />
+    <View style={styles.card}>
+      <View style={{ alignItems: 'center', gap: S.md, padding: S.xl }}>
+        <View style={styles.emptyIcon}>
+          <Ionicons name={icon} size={24} color={C.accentText} />
+        </View>
+        <Txt v="small" style={{ textAlign: 'center', lineHeight: 19, color: C.body, maxWidth: 300 }}>{text}</Txt>
+        <Button small variant="soft" icon="add" label={action} onPress={onAction} />
       </View>
-      <Txt v="small" style={{ textAlign: 'center', lineHeight: 19, color: C.body }}>{text}</Txt>
-      <Press onPress={onAction} accessibilityRole="button" style={[styles.addPill, { paddingHorizontal: S.lg, minHeight: 40 }]}>
-        <Ionicons name="add" size={16} color={C.white} />
-        <Txt v="small" color={C.white} style={F.bold}>{action}</Txt>
-      </Press>
     </View>
   );
 }
 
-/** A link-like row inside a Card: icon tile, label, hint, chevron. */
+/** A link-like row inside a Card: icon tile, label, hint, chevron. Pressed: highlight, no scale (rows). */
 export function LinkRow({ icon, label, hint, onPress, last, right, external }: { icon: IconName; label: string; hint?: string; onPress: () => void; last?: boolean; right?: ReactNode; external?: boolean }) {
   return (
-    <Press onPress={onPress} scaleTo={0.99} accessibilityRole={external ? 'link' : 'button'} accessibilityLabel={hint ? `${label}, ${hint}` : label} style={[styles.linkRow, !last && styles.line]}>
+    <Pressable onPress={onPress} accessibilityRole={external ? 'link' : 'button'} accessibilityLabel={hint ? `${label}, ${hint}` : label}
+      style={({ pressed }) => [styles.linkRow, pressed && { backgroundColor: 'rgba(255,255,255,0.06)' }]}>
       <View style={styles.rowIcon}>
         <Ionicons name={icon} size={17} color={C.accentText} />
       </View>
@@ -242,13 +242,14 @@ export function LinkRow({ icon, label, hint, onPress, last, right, external }: {
         {hint ? <Txt v="small" numberOfLines={3} style={{ lineHeight: 18 }}>{hint}</Txt> : null}
       </View>
       {right}
-      <Ionicons name={external ? 'open-outline' : 'chevron-forward'} size={16} color={C.text2} />
-    </Press>
+      <Ionicons name={external ? 'open-outline' : 'chevron-forward'} size={16} color={C.text3} />
+      {!last && <View style={styles.inset} />}
+    </Pressable>
   );
 }
 
 export const extStyles = StyleSheet.create({
-  line: { borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: C.borderStrong },
+  line: { borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: C.hairline },
 });
 
 const styles = StyleSheet.create({
@@ -259,14 +260,16 @@ const styles = StyleSheet.create({
     borderRadius: R.pill, backgroundColor: C.pill, borderWidth: 1, borderColor: C.pillLine,
   },
   preview: { gap: S.md, padding: S.lg, borderRadius: R.card + 4, borderCurve: 'continuous', backgroundColor: C.elevated, borderWidth: 1, borderColor: C.border },
-  lines: { gap: S.sm, paddingTop: S.md, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: C.borderStrong },
-  trust: { flexDirection: 'row', gap: S.sm, padding: S.md, borderRadius: R.card, borderCurve: 'continuous', backgroundColor: C.surface, borderWidth: 1, borderColor: C.border },
+  lines: { gap: S.sm, paddingTop: S.md, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: C.hairline },
+  trust: { flexDirection: 'row', gap: S.md, padding: 14, borderRadius: R.card, borderCurve: 'continuous', backgroundColor: 'rgba(47,107,235,0.08)', borderWidth: 1, borderColor: 'rgba(127,176,255,0.20)' },
   sectionIcon: { width: 36, height: 36, borderRadius: 11, borderCurve: 'continuous', alignItems: 'center', justifyContent: 'center', backgroundColor: C.accentSoft },
   count: { minWidth: 24, height: 22, paddingHorizontal: 7, borderRadius: R.pill, alignItems: 'center', justifyContent: 'center', backgroundColor: C.pill },
   addPill: { flexDirection: 'row', alignItems: 'center', gap: 4, minHeight: 34, paddingHorizontal: 12, borderRadius: R.pill, backgroundColor: C.accent },
   softPill: { backgroundColor: C.accentSoft, borderWidth: 1, borderColor: C.accentLine },
-  card: { borderRadius: R.card + 2, borderCurve: 'continuous', backgroundColor: C.surface, borderWidth: 1, borderColor: C.border, overflow: 'hidden' },
+  card: { borderRadius: R.card, borderCurve: 'continuous', backgroundColor: C.surface, borderWidth: 1, borderColor: C.border, overflow: 'hidden', boxShadow: SHADOW.inset },
+  emptyIcon: { width: 56, height: 56, borderRadius: 28, alignItems: 'center', justifyContent: 'center', backgroundColor: C.elevated, borderWidth: 1, borderColor: C.accentLine, boxShadow: `0px 0px 0px 8px rgba(47,107,235,0.10), ${SHADOW.inset}` },
   linkRow: { flexDirection: 'row', alignItems: 'center', gap: S.md, paddingVertical: S.md, paddingHorizontal: S.md, minHeight: 56 },
-  rowIcon: { width: 34, height: 34, borderRadius: 10, borderCurve: 'continuous', alignItems: 'center', justifyContent: 'center', backgroundColor: C.accentSoft },
-  line: { borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: C.borderStrong },
+  rowIcon: { width: 30, height: 30, borderRadius: 8, borderCurve: 'continuous', alignItems: 'center', justifyContent: 'center', backgroundColor: C.accentSoft },
+  inset: { position: 'absolute', left: S.md + 30 + S.md, right: 0, bottom: 0, height: StyleSheet.hairlineWidth, backgroundColor: C.hairline },
+  line: { borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: C.hairline },
 });

@@ -5,7 +5,8 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { StyleControls, SwitchLine } from '@/components/player/subtitles/StyleControls';
 import { StylePreview } from '@/components/player/subtitles/StylePreview';
 import { FLAG } from '@/components/language-prefs';
-import { FilterChip, Group, ScreenHeader } from '@/components/states';
+import { BAR_H, NavBar } from '@/components/screen';
+import { FilterChip, Group } from '@/components/states';
 import { Button, Txt } from '@/components/ui';
 import { prepareModel, statusOf, translationSupported, useTranslateStatuses } from '@/components/player/subtitles/translation';
 import { LANG_CODES, setSetting, useSettings } from '@/settings/settings';
@@ -26,10 +27,7 @@ export default function SubtitleSettings() {
   };
 
   return (
-    <View style={{ flex: 1, backgroundColor: C.bg }}>
-      <View style={{ paddingTop: insets.top + S.sm }}>
-        <ScreenHeader title="Sous-titres" />
-      </View>
+    <View style={{ flex: 1, backgroundColor: C.bg, paddingTop: insets.top + BAR_H }}>
       {/* The preview stays on screen while the options scroll under it. */}
       <View style={styles.preview}>
         <StylePreview prefs={prefs} />
@@ -45,16 +43,19 @@ export default function SubtitleSettings() {
             />
             {langs.map((l, i) => (
               <View key={l} style={styles.langRow}>
-                <Txt v="label" style={{ width: 22, color: C.text2 }}>{i + 1}.</Txt>
+                <View style={styles.rank}><Txt v="footnote" color={C.white} tabular style={{ fontWeight: '700' }}>{i + 1}</Txt></View>
                 <Txt v="label" style={{ flex: 1 }}>{FLAG[l] ? `${FLAG[l]}  ` : ''}{langName(l)}</Txt>
-                <Pressable disabled={i === 0} onPress={() => move(i, -1)} hitSlop={8} accessibilityRole="button" accessibilityLabel={`Monter ${langName(l)}`}>
-                  <Ionicons name="arrow-up" size={20} color={i === 0 ? C.border : C.accentText} />
+                <Pressable disabled={i === 0} onPress={() => move(i, -1)} hitSlop={4} accessibilityRole="button" accessibilityLabel={`Monter ${langName(l)}`}
+                  style={({ pressed }) => [styles.mini, pressed && { opacity: 0.6 }]}>
+                  <Ionicons name="chevron-up" size={18} color={i === 0 ? C.text3 : C.text} style={{ opacity: i === 0 ? 0.5 : 1 }} />
                 </Pressable>
-                <Pressable disabled={i === langs.length - 1} onPress={() => move(i, 1)} hitSlop={8} accessibilityRole="button" accessibilityLabel={`Descendre ${langName(l)}`}>
-                  <Ionicons name="arrow-down" size={20} color={i === langs.length - 1 ? C.border : C.accentText} />
+                <Pressable disabled={i === langs.length - 1} onPress={() => move(i, 1)} hitSlop={4} accessibilityRole="button" accessibilityLabel={`Descendre ${langName(l)}`}
+                  style={({ pressed }) => [styles.mini, pressed && { opacity: 0.6 }]}>
+                  <Ionicons name="chevron-down" size={18} color={i === langs.length - 1 ? C.text3 : C.text} style={{ opacity: i === langs.length - 1 ? 0.5 : 1 }} />
                 </Pressable>
-                <Pressable disabled={langs.length === 1} onPress={() => setLangs(langs.filter((x) => x !== l))} hitSlop={8} accessibilityRole="button" accessibilityLabel={`Retirer ${langName(l)}`}>
-                  <Ionicons name="close-circle" size={20} color={langs.length === 1 ? C.border : C.text2} />
+                <Pressable disabled={langs.length === 1} onPress={() => setLangs(langs.filter((x) => x !== l))} hitSlop={4} accessibilityRole="button" accessibilityLabel={`Retirer ${langName(l)}`}
+                  style={({ pressed }) => [styles.mini, pressed && { opacity: 0.6 }]}>
+                  <Ionicons name="close" size={18} color={langs.length === 1 ? C.text3 : C.text2} style={{ opacity: langs.length === 1 ? 0.5 : 1 }} />
                 </Pressable>
               </View>
             ))}
@@ -95,6 +96,7 @@ export default function SubtitleSettings() {
           Le décalage de synchro se règle pendant la lecture et est mémorisé par épisode.
         </Txt>
       </ScrollView>
+      <NavBar title="Sous-titres" alwaysSolid />
     </View>
   );
 }
@@ -130,8 +132,10 @@ function TranslationModels({ target }: { target: string }) {
 }
 
 const styles = StyleSheet.create({
-  preview: { paddingHorizontal: S.lg, paddingBottom: S.sm, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: C.border },
-  block: { gap: S.md, padding: S.lg },
-  langRow: { flexDirection: 'row', alignItems: 'center', gap: S.md, minHeight: 36 },
+  preview: { paddingHorizontal: S.lg, paddingTop: S.sm, paddingBottom: S.md, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: C.hairline },
+  block: { gap: S.md, padding: S.md },
+  langRow: { flexDirection: 'row', alignItems: 'center', gap: S.sm, minHeight: 44 },
+  rank: { width: 22, height: 22, borderRadius: 11, backgroundColor: C.accent, alignItems: 'center', justifyContent: 'center' },
+  mini: { width: 36, height: 36, borderRadius: 18, alignItems: 'center', justifyContent: 'center', backgroundColor: C.pill },
   wrap: { flexDirection: 'row', flexWrap: 'wrap', gap: S.sm },
 });

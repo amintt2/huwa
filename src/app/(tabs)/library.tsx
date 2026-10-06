@@ -1,21 +1,21 @@
 import Ionicons from '@expo/vector-icons/Ionicons';
 import * as Haptics from 'expo-haptics';
 import { router } from 'expo-router';
-import { useEffect, useState } from 'react';
 import { ScrollView, StyleSheet, View } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import ReanimatedSwipeable from 'react-native-gesture-handler/ReanimatedSwipeable';
-import Animated, { FadeInDown, FadeOutDown, LinearTransition } from 'react-native-reanimated';
+import Animated, { LinearTransition } from 'react-native-reanimated';
 
 import { STATUS_ICON } from '@/components/lists';
 import { FilterChip } from '@/components/states';
-import { Chip, Cover, Press, Progress, SectionHeader, Txt } from '@/components/ui';
+import { EmptyState, toast } from '@/components/feedback';
+import { Chip, Cover, Press, Progress, ScreenTitle, SectionHeader, Txt } from '@/components/ui';
 import { getSeries } from '@/data/catalog';
 import { useT } from '@/i18n';
 import { useContinueItems } from '@/store/derived';
 import { useLists, WATCH_STATUSES } from '@/store/lists';
-import { removeFromHistory, restoreHistory, useStore, type HistorySnapshot } from '@/store/store';
-import { C, F, R, S, kindColor } from '@/theme/tokens';
+import { removeFromHistory, restoreHistory, useStore } from '@/store/store';
+import { C, R, S, SHADOW, kindColor } from '@/theme/tokens';
 
 export default function Library() {
   const items = useContinueItems();
@@ -24,17 +24,12 @@ export default function Library() {
   const statuses = useLists((s) => s.status);
   const t = useT();
 
-  // Swipe left = remove from "En cours" (its progress); "Annuler" puts it back for 5 s.
-  const [undo, setUndo] = useState<{ title: string; snap: HistorySnapshot } | null>(null);
+  // Swipe left = remove from "En cours" (its progress); the toast's « Annuler » puts it back (5 s).
   const remove = (seriesId: string, kind: 'anime' | 'manhwa', title: string) => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-    setUndo({ title, snap: removeFromHistory(seriesId, kind) });
+    const snap = removeFromHistory(seriesId, kind);
+    toast({ text: `« ${title} » retiré de « En cours »`, icon: 'trash-outline', action: { label: 'Annuler', onPress: () => restoreHistory(snap) } });
   };
-  useEffect(() => {
-    if (!undo) return;
-    const id = setTimeout(() => setUndo(null), 5000);
-    return () => clearTimeout(id);
-  }, [undo]);
 
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
@@ -42,11 +37,13 @@ export default function Library() {
       style={{ flex: 1, backgroundColor: C.bg }}
       contentInsetAdjustmentBehavior="automatic"
       contentContainerStyle={{ paddingTop: S.sm, paddingBottom: S.xxl }}>
-      <Txt v="display" numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.6} style={{ fontSize: 28, paddingHorizontal: S.lg }}>Bibliothèque</Txt>
+      <ScreenTitle title="Bibliothèque" />
 
       <SectionHeader title="En cours" />
       <View style={{ paddingHorizontal: S.lg, gap: S.md }}>
-        {items.length === 0 && <Txt v="body">Rien en cours. Lance un épisode ou un chapitre.</Txt>}
+        {items.length === 0 && (
+          <EmptyState compact icon="play-circle-outline" title="Rien en cours" text="Lance un épisode ou un chapitre : tu le retrouveras ici, là où tu t’es arrêté." />
+        )}
         {items.map((it) => (
           <Animated.View key={it.key} layout={LinearTransition.duration(220)}>
             <ReanimatedSwipeable
@@ -54,32 +51,46 @@ export default function Library() {
               rightThreshold={72}
               overshootRight={false}
               renderRightActions={() => (
-                <View style={styles.swipeAction}>
+                <View style={styles.swipeAction} accessibilityElementsHidden>
                   <Ionicons name="trash-outline" size={20} color={C.white} />
-                  <Txt v="caption" color={C.white}>Retirer</Txt>
+                  <Txt v="footnote" color={C.white} style={{ fontWeight: '600' }}>Retirer</Txt>
                 </View>
               )}
               onSwipeableOpen={() => remove(it.series.id, it.kind, it.series.title)}>
-              <Press onPress={() => router.push(it.href)} style={styles.row}>
-                <Cover palette={it.series.palette} image={it.series.image} width={64} height={64} radius={12} />
+              <Press onPress={() => router.push(it.href)} style={styles.row}
+                accessibilityRole="button" accessibilityLabel={`${it.series.title}, ${it.label}, ${it.sub}`}
+                accessibilityActions={[{ name: 'delete', label: 'Retirer de « En cours »' }]}
+                onAccessibilityAction={(e) => e.nativeEvent.actionName === 'delete' && remove(it.series.id, it.kind, it.series.title)}>
+                <Cover palette={it.series.palette} image={it.series.image} width={56} height={78} radius={8} />
                 <View style={{ flex: 1, gap: 4 }}>
                   <View style={{ flexDirection: 'row', gap: 6, alignItems: 'center' }}>
-                    <Chip kind={it.bridged ? 'bridge' : it.kind} label={it.bridged ? 'SUITE DE L’ANIME' : undefined} />
+                    <Chip kind={it.bridged ? 'bridge' : it.kind} label={it.bridged ? 'Suite de l’anime' : undefined} />
                   </View>
                   <Txt v="label" numberOfLines={1}>{it.series.title}</Txt>
-                  <Txt v="small">{it.label} · {it.sub}</Txt>
-                  {it.progress > 0 && <Progress value={it.progress} color={kindColor(it.kind)} />}
+                  <Txt v="small" tabular numberOfLines={1}>{it.label} · {it.sub}</Txt>
+                  {it.progress > 0 && <View style={{ marginTop: 4 }}><Progress value={it.progress} color={kindColor(it.kind)} /></View>}
                 </View>
               </Press>
             </ReanimatedSwipeable>
           </Animated.View>
         ))}
-        {items.length > 0 && <Txt v="small" style={{ textAlign: 'center' }}>Glisse vers la gauche pour retirer une série.</Txt>}
+        {items.length > 0 && (
+          <Animated.View layout={LinearTransition.duration(220)}>
+            <Txt v="footnote" color={C.text3} style={{ textAlign: 'center' }}>Glisse vers la gauche pour retirer une série.</Txt>
+          </Animated.View>
+        )}
       </View>
+
+      {/* Moves with the list above when a row is removed or restored, instead of jumping. */}
+      <Animated.View layout={LinearTransition.duration(220)}>
 
       <SectionHeader title="Ma liste" />
       <View style={styles.grid}>
-        {myList.length === 0 && <Txt v="body">Ajoute des séries avec le bouton +.</Txt>}
+        {myList.length === 0 && (
+          <View style={{ flex: 1 }}>
+            <EmptyState compact icon="bookmark-outline" title="Ta liste est vide" text="Touche « Ma liste » sur la fiche d’une série pour la garder ici." />
+          </View>
+        )}
         {myList.map((id) => {
           const s = getSeries(id);
           if (!s) return null;
@@ -121,21 +132,8 @@ export default function Library() {
         ))}
         <FilterChip icon="add" label={t('lists.new')} selected={false} onPress={() => router.push('/lists')} />
       </View>
-    </ScrollView>
-    {undo && (
-      <Animated.View entering={FadeInDown.duration(180)} exiting={FadeOutDown.duration(160)} style={styles.toast}>
-        <Txt v="small" color={C.text} numberOfLines={1} style={{ flex: 1 }}>« {undo.title} » retiré de l’historique</Txt>
-        <Press
-          onPress={() => {
-            restoreHistory(undo.snap);
-            setUndo(null);
-          }}
-          hitSlop={10}
-          accessibilityRole="button">
-          <Txt v="label" color={C.accentText} style={{ fontSize: 14, ...F.bold }}>Annuler</Txt>
-        </Press>
       </Animated.View>
-    )}
+    </ScrollView>
     </GestureHandlerRootView>
   );
 }
@@ -145,12 +143,10 @@ const styles = StyleSheet.create({
     width: 96, marginLeft: S.sm, borderRadius: R.card, borderCurve: 'continuous', backgroundColor: '#D9434F',
     alignItems: 'center', justifyContent: 'center', gap: 4,
   },
-  toast: {
-    position: 'absolute', left: S.lg, right: S.lg, bottom: 104, flexDirection: 'row', alignItems: 'center', gap: S.md,
-    paddingHorizontal: S.lg, paddingVertical: 14, borderRadius: R.card, borderCurve: 'continuous',
-    backgroundColor: C.elevated, borderWidth: 1, borderColor: C.borderStrong,
+  row: {
+    flexDirection: 'row', alignItems: 'center', gap: S.md, padding: S.sm, paddingRight: S.md, borderRadius: R.card, borderCurve: 'continuous',
+    backgroundColor: C.surface, borderWidth: 1, borderColor: C.border, boxShadow: SHADOW.inset,
   },
-  row: { flexDirection: 'row', alignItems: 'center', gap: S.md, padding: 10, borderRadius: 16, backgroundColor: C.surface },
   grid: { flexDirection: 'row', flexWrap: 'wrap', gap: S.md, paddingHorizontal: S.lg },
   dot: { width: 7, height: 7, borderRadius: 4 },
   wrap: { flexDirection: 'row', flexWrap: 'wrap', gap: S.sm, paddingHorizontal: S.lg },

@@ -1,29 +1,21 @@
 // Shared screen chrome and states: header with back button, empty / error / offline states,
 // offline banner, selectable filter chips and settings rows.
 import Ionicons from '@expo/vector-icons/Ionicons';
-import { router } from 'expo-router';
-import type { ReactNode } from 'react';
-import { ActivityIndicator, Pressable, StyleSheet, View } from 'react-native';
-import Animated, { FadeIn, FadeOut } from 'react-native-reanimated';
+import { useEffect, useState, type ReactNode } from 'react';
+import { ActivityIndicator, Pressable, StyleSheet, View, type StyleProp, type ViewStyle } from 'react-native';
+import Animated, { Easing, FadeIn, FadeOut, useAnimatedStyle, useReducedMotion, useSharedValue, withTiming } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { useT } from '@/i18n';
 import { useOnline } from '@/settings/network';
-import { C, F, R, S } from '@/theme/tokens';
+import { C, F, R, S, SHADOW } from '@/theme/tokens';
 
-import { Button, IconButton, Txt, type IconName } from './ui';
+import { EmptyState } from './feedback';
+import { Group as SocialGroup, Row as SocialRow } from './social';
+import { Txt, haptic, type IconName } from './ui';
 
-/** Title row for pushed screens (no native header in this app). */
-export function ScreenHeader({ title, right }: { title: string; right?: ReactNode }) {
-  const t = useT();
-  return (
-    <View style={styles.header}>
-      <IconButton icon="chevron-back" label={t('common.back')} onPress={() => router.back()} />
-      <Txt v="display" style={{ fontSize: 26, flex: 1 }} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.6}>{title}</Txt>
-      {right}
-    </View>
-  );
-}
+/** Title row for pushed screens (static). Prefer `Screen` from components/screen. */
+export { ScreenHeader } from './social';
 
 /** Centered empty / error state with an optional action. */
 export function StateView({
@@ -33,6 +25,7 @@ export function StateView({
   action,
   onAction,
   compact,
+  actionIcon = 'refresh',
 }: {
   icon: IconName;
   title: string;
@@ -40,17 +33,9 @@ export function StateView({
   action?: string;
   onAction?: () => void;
   compact?: boolean;
+  actionIcon?: IconName;
 }) {
-  return (
-    <View style={[styles.state, compact && { paddingVertical: S.xl }]} accessibilityRole="summary">
-      <View style={styles.stateIcon}>
-        <Ionicons name={icon} size={26} color={C.accentText} />
-      </View>
-      <Txt v="label" style={{ textAlign: 'center' }}>{title}</Txt>
-      {!!body && <Txt v="small" style={{ textAlign: 'center', maxWidth: 300 }}>{body}</Txt>}
-      {action && onAction && <Button small variant="soft" label={action} icon="refresh" onPress={onAction} style={{ marginTop: S.sm }} />}
-    </View>
-  );
+  return <EmptyState icon={icon} title={title} text={body} action={action} onAction={onAction} actionIcon={actionIcon} compact={compact} />;
 }
 
 export function LoadingView() {
@@ -99,7 +84,7 @@ export function FilterChip({ label, selected, onPress, icon }: { label: string; 
       accessibilityRole="button"
       accessibilityState={{ selected }}
       hitSlop={4}
-      style={[styles.fchip, selected && { backgroundColor: C.accentSoft, borderColor: C.accentLine }]}>
+      style={({ pressed }) => [styles.fchip, selected && { backgroundColor: C.accentSoft, borderColor: C.accentLine }, pressed && { opacity: 0.7 }]}>
       {icon && <Ionicons name={icon} size={13} color={selected ? C.accentText : C.text2} />}
       <Txt v="small" color={selected ? C.accentText : C.body} numberOfLines={1} maxFontSizeMultiplier={1.6}
         style={{ fontSize: 13, flexShrink: 1, ...F.semibold }}>{label}</Txt>
@@ -107,69 +92,104 @@ export function FilterChip({ label, selected, onPress, icon }: { label: string; 
   );
 }
 
-/** Grouped card for settings-like rows. */
-export function Group({ title, children }: { title?: string; children: ReactNode }) {
-  return (
-    <View style={{ gap: S.sm }}>
-      {title && <Txt v="caption" style={{ paddingHorizontal: 4 }}>{title}</Txt>}
-      <View style={styles.group}>{children}</View>
-    </View>
-  );
+/** Grouped card for settings-like rows — the same component as the social screens'. */
+export function Group({ title, footer, children }: { title?: string; footer?: ReactNode; children: ReactNode }) {
+  return <SocialGroup title={title} footer={footer}>{children}</SocialGroup>;
 }
 
 export function Row({
-  icon,
-  label,
   hint,
   right,
   onPress,
-  last,
-  destructive,
+  ...rest
 }: {
   icon?: IconName;
   label: string;
   hint?: string;
+  value?: string;
   right?: ReactNode;
   onPress?: () => void;
   last?: boolean;
   destructive?: boolean;
 }) {
-  const body = (
-    <View style={[styles.row, !last && styles.rowLine]}>
-      {icon && <Ionicons name={icon} size={20} color={destructive ? '#FF6B6B' : C.accentText} />}
-      <View style={{ flex: 1, gap: 2 }}>
-        <Txt v="label" color={destructive ? '#FF6B6B' : C.text}>{label}</Txt>
-        {!!hint && <Txt v="small" style={{ fontSize: 12 }}>{hint}</Txt>}
-      </View>
-      {right ?? (onPress ? <Ionicons name="chevron-forward" size={16} color={C.text2} /> : null)}
-    </View>
-  );
-  return onPress ? (
-    <Pressable onPress={onPress} accessibilityRole="button" accessibilityLabel={label} style={({ pressed }) => pressed && { opacity: 0.6 }}>
-      {body}
-    </Pressable>
-  ) : (
-    body
-  );
+  return <SocialRow {...rest} detail={hint} right={right} onPress={onPress} chevron={!!onPress && !right} />;
 }
 
 const styles = StyleSheet.create({
-  header: { flexDirection: 'row', alignItems: 'center', gap: S.md, paddingHorizontal: S.lg, paddingBottom: S.md },
   state: { alignItems: 'center', justifyContent: 'center', gap: S.sm, paddingVertical: 56, paddingHorizontal: S.xl },
-  stateIcon: {
-    width: 56, height: 56, borderRadius: 28, alignItems: 'center', justifyContent: 'center',
-    backgroundColor: C.accentSoft, borderWidth: 1, borderColor: C.accentLine, marginBottom: S.xs,
-  },
   banner: {
     position: 'absolute', alignSelf: 'center', flexDirection: 'row', alignItems: 'center', gap: 6,
     paddingVertical: 6, paddingHorizontal: 12, borderRadius: R.pill,
     backgroundColor: 'rgba(20,27,43,0.95)', borderWidth: 1, borderColor: C.borderStrong,
   },
   fchip: {
-    flexDirection: 'row', alignItems: 'center', gap: 5, minHeight: 34,
-    paddingHorizontal: 12, borderRadius: R.pill, backgroundColor: C.surface, borderWidth: 1, borderColor: C.border,
+    flexDirection: 'row', alignItems: 'center', gap: 6, minHeight: 36,
+    paddingHorizontal: 14, borderRadius: R.pill, backgroundColor: C.surface, borderWidth: 1, borderColor: C.border,
+    boxShadow: SHADOW.inset,
   },
-  group: { borderRadius: R.card, borderCurve: 'continuous', backgroundColor: C.surface, borderWidth: 1, borderColor: C.border, overflow: 'hidden' },
-  row: { flexDirection: 'row', alignItems: 'center', gap: S.md, minHeight: 52, paddingVertical: 10, paddingHorizontal: S.lg },
-  rowLine: { borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: C.border },
+  seg: {
+    flexDirection: 'row', padding: 2, minHeight: 40, borderRadius: 10, borderCurve: 'continuous',
+    backgroundColor: 'rgba(255,255,255,0.06)', borderWidth: 1, borderColor: C.pillLine,
+  },
+  segThumb: {
+    position: 'absolute', top: 2, bottom: 2, left: 2, borderRadius: 8, borderCurve: 'continuous',
+    backgroundColor: C.elevated, borderWidth: 1, borderColor: 'rgba(255,255,255,0.10)',
+    boxShadow: `0px 1px 3px rgba(0,0,0,0.5), ${SHADOW.inset}`,
+  },
+  segItem: { flex: 1, minHeight: 36, alignItems: 'center', justifyContent: 'center', paddingHorizontal: S.sm },
 });
+
+/**
+ * Segmented control (2–5 short options): a track with a thumb that slides to the selection
+ * (220 ms strong ease-out; Reduce Motion: no slide). Selection haptic on change.
+ */
+export function Segmented<T extends string>({
+  options,
+  value,
+  onChange,
+  accessibilityLabel,
+  style,
+}: {
+  options: { value: T; label: string }[];
+  value: T;
+  onChange: (v: T) => void;
+  accessibilityLabel?: string;
+  style?: StyleProp<ViewStyle>;
+}) {
+  const reduce = useReducedMotion();
+  const [w, setW] = useState(0);
+  const idx = Math.max(0, options.findIndex((o) => o.value === value));
+  const seg = w ? (w - 4) / options.length : 0;
+  const x = useSharedValue(idx * seg);
+  useEffect(() => {
+    x.set(reduce || !seg ? idx * seg : withTiming(idx * seg, { duration: 220, easing: Easing.bezier(0.23, 1, 0.32, 1) }));
+  }, [idx, seg, reduce, x]);
+  const thumb = useAnimatedStyle(() => ({ transform: [{ translateX: x.get() }] }));
+  return (
+    <View
+      accessibilityRole="tablist"
+      accessibilityLabel={accessibilityLabel}
+      onLayout={(e) => setW(e.nativeEvent.layout.width)}
+      style={[styles.seg, style]}>
+      {seg > 0 && <Animated.View pointerEvents="none" style={[styles.segThumb, { width: seg }, thumb]} />}
+      {options.map((o) => {
+        const on = o.value === value;
+        return (
+          <Pressable
+            key={o.value}
+            onPress={() => {
+              if (on) return;
+              haptic('select');
+              onChange(o.value);
+            }}
+            accessibilityRole="tab"
+            accessibilityState={{ selected: on }}
+            accessibilityLabel={o.label}
+            style={styles.segItem}>
+            <Txt v="small" numberOfLines={1} maxFontSizeMultiplier={1.5} color={on ? C.text : C.text2} style={{ ...F.semibold, fontSize: 13 }}>{o.label}</Txt>
+          </Pressable>
+        );
+      })}
+    </View>
+  );
+}

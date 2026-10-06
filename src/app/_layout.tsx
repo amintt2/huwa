@@ -7,7 +7,8 @@ import { DarkTheme, Stack, ThemeProvider, router } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
 import { StatusBar } from 'expo-status-bar';
 import { useEffect, useState } from 'react';
-import { AppState } from 'react-native';
+import { AppState, LogBox, Platform } from 'react-native';
+import { FullWindowOverlay } from 'react-native-screens';
 
 import { hydrateAddons } from '@/addons/registry';
 import { isStoreBuild } from '@/config/channel';
@@ -16,6 +17,7 @@ import { registerNativeTorrentEngine } from '@/torrent/register';
 import { Onboarding } from '@/components/onboarding';
 import { PresearchHost } from '@/components/presearch';
 import { DownloadsHost } from '@/downloads/host';
+import { ToastHost } from '@/components/feedback';
 import { OfflineBanner } from '@/components/states';
 import { loadCatalog } from '@/data/anilist';
 import { installMappingOverlay } from '@/data/mapping-overlay';
@@ -36,6 +38,12 @@ import { C } from '@/theme/tokens';
 
 finishPendingDeletion();
 SplashScreen.preventAutoHideAsync();
+
+// Not ours: React Native 0.86's useAnimatedProps keeps a no-op listener on native-driven values
+// (react-native-screens' transition progress, the native stack's animated header height) and
+// removes it on unmount while native updates are still in flight. Harmless, dev-only; it raised
+// the « Open debugger to view warnings » toast on every navigation.
+LogBox.ignoreLogs(['Sending `onAnimatedValueUpdate` with no listeners registered']);
 
 // Any crash below the root shows a friendly screen with « Réessayer » (see error-screen.tsx).
 export { ErrorScreen as ErrorBoundary } from '@/components/error-screen';
@@ -184,6 +192,14 @@ export default function RootLayout() {
       <CloudflareSheet />
       {me ? <PresearchHost /> : null}
       {me ? <DownloadsHost /> : null}
+      {/* Above native modals and form sheets too (iOS). */}
+      {Platform.OS === 'ios' ? (
+        <FullWindowOverlay>
+          <ToastHost />
+        </FullWindowOverlay>
+      ) : (
+        <ToastHost />
+      )}
     </ThemeProvider>
   );
 }

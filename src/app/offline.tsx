@@ -3,7 +3,7 @@
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { router } from 'expo-router';
 import { useState } from 'react';
-import { Alert, FlatList, Pressable, StyleSheet, Switch, View } from 'react-native';
+import { Alert, FlatList, Pressable, StyleSheet, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { bySeries } from '@/components/reader/download-queue';
@@ -28,7 +28,10 @@ import {
 import { Cover, IconButton, Press, Progress, Txt } from '@/components/ui';
 import { palette } from '@/data/anilist';
 import { getChapter, getSeries } from '@/data/catalog';
-import { C, F, R, S } from '@/theme/tokens';
+import { EmptyState } from '@/components/feedback';
+import { BAR_H, LargeTitle, NavBar, useScreenScroll } from '@/components/screen';
+import { Group, PillAction, SwitchRow } from '@/components/social';
+import { C, F, R, S, SHADOW } from '@/theme/tokens';
 
 function ChapterRow({ e, blocked }: { e: DownloadEntry; blocked: QueueBlock }) {
   const found = getChapter(e.chapterId);
@@ -38,7 +41,7 @@ function ChapterRow({ e, blocked }: { e: DownloadEntry; blocked: QueueBlock }) {
     <Press onPress={() => found && router.push(`/read/${e.chapterId}`)} style={styles.chapter} accessibilityLabel={`Chapitre ${found?.chapter.number ?? ''}, ${status}`}>
       <View style={{ flex: 1, gap: 3 }}>
         <Txt v="label" style={{ fontSize: 14 }} numberOfLines={1}>{found ? `Chapitre ${found.chapter.number}` : e.chapterId}</Txt>
-        <Txt v="small" style={{ fontSize: 12 }} color={e.status === 'error' ? '#FF8A8A' : C.text2} numberOfLines={1}>{status}</Txt>
+        <Txt v="footnote" tabular color={e.status === 'error' ? C.danger : C.text2} numberOfLines={1}>{status}</Txt>
         {e.status === 'downloading' && e.total > 0 && <Progress value={e.saved / e.total} color={C.accent} />}
       </View>
       {(busy || e.status === 'paused' || e.status === 'error') && (
@@ -100,20 +103,9 @@ function SeriesCard({ g, blocked }: { g: SeriesDownloads; blocked: QueueBlock })
   );
 }
 
-function Toggle({ label, sub, value, onChange }: { label: string; sub?: string; value: boolean; onChange: (v: boolean) => void }) {
-  return (
-    <View style={styles.toggle}>
-      <View style={{ flex: 1, gap: 2 }}>
-        <Txt v="label" style={{ fontSize: 14 }}>{label}</Txt>
-        {!!sub && <Txt v="small" style={{ fontSize: 12 }}>{sub}</Txt>}
-      </View>
-      <Switch value={value} onValueChange={onChange} trackColor={{ true: C.accent }} accessibilityLabel={label} />
-    </View>
-  );
-}
-
 export default function OfflineChapters() {
   const insets = useSafeAreaInsets();
+  const { y } = useScreenScroll();
   const all = useDownloads();
   const { prefs, blocked } = useDownloadQueue();
   const groups = bySeries(all);
@@ -123,47 +115,33 @@ export default function OfflineChapters() {
   const paused = groups.reduce((n, g) => n + g.paused, 0);
 
   return (
-    <View style={{ flex: 1, backgroundColor: C.bg, paddingTop: insets.top }}>
-      <View style={styles.head}>
-        <IconButton icon="chevron-back" label="Retour" onPress={() => router.back()} />
-        <View style={{ flex: 1 }}>
-          <Txt v="title">Téléchargements</Txt>
-          <Txt v="small">
-            {done} chapitre{done > 1 ? 's' : ''} hors-ligne · {formatBytes(bytes)}
-          </Txt>
-        </View>
-        {groups.length > 0 && (
-          <IconButton
-            icon="trash-outline"
-            label="Tout supprimer"
-            onPress={() =>
-              Alert.alert('Tout supprimer ?', 'Les chapitres téléchargés seront effacés de l’appareil.', [
-                { text: 'Annuler', style: 'cancel' },
-                { text: 'Supprimer', style: 'destructive', onPress: removeAllDownloads },
-              ])
-            }
-          />
-        )}
-      </View>
+    <View style={{ flex: 1, backgroundColor: C.bg }}>
       <FlatList
         data={groups}
         keyExtractor={(g) => g.seriesId}
         renderItem={({ item }) => <SeriesCard g={item} blocked={blocked} />}
-        contentContainerStyle={{ padding: S.lg, gap: S.md, paddingBottom: insets.bottom + S.xl }}
+        onScroll={(e) => y.set(e.nativeEvent.contentOffset.y)}
+        scrollEventThrottle={16}
+        contentContainerStyle={{ paddingTop: insets.top + BAR_H, paddingHorizontal: S.lg, gap: S.md, paddingBottom: insets.bottom + S.xl }}
         ListHeaderComponent={
           <View style={{ gap: S.md, paddingBottom: S.sm }}>
+            <LargeTitle
+              title="Chapitres hors ligne"
+              subtitle={`${done} chapitre${done > 1 ? 's' : ''} · ${formatBytes(bytes)}`}
+              style={{ paddingHorizontal: 0, paddingBottom: S.sm }}
+            />
             {downloadsSupported && (
-              <View style={styles.card}>
-                <Toggle label="Wi-Fi uniquement" sub="Les téléchargements attendent une connexion Wi-Fi." value={prefs.wifiOnly} onChange={(v) => setDownloadPref('wifiOnly', v)} />
-                <View style={styles.sep} />
-                <Toggle
-                  label={`Télécharger automatiquement les ${prefs.autoCount} chapitres suivants sur Wi-Fi`}
-                  sub="Quand tu ouvres un chapitre, les suivants sont gardés pour la lecture hors-ligne."
+              <Group footer="Les pages sont gardées dans leur format d’origine (JPEG, WebP…), sans perte.">
+                <SwitchRow icon="wifi-outline" label="Wi-Fi uniquement" detail="Les téléchargements attendent une connexion Wi-Fi." value={prefs.wifiOnly} onChange={(v) => setDownloadPref('wifiOnly', v)} />
+                <SwitchRow
+                  icon="albums-outline"
+                  label={`Télécharger les ${prefs.autoCount} chapitres suivants`}
+                  detail="Sur Wi-Fi, quand tu ouvres un chapitre, les suivants sont gardés pour la lecture hors ligne."
                   value={prefs.autoNext}
                   onChange={(v) => setDownloadPref('autoNext', v)}
+                  last
                 />
-                <Txt v="small" style={{ fontSize: 11 }}>Les pages sont gardées dans leur format d’origine (JPEG, WebP…), sans perte.</Txt>
-              </View>
+              </Group>
             )}
             {(active > 0 || paused > 0) && (
               <View style={[styles.card, { flexDirection: 'row', alignItems: 'center', gap: S.md }]}>
@@ -173,23 +151,42 @@ export default function OfflineChapters() {
                   {active && paused ? ' · ' : ''}
                   {paused ? `${paused} en pause` : ''}
                 </Txt>
-                <Pressable onPress={active ? pauseAll : resumeAll} hitSlop={8} accessibilityRole="button">
-                  <Txt v="small" color={C.accentText} style={F.semibold}>{active ? 'Tout mettre en pause' : 'Tout reprendre'}</Txt>
-                </Pressable>
+                <PillAction label={active ? 'Tout en pause' : 'Tout reprendre'} icon={active ? 'pause' : 'play'} onPress={active ? pauseAll : resumeAll} />
               </View>
             )}
           </View>
         }
         ListEmptyComponent={
-          <View style={styles.empty}>
-            <Ionicons name="cloud-download-outline" size={40} color={C.text2} />
-            <Txt v="label">Aucun chapitre hors-ligne</Txt>
-            <Txt v="body" style={{ textAlign: 'center' }}>
-              {downloadsSupported
+          <EmptyState
+            icon="cloud-download-outline"
+            title="Aucun chapitre hors ligne"
+            text={
+              downloadsSupported
                 ? 'Sur la page d’un manhwa, touche l’icône de téléchargement d’un chapitre, ou télécharge les suivants d’un coup.'
-                : 'Le téléchargement n’est pas disponible sur le web.'}
-            </Txt>
-          </View>
+                : 'Le téléchargement n’est pas disponible sur le web.'
+            }
+          />
+        }
+      />
+      <NavBar
+        title="Chapitres hors ligne"
+        y={y}
+        right={
+          <>
+            {groups.length > 0 && (
+          <IconButton
+            icon="trash-outline"
+            label="Tout supprimer"
+            size={40}
+            onPress={() =>
+              Alert.alert('Tout supprimer ?', 'Les chapitres téléchargés seront effacés de l’appareil.', [
+                    { text: 'Annuler', style: 'cancel' },
+                    { text: 'Supprimer', style: 'destructive', onPress: removeAllDownloads },
+              ])
+            }
+          />
+            )}
+          </>
         }
       />
     </View>
@@ -198,7 +195,7 @@ export default function OfflineChapters() {
 
 const styles = StyleSheet.create({
   head: { flexDirection: 'row', alignItems: 'center', gap: S.md, paddingHorizontal: S.lg, paddingVertical: S.md },
-  card: { gap: S.md, padding: S.md, borderRadius: R.card, borderCurve: 'continuous', backgroundColor: C.surface, borderWidth: 1, borderColor: C.border },
+  card: { gap: S.md, padding: S.md, borderRadius: R.card, borderCurve: 'continuous', backgroundColor: C.surface, borderWidth: 1, borderColor: C.border, boxShadow: SHADOW.inset },
   cardHead: { flexDirection: 'row', alignItems: 'center', gap: S.md },
   chapter: { flexDirection: 'row', alignItems: 'center', gap: S.sm, paddingVertical: S.sm, paddingHorizontal: S.sm, borderRadius: R.control, backgroundColor: C.elevated },
   toggle: { flexDirection: 'row', alignItems: 'center', gap: S.md },

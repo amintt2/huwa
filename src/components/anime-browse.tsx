@@ -36,6 +36,7 @@ import { C, F, R, S } from '@/theme/tokens';
 import { ContinueCard } from './cards';
 import { ChipGroup, FilterPills, FilterSection, FilterSheet, SearchFilterBar, Stepper } from './filter-sheet';
 import { gridRowLayout, PosterTile, Rail, RailHeader, useGridTile } from './rails';
+import { EmptyState, SkeletonPosters } from './feedback';
 import { Button, ScreenTitle, Txt } from './ui';
 
 const THIS_YEAR = new Date().getFullYear();
@@ -181,17 +182,20 @@ export function AnimeGrid({
       renderItem={({ item }) => <AnimeTile item={item} width={tileW} />}
       ListEmptyComponent={
         res.loading ? (
-          <ActivityIndicator color={C.text2} style={{ marginTop: S.xxl }} />
+          <View style={{ paddingHorizontal: S.lg }}>
+            <SkeletonPosters count={9} width={tileW} height={Math.round(tileW * 1.42)} />
+          </View>
         ) : (
-          <View style={styles.empty}>
-            <Txt v="label">{res.error ? 'Recherche impossible' : 'Aucun résultat'}</Txt>
-            <Txt v="small" style={{ textAlign: 'center' }}>{res.error ? 'Vérifie ta connexion.' : pills.length ? 'Essaie d’enlever un filtre.' : 'Essaie un autre titre, ou son nom anglais ou japonais.'}</Txt>
+          <EmptyState
+            icon={res.error ? 'cloud-offline-outline' : 'search-outline'}
+            title={res.error ? 'Recherche impossible' : 'Aucun résultat'}
+            text={res.error ? 'Vérifie ta connexion.' : pills.length ? 'Essaie d’enlever un filtre.' : 'Essaie un autre titre, ou son nom anglais ou japonais.'}>
             {res.error ? (
               <Button small variant="soft" icon="refresh" label="Réessayer" onPress={res.reload} />
             ) : pills.length ? (
-              <Button small variant="soft" label="Effacer les filtres" onPress={onReset} />
+              <Button small variant="soft" icon="close" label="Effacer les filtres" onPress={onReset} />
             ) : null}
-          </View>
+          </EmptyState>
         )
       }
       ListFooterComponent={res.loading && res.items.length ? <ActivityIndicator color={C.text2} style={{ marginVertical: S.lg }} /> : null}

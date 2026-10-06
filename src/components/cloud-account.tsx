@@ -13,7 +13,7 @@ import { social } from '@/p2p/hooks';
 import { hintLabel, type AccountHint } from '@/p2p/passkey-core';
 import { requestPasskeyOffer } from '@/p2p/passkey';
 import { isValidPhrase } from '@/social/identity';
-import { C, F, R, S } from '@/theme/tokens';
+import { C, F, R, S, SHADOW } from '@/theme/tokens';
 
 import { Avatar, DANGER } from './social';
 import { Button, Txt } from './ui';
@@ -101,7 +101,7 @@ export function CloudAccountCard({
         </View>
       </View>
       {error ? <Txt v="small" color={DANGER}>{error}</Txt> : null}
-      <Button label={busy ? 'Connexion…' : offline ? 'Réessayer' : label.action} icon="log-in-outline" onPress={restore} />
+      <Button label={offline ? 'Réessayer' : label.action} loading={busy} icon="log-in-outline" onPress={restore} />
       <Pressable
         onPress={() => setDismissed(true)}
         disabled={busy}
@@ -117,7 +117,7 @@ export function CloudAccountCard({
 const styles = StyleSheet.create({
   card: {
     gap: S.md, padding: S.lg, borderRadius: R.card, borderCurve: 'continuous',
-    backgroundColor: C.surface, borderWidth: 1, borderColor: C.accentLine,
+    backgroundColor: '#0F1A33', borderWidth: 1, borderColor: C.accentLine, boxShadow: `${SHADOW.raised}, ${SHADOW.inset}`,
   },
   icon: { width: 44, height: 44, borderRadius: 22, backgroundColor: C.accentSoft, alignItems: 'center', justifyContent: 'center' },
 });
