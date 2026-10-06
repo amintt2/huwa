@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
 import { PROVIDERS } from '../providers';
-import { registerTorrentResolver, resolveCacheKey, resolveTorrent, resolveTorrentViaDebrid } from '../resolve';
+import { registerTorrentResolver, resolveCacheKey, resolveTorrent, resolveTorrentViaDebrid, torrentResolverLabel } from '../resolve';
 import { clearDebrid, saveDebridKey } from '../store';
 
 test('cache key covers resolver, file and episode', () => {
@@ -44,3 +44,18 @@ test('season pack episodes, account switch and native URLs are never mixed up', 
   assert.equal((await resolveTorrent(pack)).url, 'http://127.0.0.1:1/x/2', 'native URLs are not cached');
   off();
 });
+
+test('the resolver label follows the engine being switched on / off (no debrid)', async () => {
+  // Regression: after "Activer le moteur torrent" the open episode kept a null label, so its
+  // torrents stayed unplayable and the torrent race never started until the screen was left.
+  await clearDebrid();
+  let on = false;
+  assert.equal(torrentResolverLabel(), null);
+  const off = registerTorrentResolver({ id: 'huwa-torrent', label: 'moteur Huwa', available: () => on, resolve: async () => 'http://127.0.0.1/x' });
+  assert.equal(torrentResolverLabel(), null, 'registered but switched off');
+  on = true;
+  assert.equal(torrentResolverLabel(), 'moteur Huwa');
+  off();
+  assert.equal(torrentResolverLabel(), null);
+});
+

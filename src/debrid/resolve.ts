@@ -24,17 +24,14 @@ export type TorrentResolver = {
 
 const extra: TorrentResolver[] = [];
 const listeners = new Set<() => void>();
-let version = 0;
 
 /** Plug an additional resolver (native engine). Returns an unregister function. */
 export function registerTorrentResolver(r: TorrentResolver) {
   extra.push(r);
-  version++;
   listeners.forEach((l) => l());
   return () => {
     const i = extra.indexOf(r);
     if (i >= 0) extra.splice(i, 1);
-    version++;
     listeners.forEach((l) => l());
   };
 }
@@ -114,18 +111,33 @@ export async function resolveTorrentViaDebrid(t: TorrentRef, signal?: AbortSigna
   return { url: cached(r, t) ?? (await resolveWith(r, t, signal)), via: r.label };
 }
 
-/** Label of the first resolver ("TorBox"), or null when torrents cannot be played. */
+/** Label of the first resolver that can play torrents right now ("TorBox", "moteur Huwa"), or null. */
+export function torrentResolverLabel(): string | null {
+  const d = getDebrid();
+  if (d) return d.provider.name;
+  for (const r of extra) if (r.available()) return r.label;
+  return null;
+}
+
+/** Resolvers registered / removed, or the debrid account changed. */
+const subscribeResolvers = (l: () => void) => {
+  listeners.add(l);
+  const off = subscribeDebrid(l);
+  return () => {
+    listeners.delete(l);
+    off();
+  };
+};
+
+/**
+ * Label of the first resolver ("TorBox"), or null when torrents cannot be played. The label
+ * itself is the store snapshot: the native engine registering itself after "Activer le moteur
+ * torrent" re-renders every source list at once (it used to stay null on the open episode until
+ * the screen was left, so the torrent race never started).
+ */
 export function useTorrentResolver(): string | null {
-  const { provider } = useDebrid();
-  useSyncExternalStore(
-    (l) => {
-      listeners.add(l);
-      return () => listeners.delete(l);
-    },
-    () => version,
-    () => version,
-  );
-  return provider?.name ?? extra.find((r) => r.available())?.label ?? null;
+  useDebrid(); // loads the saved debrid account on first use
+  return useSyncExternalStore(subscribeResolvers, torrentResolverLabel, torrentResolverLabel);
 }
 
 /** Instant-availability map (hash → cached) when the provider supports it. */
