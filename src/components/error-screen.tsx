@@ -9,7 +9,7 @@ import { Platform, ScrollView, Share, StyleSheet, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { flushPendingWrites } from '@/store/persist';
-import { C, R, S } from '@/theme/tokens';
+import { C, R, S, SHADOW } from '@/theme/tokens';
 
 import { Button, Txt } from './ui';
 
@@ -48,7 +48,7 @@ export function ErrorScreen({ error, retry }: ErrorBoundaryProps) {
         {router.canGoBack() && <Button variant="ghost" label="Revenir en arrière" icon="chevron-back" onPress={() => router.back()} />}
       </View>
       <View style={styles.detail}>
-        <Txt v="small" selectable style={{ fontSize: 12, lineHeight: 17 }} numberOfLines={8}>
+        <Txt v="footnote" color={C.text3} selectable style={{ lineHeight: 17, fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace' }} numberOfLines={8}>
           {`${error.name}: ${error.message}`}
         </Txt>
       </View>
@@ -57,6 +57,9 @@ export function ErrorScreen({ error, retry }: ErrorBoundaryProps) {
 }
 
 const styles = StyleSheet.create({
-  icon: { alignSelf: 'center', width: 56, height: 56, borderRadius: 28, backgroundColor: C.accentSoft, alignItems: 'center', justifyContent: 'center' },
-  detail: { padding: S.md, borderRadius: R.card, backgroundColor: C.surface, borderWidth: 1, borderColor: C.border },
+  icon: {
+    alignSelf: 'center', width: 64, height: 64, borderRadius: 32, alignItems: 'center', justifyContent: 'center', marginBottom: S.xs,
+    backgroundColor: C.elevated, borderWidth: 1, borderColor: C.accentLine, boxShadow: `0px 0px 0px 10px rgba(47,107,235,0.10), ${SHADOW.inset}`,
+  },
+  detail: { padding: S.md, borderRadius: R.control, borderCurve: 'continuous', backgroundColor: C.surface, borderWidth: 1, borderColor: C.border },
 });

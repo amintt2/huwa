@@ -1,16 +1,18 @@
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { router, useLocalSearchParams } from 'expo-router';
 import { useState } from 'react';
-import { ScrollView, StyleSheet, TextInput, View } from 'react-native';
+import { ScrollView, StyleSheet, View } from 'react-native';
 
 import { STATUS_ICON } from '@/components/lists';
+import { SheetTitle } from '@/components/screen';
+import { Field } from '@/components/social';
 import { FilterChip, Group, Row } from '@/components/states';
 import { Button, Txt } from '@/components/ui';
 import { getSeries } from '@/data/catalog';
 import { useT } from '@/i18n';
 import { createList, setWatchStatus, toggleInList, useLists, WATCH_STATUSES } from '@/store/lists';
 import { toggleMyList, useStore } from '@/store/store';
-import { C, F, R, S } from '@/theme/tokens';
+import { C, S } from '@/theme/tokens';
 
 /** Sheet opened from a series page: status + "Ma liste" + custom lists. */
 export default function ListPicker() {
@@ -30,18 +32,17 @@ export default function ListPicker() {
   };
 
   const check = (on: boolean) => (
-    <Ionicons name={on ? 'checkmark-circle' : 'ellipse-outline'} size={24} color={on ? C.accentText : C.text2} />
+    <Ionicons name={on ? 'checkmark-circle' : 'ellipse-outline'} size={24} color={on ? C.accentText : C.text3} />
   );
 
   return (
-    <ScrollView style={{ flex: 1, backgroundColor: C.surface }} keyboardShouldPersistTaps="handled" contentContainerStyle={{ padding: S.lg, paddingTop: S.xl, gap: S.xl }}>
-      <View style={{ gap: 4 }}>
-        <Txt v="caption">{t('lists.addTo')}</Txt>
-        <Txt v="title" numberOfLines={2}>{series?.title ?? ''}</Txt>
-      </View>
-
+    // Form sheet: the header lives inside the ScrollView.
+    <ScrollView style={{ flex: 1, backgroundColor: C.surface }} keyboardShouldPersistTaps="handled" automaticallyAdjustKeyboardInsets
+      contentContainerStyle={{ paddingBottom: S.xxl }}>
+      <SheetTitle title={series?.title ?? ''} subtitle={t('lists.addTo')} />
+      <View style={{ padding: S.lg, paddingTop: S.md, gap: S.xl }}>
       <View style={{ gap: S.sm }}>
-        <Txt v="caption">{t('lists.status')}</Txt>
+        <Txt v="caption" accessibilityRole="header" style={{ paddingHorizontal: S.md }}>{t('lists.status')}</Txt>
         <View style={styles.wrap}>
           <FilterChip label={t('lists.status.none')} selected={!status} onPress={() => setWatchStatus(seriesId, null)} />
           {WATCH_STATUSES.map((st) => (
@@ -60,33 +61,32 @@ export default function ListPicker() {
         })}
       </Group>
 
-      <View style={{ flexDirection: 'row', gap: S.sm }}>
-        <TextInput
-          value={name}
-          onChangeText={setName}
-          onSubmitEditing={create}
-          placeholder={t('lists.new')}
-          placeholderTextColor={C.text2}
-          maxLength={40}
-          returnKeyType="done"
-          accessibilityLabel={t('lists.namePlaceholder')}
-          style={styles.input}
-        />
-        <Button small label={t('common.create')} icon="add" variant="soft" onPress={create} />
+      <View style={{ flexDirection: 'row', gap: S.sm, alignItems: 'flex-start' }}>
+        <View style={{ flex: 1 }}>
+          <Field
+            value={name}
+            onChangeText={setName}
+            onSubmitEditing={create}
+            placeholder={t('lists.new')}
+            maxLength={40}
+            returnKeyType="done"
+            accessibilityLabel={t('lists.namePlaceholder')}
+            style={{ backgroundColor: C.elevated }}
+          />
+        </View>
+        <Button label={t('common.create')} icon="add" variant="soft" disabled={!name.trim()} onPress={create} />
       </View>
 
       <Button label={t('lists.manage')} variant="ghost" icon="albums-outline" onPress={() => {
         router.back();
         router.push('/lists');
       }} />
+      </View>
     </ScrollView>
   );
 }
 
 const styles = StyleSheet.create({
   wrap: { flexDirection: 'row', flexWrap: 'wrap', gap: S.sm },
-  input: {
-    flex: 1, minHeight: 44, paddingHorizontal: S.md, borderRadius: R.control, borderCurve: 'continuous',
-    backgroundColor: C.elevated, borderWidth: 1, borderColor: C.border, color: C.text, ...F.medium, fontSize: 15,
-  },
+
 });

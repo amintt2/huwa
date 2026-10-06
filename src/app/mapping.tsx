@@ -2,15 +2,16 @@ import Ionicons from '@expo/vector-icons/Ionicons';
 import * as Haptics from 'expo-haptics';
 import { router, useLocalSearchParams } from 'expo-router';
 import { useMemo, useState } from 'react';
-import { ActivityIndicator, ScrollView, StyleSheet, TextInput, View } from 'react-native';
+import { ScrollView, StyleSheet, TextInput, View } from 'react-native';
 
-import { FilterChip } from '@/components/states';
+import { SheetTitle } from '@/components/screen';
+import { Segmented } from '@/components/states';
 import { Button, Press, Txt } from '@/components/ui';
 import { getSeries, useCatalog } from '@/data/catalog';
 import { MAX_CHAPTER, validateProposal, type ProposalValue } from '@/data/mapping';
 import { useSeasonState } from '@/data/mapping-store';
 import { proposeCorrection, seasonContext } from '@/data/mapping-sync';
-import { C, F, R, S } from '@/theme/tokens';
+import { C, F, R, S, SHADOW } from '@/theme/tokens';
 
 /**
  * Sheet "Corriger la correspondance": the season end ("La saison s'arrête au ch. X") or one
@@ -85,16 +86,16 @@ export default function MappingSheet() {
   const season = (series.mapping?.season ?? 0) + 1;
 
   return (
-    <ScrollView style={{ flex: 1, backgroundColor: C.surface }} keyboardShouldPersistTaps="handled" contentContainerStyle={styles.sheet}>
-      <View style={{ gap: 4 }}>
-        <Txt v="caption">Corriger la correspondance</Txt>
-        <Txt v="title" numberOfLines={2}>{series.title}{season > 1 ? ` · Saison ${season}` : ''}</Txt>
-      </View>
-
-      <View style={{ flexDirection: 'row', gap: S.sm }}>
-        <FilterChip icon="flag-outline" label="Fin de saison" selected={mode === 'end'} onPress={() => setMode('end')} />
-        <FilterChip icon="film-outline" label="Un épisode" selected={mode === 'ep'} onPress={() => setMode('ep')} />
-      </View>
+    // Form sheet: the header lives inside the ScrollView.
+    <ScrollView style={{ flex: 1, backgroundColor: C.surface }} keyboardShouldPersistTaps="handled" automaticallyAdjustKeyboardInsets contentContainerStyle={{ paddingBottom: S.xxl }}>
+      <SheetTitle title={`${series.title}${season > 1 ? ` · Saison ${season}` : ''}`} subtitle="Corriger la correspondance" />
+      <View style={styles.sheet}>
+      <Segmented
+        accessibilityLabel="Ce que tu corriges"
+        value={mode}
+        onChange={setMode}
+        options={[{ value: 'end', label: 'Fin de saison' }, { value: 'ep', label: 'Un épisode' }]}
+      />
 
       {mode === 'end' ? (
         <View style={styles.card}>
@@ -121,24 +122,18 @@ export default function MappingSheet() {
 
       {(error || sendError) && (
         <View style={styles.line}>
-          <Ionicons name="alert-circle" size={16} color="#FF8A8A" />
-          <Txt v="small" color="#FF8A8A" style={{ flex: 1 }}>{sendError ?? error}</Txt>
+          <Ionicons name="alert-circle" size={16} color={C.danger} />
+          <Txt v="small" color={C.danger} style={{ flex: 1 }}>{sendError ?? error}</Txt>
         </View>
       )}
 
-      <Txt v="small" style={{ fontSize: 12, lineHeight: 17 }}>
+      <Txt v="footnote" color={C.text3} style={{ lineHeight: 17 }}>
         Ta proposition est signée avec ton identité. Elle remplace l’estimation quand au moins 3 membres, dont
         assez d’habitués, donnent la même valeur. Tu peux la changer à tout moment : seule la plus récente compte.
       </Txt>
 
-      {busy ? (
-        <View style={styles.busy}>
-          <ActivityIndicator color={C.accentText} />
-          <Txt v="small">Envoi…</Txt>
-        </View>
-      ) : (
-        <Button label="Envoyer" icon="paper-plane" onPress={send} variant={error ? 'ghost' : 'solid'} />
-      )}
+      <Button label="Envoyer" icon="paper-plane" loading={busy} disabled={!!error} onPress={send} />
+      </View>
     </ScrollView>
   );
 }
@@ -191,19 +186,19 @@ function Stepper({
 }
 
 const styles = StyleSheet.create({
-  sheet: { padding: S.lg, paddingTop: S.xl, gap: S.lg },
+  sheet: { padding: S.lg, paddingTop: S.md, gap: S.lg },
   card: {
     gap: S.md, padding: S.md, borderRadius: R.card, borderCurve: 'continuous',
-    backgroundColor: C.elevated, borderWidth: 1, borderColor: C.border,
+    backgroundColor: C.elevated, borderWidth: 1, borderColor: C.border, boxShadow: SHADOW.inset,
   },
   line: { flexDirection: 'row', alignItems: 'center', gap: S.sm },
   stepper: { flexDirection: 'row', alignItems: 'center', gap: S.sm },
   stepBtn: {
-    width: 40, height: 40, borderRadius: R.control, borderCurve: 'continuous', alignItems: 'center', justifyContent: 'center',
-    backgroundColor: C.surface, borderWidth: 1, borderColor: C.border,
+    width: 44, height: 44, borderRadius: R.control, borderCurve: 'continuous', alignItems: 'center', justifyContent: 'center',
+    backgroundColor: C.surface, borderWidth: 1, borderColor: C.border, boxShadow: SHADOW.inset,
   },
   stepInput: {
-    height: 40, borderRadius: R.control, borderCurve: 'continuous', backgroundColor: C.surface, color: C.text,
+    height: 44, borderRadius: R.control, borderCurve: 'continuous', backgroundColor: C.surface, color: C.text,
     textAlign: 'center', fontSize: 17, ...F.bold, borderWidth: 1, borderColor: C.border, fontVariant: ['tabular-nums'],
   },
   busy: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: S.sm, minHeight: 50 },

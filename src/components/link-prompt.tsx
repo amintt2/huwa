@@ -11,8 +11,9 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useT } from '@/i18n';
 import { classifyLink, decodePack, type PastedLink } from '@/packs/format';
 import { hrefFor, setPendingLink, usePendingLink } from '@/packs/routes';
-import { C, F, R, S } from '@/theme/tokens';
+import { C, F, R, S, SHADOW } from '@/theme/tokens';
 
+import { SheetTitle } from './screen';
 import { Button, IconButton, Txt } from './ui';
 
 export function LinkPrompt() {
@@ -63,7 +64,7 @@ export function LinkPrompt() {
         <IconButton icon="qr-code-outline" label={t('onb.link.scan')} tone="solid" size={44} onPress={() => setScanning(true)} />
       </View>
       {!!text.trim() && <Button small variant="soft" label={t('onb.link.open')} onPress={() => submit()} />}
-      {state.error ? <Txt v="small" color="#FF8A8A">{state.error}</Txt> : null}
+      {state.error ? <Txt v="small" color={C.danger}>{state.error}</Txt> : null}
       {pending && state.ok ? (
         <View style={{ flexDirection: 'row', gap: S.sm, alignItems: 'flex-start' }}>
           <Ionicons name="checkmark-circle" size={16} color={C.success} style={{ marginTop: 1 }} />
@@ -107,9 +108,8 @@ export function Scanner({ visible, onClose, onLink }: { visible: boolean; onClos
   return (
     <Modal visible={visible} animationType="slide" presentationStyle="pageSheet" onRequestClose={onClose}>
       <View style={{ flex: 1, backgroundColor: C.bg, padding: S.lg, gap: S.lg, paddingBottom: insets.bottom + S.lg }}>
-        <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-          <Txt v="title" style={{ flex: 1, fontSize: 20 }}>{t('onb.link.scan')}</Txt>
-          <IconButton icon="close" label={t('common.close')} tone="solid" onPress={onClose} />
+        <View style={{ marginHorizontal: -S.lg, marginTop: -S.lg }}>
+          <SheetTitle title={t('onb.link.scan')} onClose={onClose} />
         </View>
         {!permission ? null : !permission.granted ? (
           <View style={{ gap: S.md, paddingTop: S.xl }}>
@@ -133,7 +133,7 @@ export function Scanner({ visible, onClose, onLink }: { visible: boolean; onClos
               )}
               <View pointerEvents="none" style={styles.reticle} />
             </View>
-            <Txt v="small" style={{ textAlign: 'center' }} color={error ? '#FF8A8A' : C.text2}>{error || t('onb.link.scanHint')}</Txt>
+            <Txt v="small" style={{ textAlign: 'center' }} color={error ? C.danger : C.text2}>{error || t('onb.link.scanHint')}</Txt>
           </>
         )}
       </View>
@@ -142,14 +142,14 @@ export function Scanner({ visible, onClose, onLink }: { visible: boolean; onClos
 }
 
 const styles = StyleSheet.create({
-  box: { gap: S.sm, padding: S.md, borderRadius: R.card, borderCurve: 'continuous', backgroundColor: C.surface, borderWidth: 1, borderColor: C.border },
+  box: { gap: S.sm, padding: S.md, borderRadius: R.card, borderCurve: 'continuous', backgroundColor: C.surface, borderWidth: 1, borderColor: C.border, boxShadow: SHADOW.inset },
   input: {
     flex: 1, minHeight: 44, paddingHorizontal: S.md, borderRadius: R.control, borderCurve: 'continuous', backgroundColor: C.elevated,
-    color: C.text, ...F.medium, fontSize: 15, borderWidth: 1, borderColor: C.border,
+    color: C.text, ...F.medium, fontSize: 15, borderWidth: 1, borderColor: C.border, boxShadow: 'inset 0px 1px 2px rgba(0,0,0,0.35)',
   },
   frame: { aspectRatio: 1, borderRadius: R.sheet, borderCurve: 'continuous', overflow: 'hidden', backgroundColor: C.black },
   reticle: {
     position: 'absolute', left: '18%', top: '18%', right: '18%', bottom: '18%',
-    borderRadius: R.card, borderWidth: 2, borderColor: 'rgba(255,255,255,0.8)',
+    borderRadius: R.card, borderCurve: 'continuous', borderWidth: 2, borderColor: 'rgba(255,255,255,0.8)', boxShadow: '0px 0px 0px 2000px rgba(0,0,0,0.35)',
   },
 });
