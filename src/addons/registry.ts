@@ -1,11 +1,11 @@
-// Installed addons (persisted, in priority order) + aggregation of stream / subtitles / catalog
-// resources across all of them, with AniList ids translated to what each addon accepts.
-import AsyncStorage from '@react-native-async-storage/async-storage';
+// Installed addons (store: ./addon-store.ts) + aggregation of stream / subtitles / catalog
+// resources across all of them (engine: ./agg-jobs.ts), with AniList ids translated to what each
+// addon accepts.
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 
 import { extraKey, rankSubtitles, type SubMatch } from '@/subtitles/request';
 
-import { firstUseful, withRetry } from './fetch-policy';
+import { aggregateBase, aggregateKey, type Agg, type JobOptions, type JobSpec, type Loader, obtainAggregate } from './agg-jobs';
 import { absoluteNumbering, requestsFor, type AddonRequest } from './id-candidates';
 import { useAnimeIds, type AnimeIds } from './ids';
 import {
@@ -13,33 +13,47 @@ import {
   browsableCatalogs,
   catalogSupports,
   fetchCatalog,
-  fetchManifest,
   fetchStreams,
   fetchSubtitles,
   isInfoStream,
   type Manifest,
   type ManifestCatalog,
   type MetaPreview,
-  normalizeAddonUrl,
   type Resource,
   searchableCatalogs,
   type StreamItem,
   type SubtitleExtra,
   type SubtitleItem,
 } from './protocol';
-import type { Quality } from './quality';
 import { dropDemoWhenReal } from './builtin-demo';
-import { parseSavedAddons } from './saved';
-import { dropAnswer, freshness, readAnswer, writeAnswer } from './stream-cache';
 import { timedAddon } from '@/stats/addon-timing';
 import { lazyImdbId } from '@/data/imdb-episode';
-import { registerRehydrate } from '@/settings/rehydrate';
 
-export type InstalledAddon = { baseUrl: string; manifest: Manifest; enabled: boolean };
+import {
+  type AddonPrefs,
+  builtin,
+  getAddonsState,
+  isAddonsHydrated,
+  subscribeAddons,
+  type InstalledAddon,
+} from './addon-store';
 
-const KEY = 'huwa/addons/v1';
-const PREFS_KEY = 'huwa/addon-prefs/v1';
-export const BUILTIN_ID = 'huwa.demo';
+export {
+  type AddonPrefs,
+  addonSetHash,
+  BUILTIN_ID,
+  getAddonByBase,
+  hydrateAddons,
+  installAddon,
+  type InstalledAddon,
+  moveAddon,
+  onAddonsAdded,
+  previewAddon,
+  refreshAddon,
+  removeAddon,
+  setPrefs,
+  toggleAddon,
+} from './addon-store';
 
 // Built-in demo source: open Blender / Apple test streams, so the player works with zero setup.
 const DEMO_STREAMS = [
@@ -48,156 +62,23 @@ const DEMO_STREAMS = [
   { name: 'HLS adaptatif', title: 'Apple bipbop', url: 'https://devstreaming-cdn.apple.com/videos/streaming/examples/img_bipbop_adv_example_fmp4/master.m3u8' },
 ];
 
-const builtin: InstalledAddon = {
-  baseUrl: 'builtin:demo',
-  enabled: true,
-  manifest: {
-    id: BUILTIN_ID,
-    name: 'Démo Huwa',
-    description: 'Flux de démonstration libres de droits. Installe un addon pour de vrais contenus.',
-    resources: ['stream'],
-    types: ['series', 'movie', 'anime'],
-  },
-};
+const getAddons = () => getAddonsState().addons;
+const getPrefs = () => getAddonsState().prefs;
+const getSetHash = () => getAddonsState().setHash;
 
-export type AddonPrefs = { preferredQuality: Quality | 'auto'; legalAccepted: boolean };
-
-type State = { addons: InstalledAddon[]; prefs: AddonPrefs };
-let state: State = { addons: [builtin], prefs: { preferredQuality: 1080, legalAccepted: false } };
-let hydrating: Promise<void> | undefined;
-/** The saved list is loaded: writing it now cannot overwrite what the user installed before. */
-let hydrated = false;
-let earlyPrefs: Partial<AddonPrefs> | null = null;
-const listeners = new Set<() => void>();
-const emit = () => listeners.forEach((l) => l());
-
-/**
- * Applies a change to the installed list. Before the saved list is loaded (e.g. a `/install`
- * deep link on a cold start), the change waits for it: applied to the saved list, not to the
- * defaults, so it never overwrites the user's addons.
- */
-function commit(update: (addons: InstalledAddon[]) => InstalledAddon[]) {
-  if (!hydrated) {
-    void hydrateAddons().then(() => commit(update));
-    return;
-  }
-  const next = update(state.addons);
-  state = { ...state, addons: next };
-  emit();
-  // The demo entry is stored only as a placeholder (position + enabled); its manifest is rebuilt at load.
-  AsyncStorage.setItem(KEY, JSON.stringify(next)).catch(() => {});
+export function useAddons(): InstalledAddon[] {
+  return useSyncExternalStore(subscribeAddons, getAddons, getAddons);
 }
-
-export function setPrefs(p: Partial<AddonPrefs>) {
-  state = { ...state, prefs: { ...state.prefs, ...p } };
-  emit();
-  // Too early: kept and applied over the saved prefs once they are loaded.
-  if (!hydrated) earlyPrefs = { ...earlyPrefs, ...p };
-  else AsyncStorage.setItem(PREFS_KEY, JSON.stringify(state.prefs)).catch(() => {});
+export function useAddonPrefs(): AddonPrefs {
+  return useSyncExternalStore(subscribeAddons, getPrefs, getPrefs);
 }
-
-const subscribe = (l: () => void) => {
-  listeners.add(l);
-  return () => listeners.delete(l);
-};
-
-export function useAddons() {
-  return useSyncExternalStore(subscribe, () => state.addons, () => state.addons);
+/** Hash of the installed set (order, enabled, manifests): changes with any add / remove / toggle / move. */
+export function useAddonSetHash(): string {
+  return useSyncExternalStore(subscribeAddons, getSetHash, getSetHash);
 }
-export function useAddonPrefs() {
-  return useSyncExternalStore(subscribe, () => state.prefs, () => state.prefs);
-}
-
-// Backup import: reload from storage. Not loaded yet → the first load will read the imported
-// values. Otherwise the in-memory list is reset and re-read (changes made meanwhile wait for it,
-// see `commit`).
-registerRehydrate(async () => {
-  if (!hydrating) return;
-  await hydrating;
-  hydrated = false;
-  hydrating = undefined;
-  state = { addons: [builtin], prefs: { preferredQuality: 1080, legalAccepted: false } };
-  return hydrateAddons();
-});
-
-export function hydrateAddons(): Promise<void> {
-  hydrating ??= loadAddons().finally(() => {
-    hydrated = true;
-    if (earlyPrefs) {
-      state = { ...state, prefs: { ...state.prefs, ...earlyPrefs } };
-      earlyPrefs = null;
-      emit();
-      AsyncStorage.setItem(PREFS_KEY, JSON.stringify(state.prefs)).catch(() => {});
-    }
-  });
-  return hydrating;
-}
-
-async function loadAddons() {
-  try {
-    const [raw, rawPrefs] = await Promise.all([AsyncStorage.getItem(KEY), AsyncStorage.getItem(PREFS_KEY)]);
-    let addons = state.addons;
-    if (raw) {
-      const saved = parseSavedAddons(JSON.parse(raw), builtin);
-      addons = saved.map((a) => (a.baseUrl === builtin.baseUrl ? { ...builtin, enabled: a.enabled } : a));
-      if (!addons.some((a) => a.baseUrl === builtin.baseUrl)) addons = [builtin, ...addons];
-    }
-    const prefs = rawPrefs ? { ...state.prefs, ...(JSON.parse(rawPrefs) as Partial<AddonPrefs>) } : state.prefs;
-    state = { addons, prefs };
-    emit();
-  } catch {
-    // keep defaults
-  }
-}
-
-/** Fetches and validates an addon without installing it (for the confirmation sheet). */
-export async function previewAddon(input: string) {
-  const baseUrl = normalizeAddonUrl(input);
-  const manifest = await fetchManifest(baseUrl);
-  const existing = state.addons.find((a) => a.manifest.id === manifest.id);
-  return { baseUrl, manifest, existing };
-}
-
-/**
- * Installs an addon. An addon with the same id is replaced in place (same priority): that is how
- * a reconfigured addon (new URL carrying its settings) updates, as in Stremio.
- */
-export async function installAddon(input: string, preloaded?: Manifest) {
-  const baseUrl = normalizeAddonUrl(input);
-  const manifest = preloaded ?? (await fetchManifest(baseUrl));
-  await hydrateAddons();
-  commit((addons) => {
-    const i = addons.findIndex((a) => a.manifest.id === manifest.id);
-    if (i < 0) return [...addons, { baseUrl, manifest, enabled: true }];
-    const next = [...addons];
-    next[i] = { ...next[i], baseUrl, manifest };
-    return next;
-  });
-  return manifest;
-}
-
-/** Re-reads the manifest of an installed addon (new catalogs, version…). */
-export async function refreshAddon(baseUrl: string) {
-  const manifest = await fetchManifest(baseUrl);
-  commit((addons) => addons.map((a) => (a.baseUrl === baseUrl ? { ...a, manifest } : a)));
-  return manifest;
-}
-
-export const removeAddon = (baseUrl: string) =>
-  commit((addons) => addons.filter((a) => a.baseUrl !== baseUrl || a.baseUrl === builtin.baseUrl));
-export const toggleAddon = (baseUrl: string) =>
-  commit((addons) => addons.map((a) => (a.baseUrl === baseUrl ? { ...a, enabled: !a.enabled } : a)));
-
-/** Moves an addon up (-1) or down (+1) in the priority list. */
-export function moveAddon(baseUrl: string, dir: -1 | 1) {
-  commit((addons) => {
-    const list = [...addons];
-    const i = list.findIndex((a) => a.baseUrl === baseUrl);
-    const j = i + dir;
-    if (i < 0 || j < 0 || j >= list.length) return addons;
-    [list[i], list[j]] = [list[j], list[i]];
-    return list;
-  });
+/** The saved addon list is loaded (before that, only the demo is known). */
+export function useAddonsHydrated(): boolean {
+  return useSyncExternalStore(subscribeAddons, isAddonsHydrated, isAddonsHydrated);
 }
 
 // ---------- id translation ----------
@@ -213,264 +94,13 @@ export function requestFor(m: Manifest, resource: Resource, seriesId: string, ep
   return requestsFor(m, resource, seriesId, episode, ids)[0] ?? null;
 }
 
-/** The request as sent: a lazy IMDb id once known (null: none for this episode, undefined: not yet). */
-function settledReq(req: AddonRequest): AddonRequest | null | undefined {
-  if (!req.lazy) return req;
-  const id = req.lazy.peek();
-  return id ? { type: req.type, id } : (id as null | undefined);
-}
-
-/** A lazy IMDb id that turned out to have nothing for this episode (not an addon failure). */
-class NoCandidate extends Error {}
-
-// ---------- aggregation ----------
-// One shared job per (resource, episode, addons, ids): the pre-search of a detail page, the next
-// episode prefetch and the watch screen all read the same job, so opening an episode whose
-// sources are already being searched never starts over. Per addon:
-// 1. an answer stored on disk (./stream-cache.ts) is shown at once; refreshed in the background
-//    when older than a few minutes;
-// 2. otherwise its id formats are asked two at a time (./fetch-policy.ts `firstUseful`), each
-//    request retried once on a transient failure; results appear as each addon answers.
-// A job keeps running while a screen uses it, plus a short grace period (screen handover); then
-// no new request starts (requests in flight still land in the caches).
-
-type Agg<T> = {
-  key: string;
-  items: T[];
-  done: number;
-  failed: string[];
-  /** Addons whose answer currently comes from the disk cache. */
-  fromCache: number;
-  /** Forced refreshes completed (see `refresh`). */
-  refreshed: number;
-};
-
-type Slot<T> = { items: T[]; done: boolean; failed: boolean; running: boolean; cachedAt?: number; reqKey?: string };
-type JobSpec = { a: InstalledAddon; reqs: AddonRequest[] };
-type Loader<T> = (a: InstalledAddon, req: AddonRequest) => Promise<T[]>;
-type JobOptions<T> = {
-  useful?: (item: T) => boolean;
-  /** Keep answers on disk (streams). */
-  persist?: boolean;
-  /** Marks an item served from the disk cache. */
-  tag?: (item: T, cachedAt: number) => T;
-  /** Two items of one addon are the same (merging answers of several id formats). */
-  same?: (a: T, b: T) => boolean;
-};
-
-const AGG_TTL = 20 * 60e3;
-const RELEASE_GRACE_MS = 4000;
-const PER_ADDON_CONCURRENCY = 2;
-const reqKeyOf = (a: InstalledAddon, resource: Resource, req: AddonRequest) => `${resource}|${a.baseUrl}|${req.type}/${req.id}`;
-
-class AggJob<T> {
-  slots = new Map<string, Slot<T>>();
-  snapshot: Agg<T>;
-  at = Date.now();
-  refs = 0;
-  ctrl = new AbortController();
-  load!: Loader<T>;
-  private listeners = new Set<() => void>();
-  private stopTimer: ReturnType<typeof setTimeout> | undefined;
-  private refreshed = 0;
-
-  constructor(
-    readonly key: string,
-    readonly resource: Resource,
-    readonly specs: JobSpec[],
-    readonly opts: JobOptions<T>,
-  ) {
-    for (const s of specs) this.slots.set(s.a.baseUrl, { items: [], done: false, failed: false, running: false });
-    this.snapshot = { key, items: [], done: 0, failed: [], fromCache: 0, refreshed: 0 };
-  }
-
-  subscribe = (l: () => void) => {
-    this.listeners.add(l);
-    return () => {
-      this.listeners.delete(l);
-    };
-  };
-  getSnapshot = () => this.snapshot;
-
-  get complete() {
-    return [...this.slots.values()].every((s) => s.done);
-  }
-
-  private emit() {
-    const slots = this.specs.map((s) => this.slots.get(s.a.baseUrl)!);
-    this.snapshot = {
-      key: this.key,
-      items: slots.flatMap((s) => s.items),
-      done: slots.filter((s) => s.done).length,
-      failed: this.specs.filter((s) => this.slots.get(s.a.baseUrl)!.failed).map((s) => s.a.manifest.name),
-      fromCache: slots.filter((s) => s.cachedAt != null).length,
-      refreshed: this.refreshed,
-    };
-    this.at = Date.now();
-    this.listeners.forEach((l) => l());
-  }
-
-  retain(load: Loader<T>) {
-    this.load = load;
-    this.refs++;
-    clearTimeout(this.stopTimer);
-    if (this.ctrl.signal.aborted) this.ctrl = new AbortController();
-    for (const spec of this.specs) {
-      const slot = this.slots.get(spec.a.baseUrl)!;
-      if (!slot.done && !slot.running) void this.run(spec);
-    }
-    return () => {
-      this.refs--;
-      if (this.refs > 0) return;
-      clearTimeout(this.stopTimer);
-      this.stopTimer = setTimeout(() => {
-        if (this.refs === 0) this.ctrl.abort();
-      }, RELEASE_GRACE_MS);
-    };
-  }
-
-  private async run(spec: JobSpec) {
-    const slot = this.slots.get(spec.a.baseUrl)!;
-    slot.running = true;
-    try {
-      if (this.opts.persist && !spec.a.baseUrl.startsWith('builtin:')) {
-        for (const r of spec.reqs) {
-          // A lazy IMDb id only when already known: the cache never waits for the season model.
-          const req = settledReq(r);
-          if (!req) continue;
-          const key = reqKeyOf(spec.a, this.resource, req);
-          const hit = await readAnswer<T>(key);
-          if (!hit || (this.opts.useful && !hit.items.some(this.opts.useful))) continue;
-          const tag = this.opts.tag;
-          Object.assign(slot, { items: tag ? hit.items.map((x) => tag(x, hit.at)) : hit.items, done: true, cachedAt: hit.at, reqKey: key });
-          this.emit();
-          // Shown at once; refreshed when older than a few minutes (stale-while-revalidate).
-          if (freshness(hit.at) === 'stale') await this.network(spec, slot);
-          return;
-        }
-      }
-      await this.network(spec, slot);
-    } finally {
-      slot.running = false;
-    }
-  }
-
-  /** Asks the addon (all its id formats, two at a time), replacing what the slot shows. */
-  private async network(spec: JobSpec, slot: Slot<T>) {
-    const signal = this.ctrl.signal;
-    if (signal.aborted) return;
-    const { useful, same } = this.opts;
-    const merge = (items: T[]) => {
-      const fresh = same ? items.filter((x) => !slot.items.some((y) => same(x, y))) : items;
-      if (!fresh.length) return;
-      slot.items = [...slot.items, ...fresh];
-      this.emit();
-    };
-    // Lazy IMDb ids (season model): resolved here, while the other formats are already asked.
-    const sent = new Map<AddonRequest, AddonRequest>();
-    let failures = 0;
-    let skipped = 0;
-    const ask = async (req: AddonRequest) => {
-      let out = req;
-      if (req.lazy) {
-        const id = await req.lazy.resolve();
-        if (!id) {
-          skipped++;
-          throw new NoCandidate('Pas d’identifiant IMDb pour cet épisode');
-        }
-        out = { type: req.type, id };
-        sent.set(req, out);
-      }
-      try {
-        return await withRetry(() => this.load(spec.a, out), { signal });
-      } catch (e) {
-        failures++;
-        throw e;
-      }
-    };
-    try {
-      const { items, index } = await firstUseful(
-        spec.reqs,
-        ask,
-        useful,
-        { concurrency: PER_ADDON_CONCURRENCY, signal, onExtra: merge },
-      );
-      const isUseful = !useful || items.some(useful);
-      // Background refresh that found nothing better: keep the cached answer.
-      if (slot.cachedAt != null && !isUseful) return;
-      // Stopped before every id format was tried: not an answer yet (runs again when retained).
-      if (!isUseful && signal.aborted) return;
-      Object.assign(slot, { items, done: true, failed: false, cachedAt: undefined });
-      const answered = index >= 0 ? (sent.get(spec.reqs[index]) ?? spec.reqs[index]) : undefined;
-      if (isUseful && this.opts.persist && answered && !answered.lazy && !spec.a.baseUrl.startsWith('builtin:')) {
-        slot.reqKey = reqKeyOf(spec.a, this.resource, answered);
-        void writeAnswer(slot.reqKey, items);
-      }
-      this.emit();
-    } catch {
-      if (slot.cachedAt != null) return;
-      // Cancelled before any request could start: not a failure, it may run again.
-      if (signal.aborted && !slot.items.length) return;
-      // Its only id format was an IMDb id this episode does not have: nothing, not a failure.
-      const none = failures === 0 && skipped > 0;
-      Object.assign(slot, { done: true, failed: !none });
-      this.emit();
-    }
-  }
-
-  /**
-   * Fetches again every addon answer that came from the disk cache (a cached link failed:
-   * debrid / proxy URLs expire), or every addon with `all` ("Réessayer"). `refreshed`
-   * increments when done.
-   */
-  async refresh(all = false) {
-    if (this.ctrl.signal.aborted) this.ctrl = new AbortController();
-    const todo = this.specs.filter((s) => {
-      const slot = this.slots.get(s.a.baseUrl)!;
-      return !slot.running && (all || slot.cachedAt != null);
-    });
-    await Promise.all(
-      todo.map(async (spec) => {
-        const slot = this.slots.get(spec.a.baseUrl)!;
-        if (slot.reqKey) void dropAnswer(slot.reqKey);
-        // Shown again as "searching" only when it had nothing to show.
-        if (all && !slot.items.length) {
-          Object.assign(slot, { done: false, failed: false });
-          this.emit();
-        }
-        slot.running = true;
-        try {
-          await this.network(spec, slot);
-        } finally {
-          slot.running = false;
-        }
-      }),
-    );
-    this.refreshed++;
-    this.emit();
-  }
-}
-
-const jobs = new Map<string, AggJob<unknown>>();
-
-function obtainJob<T>(key: string, resource: Resource, specs: JobSpec[], opts: JobOptions<T>): AggJob<T> {
-  const now = Date.now();
-  for (const [k, j] of jobs) if (j.refs === 0 && now - j.at > AGG_TTL) jobs.delete(k);
-  let job = jobs.get(key) as AggJob<T> | undefined;
-  if (!job) {
-    job = new AggJob<T>(key, resource, specs, opts);
-    jobs.set(key, job as AggJob<unknown>);
-  }
-  return job;
-}
-
 const EMPTY_AGG: Agg<never> = { key: '', items: [], done: 0, failed: [], fromCache: 0, refreshed: 0 };
 const noSub = () => () => {};
 const emptySnap = () => EMPTY_AGG;
 
 /**
- * Queries every enabled addon serving `resource` (see the job above); results appear as each
- * answers. Waits for the id mapping first (AniList → Kitsu / MAL / IMDb + episode offsets).
+ * Queries every enabled addon serving `resource` (see ./agg-jobs.ts); results appear as each
+ * answers. Waits for the saved addon list. Waits for the id mapping first (AniList → Kitsu / MAL / IMDb + episode offsets).
  */
 function useAggregate<T>(
   resource: Resource,
@@ -483,11 +113,14 @@ function useAggregate<T>(
   variant = '',
 ) {
   const list = useAddons();
+  const setHash = useAddonSetHash();
+  // Before the saved list is loaded only the demo is known: asking it would pick a test stream.
+  const hydrated = useAddonsHydrated();
   const ids = useAnimeIds(seriesId);
-  const idsReady = ids !== undefined;
+  const ready = ids !== undefined && hydrated;
   // Absolute entries (One Piece): IMDb numbering from the season model, resolved when asked.
   const lazy = ids && absoluteNumbering(ids) ? lazyImdbId(seriesId, episode, ids) : undefined;
-  const asked: JobSpec[] = idsReady && enabled
+  const asked: JobSpec[] = ready && enabled
     ? list
         .filter((a) => a.enabled && (a.baseUrl !== builtin.baseUrl || resource === 'stream'))
         .map((a) => ({
@@ -497,11 +130,12 @@ function useAggregate<T>(
         .filter((j) => j.reqs.length > 0)
     : [];
   const specs = dropDemoWhenReal(asked, builtin.baseUrl, resource);
-  const key = idsReady && enabled
-    ? `${resource}${variant ? `#${variant}` : ''}|${seriesId}|${episode}|${specs.map((j) => `${j.a.baseUrl}>${j.reqs.map((r) => `${r.type}/${r.id}`).join(',')}`).join('|')}`
-    : '';
+  const base = aggregateBase(resource, variant, seriesId, episode);
+  // Keyed by the installed set: any add / remove / toggle / move gets a new aggregate at once
+  // (never the old set's "nothing found"), made of the answers already known plus the new ones.
+  const key = ready && enabled ? aggregateKey(base, setHash, specs) : '';
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  const job = useMemo(() => (key ? obtainJob<T>(key, resource, specs, opts) : null), [key]);
+  const job = useMemo(() => (key ? obtainAggregate<T>(base, setHash, resource, specs, opts) : null), [key]);
   const loadRef = useRef(load);
   useEffect(() => {
     loadRef.current = load;
@@ -513,7 +147,7 @@ function useAggregate<T>(
   const snap = useSyncExternalStore(job?.subscribe ?? noSub, job?.getSnapshot ?? emptySnap, job?.getSnapshot ?? emptySnap) as Agg<T>;
   return {
     items: snap.items,
-    pending: idsReady ? Math.max(0, specs.length - snap.done) : enabled ? 1 : 0,
+    pending: ready ? Math.max(0, specs.length - snap.done) : enabled ? 1 : 0,
     failed: snap.failed,
     /** Addons asked for this episode. */
     asked: specs.length,
@@ -671,5 +305,3 @@ export function useCatalogSearch(query: string) {
   const cur = res.key === key ? res : { hits: [] as SearchHit[], done: 0 };
   return { searchable: defs.length, hits: cur.hits, pending: q.length < 2 ? 0 : Math.max(0, defs.length - cur.done) };
 }
-
-export const getAddonByBase = (baseUrl: string) => state.addons.find((a) => a.baseUrl === baseUrl);

@@ -32,7 +32,7 @@ import { decideStart, estimateBitrateMbps, pickUpgrade, speedLabel, speedVerdict
 import { raceClock, useRace, type RaceEntry } from './race-runner';
 import { detectQuality, rankStreams, streamKey, type Quality } from './quality';
 import { classifyNoSource } from './no-source';
-import { useAddonPrefs, useAddons, useStreams } from './registry';
+import { BUILTIN_ID, useAddonPrefs, useAddons, useStreams } from './registry';
 import { autoWebPlayerUrl, hostOf, needsProbe, useProbedUrls, webPlayerUrl } from './web-player';
 
 type Resolution = { url?: string; via?: string; error?: string };
@@ -250,7 +250,8 @@ export function useSource(seriesId: string, episode: number, { enabled = true, p
   const [lastLocked, setLastLocked] = useState<AddonStream | undefined>();
   const lockedListed = locked && !bad.includes(locked) ? ranked.find((s) => streamKey(s) === locked) : undefined;
   if (lockedListed && lockedListed !== lastLocked) setLastLocked(lockedListed);
-  const lockedStream = lockedListed ?? (locked && !bad.includes(locked) && lastLocked && streamKey(lastLocked) === locked ? lastLocked : undefined);
+  // Not the demo: once a real addon is added it steps aside (./builtin-demo.ts) and must not stay.
+  const lockedStream = lockedListed ?? (locked && !bad.includes(locked) && lastLocked && streamKey(lastLocked) === locked && lastLocked.addonId !== BUILTIN_ID ? lastLocked : undefined);
 
   // ---- torrent race (on-device engine): uncached torrents probed in parallel ----
   const engineTorrent = (s: AddonStream) => isTorrent(s) && cachedOf(s) !== true;
