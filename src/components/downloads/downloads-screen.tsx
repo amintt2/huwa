@@ -25,8 +25,10 @@ import {
 } from '@/downloads';
 import { COMPRESS_LABEL, estimateSaving, type CompressMode } from '@/downloads/compress';
 import { groupBySeries } from '@/downloads/queue';
-import { C, F, R, S } from '@/theme/tokens';
+import { C, F, R, S, SHADOW } from '@/theme/tokens';
 
+import { EmptyState } from '../feedback';
+import { Segmented as SegmentedControl } from '../states';
 import { Cover, IconButton, Progress, Txt } from '../ui';
 import { progressOf, statusLine } from './episode-download';
 
@@ -69,12 +71,13 @@ export function EpisodeDownloads() {
       )}
 
       {groups.filter((g) => g.items.some((i) => i.status === 'done')).length === 0 && active.length === 0 ? (
-        <View style={[styles.card, { alignItems: 'center', paddingVertical: S.xl }]}>
-          <Ionicons name="arrow-down-circle-outline" size={32} color={C.text2} />
-          <Txt v="label">Aucun épisode téléchargé</Txt>
-          <Txt v="small" style={{ textAlign: 'center' }}>
-            Touche ↓ à côté d’un épisode, ou garde le doigt dessus pour télécharger les suivants ou la saison.
-          </Txt>
+        <View style={[styles.card, { padding: 0 }]}>
+          <EmptyState
+            compact
+            icon="arrow-down-circle-outline"
+            title="Aucun épisode téléchargé"
+            text="Touche l’icône de téléchargement à côté d’un épisode, ou garde le doigt dessus pour télécharger les suivants ou la saison."
+          />
         </View>
       ) : (
         <View style={{ gap: S.sm }}>
@@ -160,24 +163,18 @@ function QueueRow({ i }: { i: DownloadItem }) {
   );
 }
 
+/** The shared segmented control, for string or number values. */
 function Segmented<T extends string | number>({ options, value, onChange, label }: { options: { value: T; label: string }[]; value: T; onChange: (v: T) => void; label: (v: T) => string }) {
   return (
-    <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: S.sm }}>
-      {options.map((o) => {
-        const on = o.value === value;
-        return (
-          <Pressable
-            key={String(o.value)}
-            onPress={() => onChange(o.value)}
-            accessibilityRole="button"
-            accessibilityState={{ selected: on }}
-            accessibilityLabel={label(o.value)}
-            style={[styles.seg, on && { backgroundColor: C.accentSoft, borderColor: C.accentLine }]}>
-            <Txt v="caption" color={on ? C.accentText : C.body}>{o.label}</Txt>
-          </Pressable>
-        );
-      })}
-    </View>
+    <SegmentedControl
+      accessibilityLabel={label(value)}
+      value={String(value)}
+      onChange={(v) => {
+        const o = options.find((x) => String(x.value) === v);
+        if (o) onChange(o.value);
+      }}
+      options={options.map((o) => ({ value: String(o.value), label: o.label }))}
+    />
   );
 }
 
@@ -269,8 +266,8 @@ function DownloadSettings({ items }: { items: DownloadItem[] }) {
           </Txt>
         ))}
         {saved > 0 && <Txt v="small" color={C.success}>Déjà gagné : {formatBytes(saved)}</Txt>}
-        {!native && <Txt v="small" color="#F5B544">Encodeur absent de ce build (Android ou ancienne version) : les fichiers restent tels quels.</Txt>}
-        {blocked && <Txt v="small" color="#F5B544">{blocked}</Txt>}
+        {!native && <Txt v="small" color={C.star}>Encodeur absent de ce build (Android ou ancienne version) : les fichiers restent tels quels.</Txt>}
+        {blocked && <Txt v="small" color={C.star}>{blocked}</Txt>}
         <Txt v="small">
           Les fichiers MKV et WebM ne sont pas lisibles par l’encodeur de l’iPhone : ils restent tels quels{unreadable ? ` (${unreadable} épisode${unreadable > 1 ? 's' : ''})` : ''}.
           Un fichier déjà léger (HEVC/AV1 à faible débit, ou gain estimé sous 25 %) n’est pas touché.
@@ -282,7 +279,7 @@ function DownloadSettings({ items }: { items: DownloadItem[] }) {
 }
 
 const styles = StyleSheet.create({
-  card: { padding: S.md, gap: S.md, borderRadius: R.card, borderCurve: 'continuous', backgroundColor: C.surface, borderWidth: 1, borderColor: C.border },
+  card: { padding: S.md, gap: S.md, borderRadius: R.card, borderCurve: 'continuous', backgroundColor: C.surface, borderWidth: 1, borderColor: C.border, boxShadow: SHADOW.inset },
   between: { flexDirection: 'row', alignItems: 'center', gap: S.md },
   seg: {
     paddingVertical: 8, paddingHorizontal: 14, borderRadius: R.control, borderCurve: 'continuous',

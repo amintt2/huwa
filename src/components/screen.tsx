@@ -117,6 +117,7 @@ export function Screen({
   padded = true,
   contentContainerStyle,
   footer,
+  onBack,
   ...scroll
 }: {
   title: string;
@@ -130,6 +131,8 @@ export function Screen({
   padded?: boolean;
   /** Pinned under the scroll view (a composer, a bottom action). */
   footer?: ReactNode;
+  /** Back button action (default: router.back()). */
+  onBack?: () => void;
 } & Omit<ScrollViewProps, 'children' | 'onScroll'>) {
   const insets = useSafeAreaInsets();
   const { y, onScroll } = useScreenScroll();
@@ -151,7 +154,7 @@ export function Screen({
         <View style={{ gap, paddingHorizontal: padded ? S.lg : 0 }}>{children}</View>
       </Animated.ScrollView>
       {footer}
-      <NavBar title={title} y={y} right={barRight} />
+      <NavBar title={title} y={y} right={barRight} onBack={onBack} />
     </View>
   );
 }

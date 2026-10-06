@@ -4,14 +4,14 @@
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { router } from 'expo-router';
 import { useMemo, useState } from 'react';
-import { Alert, ScrollView, Share, StyleSheet, View } from 'react-native';
+import { Alert, Share, StyleSheet, View } from 'react-native';
 import QRCode from 'react-native-qrcode-svg';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { BUILTIN_ID, useAddons } from '@/addons/registry';
 import { CheckGroup, CheckRow, Notice } from '@/components/pack-rows';
 import { Field } from '@/components/social';
-import { Button, IconButton, Press, Txt } from '@/components/ui';
+import { Screen } from '@/components/screen';
+import { Button, Press, Txt } from '@/components/ui';
 import { useMangaExt } from '@/manga-ext/registry';
 import { encodePack, packAppLink, packJson, packWebLink, validatePack, type Pack } from '@/packs/format';
 import { hostOf } from '@/packs/install';
@@ -24,7 +24,6 @@ const QR_MAX = 1200;
 type Item = { id: string; title: string; subtitle: string; personal: boolean; video?: Pack['video'][number]; manga?: Pack['manga'][number] };
 
 export default function PackCreate() {
-  const insets = useSafeAreaInsets();
   const addons = useAddons();
   const { repos, installed } = useMangaExt();
   const [name, setName] = useState('Mes extensions');
@@ -85,14 +84,7 @@ export default function PackCreate() {
   const shareJson = () => result && Share.share({ message: JSON.stringify(JSON.parse(packJson(result.pack)), null, 2) }).catch(() => {});
 
   return (
-    <ScrollView
-      style={{ flex: 1, backgroundColor: C.bg }}
-      keyboardShouldPersistTaps="handled"
-      contentContainerStyle={{ paddingTop: insets.top + S.sm, paddingHorizontal: S.lg, gap: S.xl, paddingBottom: S.xxl + insets.bottom }}>
-      <View style={{ flexDirection: 'row', alignItems: 'center', gap: S.md }}>
-        <IconButton icon="chevron-back" label="Retour" onPress={() => (result ? setResult(null) : router.back())} />
-        <Txt v="display" style={{ fontSize: 26, flexShrink: 1 }} numberOfLines={1}>{result ? 'Ton pack' : 'Partager'}</Txt>
-      </View>
+    <Screen title={result ? 'Ton pack' : 'Partager'} onBack={() => (result ? setResult(null) : router.back())}>
 
       {result ? (
         <>
@@ -200,7 +192,7 @@ export default function PackCreate() {
           )}
         </>
       )}
-    </ScrollView>
+    </Screen>
   );
 }
 
