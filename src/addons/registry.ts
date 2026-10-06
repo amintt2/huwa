@@ -28,6 +28,7 @@ import {
   type SubtitleItem,
 } from './protocol';
 import type { Quality } from './quality';
+import { dropDemoWhenReal } from './builtin-demo';
 import { parseSavedAddons } from './saved';
 import { dropAnswer, freshness, readAnswer, writeAnswer } from './stream-cache';
 import { timedAddon } from '@/stats/addon-timing';
@@ -445,7 +446,7 @@ function useAggregate<T>(
   const list = useAddons();
   const ids = useAnimeIds(seriesId);
   const idsReady = ids !== undefined;
-  const specs: JobSpec[] = idsReady && enabled
+  const asked: JobSpec[] = idsReady && enabled
     ? list
         .filter((a) => a.enabled && (a.baseUrl !== builtin.baseUrl || resource === 'stream'))
         .map((a) => ({
@@ -454,6 +455,7 @@ function useAggregate<T>(
         }))
         .filter((j) => j.reqs.length > 0)
     : [];
+  const specs = dropDemoWhenReal(asked, builtin.baseUrl, resource);
   const key = idsReady && enabled
     ? `${resource}${variant ? `#${variant}` : ''}|${seriesId}|${episode}|${specs.map((j) => `${j.a.baseUrl}>${j.reqs.map((r) => `${r.type}/${r.id}`).join(',')}`).join('|')}`
     : '';

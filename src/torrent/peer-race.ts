@@ -39,6 +39,13 @@ export const isPending = (p: PeerProbe | undefined) => !!p && PENDING.includes(p
 /** Has the metadata and the wanted file (playable, maybe slowly). */
 const playable = (p: PeerProbe | undefined) => !!p && (p.state === 'healthy' || p.state === 'weak' || p.local);
 
+/**
+ * A list of stream keys as one string (React dependency). Keys embed the addon's name / title,
+ * which hold line breaks ("Torrentio\n1080p"): never join them on '\n'.
+ */
+export const packKeys = (keys: string[]) => (keys.length ? JSON.stringify(keys) : '');
+export const unpackKeys = (packed: string): string[] => (packed ? (JSON.parse(packed) as string[]) : []);
+
 /** Keys to probe: the first `n` candidates (already in preference order: language first). */
 export function probeTargets<T extends { key: string }>(ordered: T[], n: number): string[] {
   return n > 0 ? ordered.slice(0, n).map((c) => c.key) : [];

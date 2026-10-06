@@ -460,6 +460,14 @@ pub fn settle(meta: bool, file_ok: Option<bool>, connected: usize, min_peers: us
     Some(if meta { ProbeState::Weak } else { ProbeState::Failed })
 }
 
+/// Answering peers of a probe: the ones that completed our handshake, or — when the engine
+/// already runs this torrent (watched before, partly cached) — the peers it is connected to.
+/// Its metadata is known then, so no tracker is asked and a cold DHT alone often finds nobody:
+/// the probe used to report "aucun pair" (`weak`, 0) for a swarm the engine was downloading from.
+pub fn answering(handshakes: usize, engine_live: usize) -> usize {
+    handshakes.max(engine_live)
+}
+
 pub fn clamp_timeout(ms: Option<u64>) -> Duration {
     Duration::from_millis(ms.unwrap_or(DEFAULT_TIMEOUT_MS).clamp(MIN_TIMEOUT_MS, MAX_TIMEOUT_MS))
 }
@@ -555,6 +563,8 @@ async fn run(engine: Arc<Engine>, probe: Arc<Probe>, req: ProbeRequest, id20: Id
     let mut seen_order: Vec<SocketAddr> = Vec::new();
     let mut queue: VecDeque<SocketAddr> = VecDeque::new();
     let mut good: Vec<SocketAddr> = Vec::new();
+    // Peers the engine's own copy of this torrent is connected to right now (0 if not running).
+    let mut live_peers = 0usize;
 
     // Already in the engine: its metadata is known; a complete file needs no peer at all.
     if let Some(h) = engine.entry(&hex).and_then(|e| e.handle()) {
@@ -569,6 +579,7 @@ async fn run(engine: Arc<Engine>, probe: Arc<Probe>, req: ProbeRequest, id20: Id
                 FilePick::NoFile(_) => false,
             };
             let live = stats.live.as_ref().map(|l| l.snapshot.peer_stats.live as usize).unwrap_or(0);
+            live_peers = live;
             apply_meta(&probe, &files, &pick, Some(0));
             file_ok = Some(matches!(pick, FilePick::File(_)));
             if complete {
@@ -623,16 +634,16 @@ async fn run(engine: Arc<Engine>, probe: Arc<Probe>, req: ProbeRequest, id20: Id
         }
         probe.update(|st| {
             st.peers = seen.len();
-            st.connected = good.len();
+            st.connected = answering(good.len(), live_peers);
         });
         let nothing_left = meta.is_some() && handshakes.is_empty() && (attempts >= MAX_HANDSHAKES || (queue.is_empty() && dht.is_none()));
-        if let Some(state) = settle(meta.is_some(), file_ok, good.len(), min_peers, nothing_left) {
+        if let Some(state) = settle(meta.is_some(), file_ok, answering(good.len(), live_peers), min_peers, nothing_left) {
             probe.finish(state, None);
             break;
         }
         tokio::select! {
             _ = tokio::time::sleep_until(deadline) => {
-                let state = settle(meta.is_some(), file_ok, good.len(), min_peers, true).unwrap_or(ProbeState::Failed);
+                let state = settle(meta.is_some(), file_ok, answering(good.len(), live_peers), min_peers, true).unwrap_or(ProbeState::Failed);
                 let error = (state == ProbeState::Failed).then(|| "timeout: no metadata".to_string());
                 probe.finish(state, error);
                 break;
@@ -697,7 +708,7 @@ async fn run(engine: Arc<Engine>, probe: Arc<Probe>, req: ProbeRequest, id20: Id
         // Final counters (the loop may end before the last update).
         let mut st = probe.status.write();
         st.peers = seen.len();
-        st.connected = st.connected.max(good.len());
+        st.connected = st.connected.max(answering(good.len(), live_peers));
     }
     if meta.as_ref().is_some_and(|m| m.from_list_only || !m.files.is_empty()) {
         engine.meta_cache.set_peers(&hex, &good, &seen_order);
@@ -736,6 +747,16 @@ mod tests {
 
     fn f(n: &str, len: u64) -> (String, u64) {
         (n.to_string(), len)
+    }
+
+    #[test]
+    fn running_torrent_counts_its_live_peers() {
+        // Already in the engine with 5 live peers, no handshake yet: healthy, not "no peer".
+        assert_eq!(answering(0, 5), 5);
+        assert_eq!(settle(true, Some(true), answering(0, 5), 3, false), Some(ProbeState::Healthy));
+        // Not running: only handshakes count.
+        assert_eq!(answering(2, 0), 2);
+        assert_eq!(settle(true, Some(true), answering(2, 0), 3, false), None);
     }
 
     #[test]

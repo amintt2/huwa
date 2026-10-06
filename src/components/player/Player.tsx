@@ -742,8 +742,10 @@ export function Player({
             <Ctl icon="settings-outline" label="Réglages de lecture" onPress={() => { setSettings(true); wake(); }} />
           </View>
 
-          <View pointerEvents={barShown && !everReady ? 'none' : 'box-none'}
-            style={[styles.middle, full && { gap: 72 }, barShown && !everReady && { opacity: 0 }]}>
+          {/* Hidden while sources are searched and when nothing can play: the explanation and its
+              one-tap fix ("Activer le moteur torrent") sit in the middle of the frame. */}
+          <View pointerEvents={(barShown && !everReady) || !source?.uri ? 'none' : 'box-none'}
+            style={[styles.middle, full && { gap: 72 }, ((barShown && !everReady) || !source?.uri) && { opacity: 0 }]}>
             <SkipCtl dir={-1} label="Reculer de 10 secondes" onPress={() => { seekTo(t - 10); wake(); }} />
             {loading ? (
               <View style={{ width: 76, height: 76, alignItems: 'center', justifyContent: 'center' }}><ActivityIndicator color={C.white} size="large" /></View>
