@@ -9,6 +9,7 @@ import { Button, Chip, Txt } from '@/components/ui';
 import { cloudBackup, cloudBackupSupported, useCloudBackup } from '@/p2p/cloud-backup';
 import { social, useMe, useSecurity } from '@/p2p/hooks';
 import { canCarryAccount, passkeySupport, usePasskeyRecord } from '@/p2p/passkey';
+import { relayConfig, useRelayPrefs } from '@/p2p/relays';
 import { C, R, S } from '@/theme/tokens';
 
 const date = (t: number) => new Date(t).toLocaleDateString('fr-FR', { day: 'numeric', month: 'short', year: 'numeric' });
@@ -33,6 +34,7 @@ export default function Security() {
     );
 
   const cloud = useCloudBackup();
+  const relays = relayConfig(useRelayPrefs());
   const passkey = usePasskeyRecord(me?.key);
   // Passkey made on another device (synced account hint), and whether this device holds the phrase.
   const [elsewhereAt, setElsewhereAt] = useState<number>();
@@ -186,6 +188,18 @@ export default function Security() {
             />
           ))}
           <Row icon="add-circle-outline" label="Lier un appareil" detail="Affiche un QR code à scanner" onPress={() => router.push('/settings/pair')} last />
+        </Group>
+
+        <Group
+          title="Réseau"
+          footer="Les relais gardent une copie de ton compte quand tes appareils sont éteints : c’est ce qui permet de le retrouver avec ta phrase si ton seul téléphone est perdu.">
+          <Row
+            icon="cloud-upload-outline"
+            label="Relais Huwa"
+            detail={relays.enabled ? `Activés · ${relays.keys.length} relais` : relays.keys.length ? 'Désactivés' : 'Aucun relais configuré'}
+            onPress={() => router.push('/settings/relays')}
+            last
+          />
         </Group>
 
         {me && (
