@@ -10,8 +10,11 @@ export type EnginePref = 'auto' | 'native' | 'mpv';
 export type Container =
   | 'mp4' | 'mov' | 'hls' | 'dash' | 'mkv' | 'webm' | 'avi' | 'flv' | 'ts' | 'ogg' | 'wmv' | 'rm' | 'unknown';
 
-/** What we know about a source. `codecs` holds sample-entry FourCCs / Matroska codec ids seen. */
-export type Probe = { container: Container; codecs: string[]; via: 'ext' | 'mime' | 'sniff' | 'none' };
+/**
+ * What we know about a source. `codecs` holds sample-entry FourCCs / Matroska codec ids seen.
+ * `torrent`: served by the built-in torrent engine (loopback), see `decideEngine`.
+ */
+export type Probe = { container: Container; codecs: string[]; via: 'ext' | 'mime' | 'sniff' | 'none'; torrent?: boolean };
 
 export type DeviceCaps = {
   platform: 'ios' | 'android' | 'web' | string;
@@ -124,6 +127,10 @@ export function decideEngine(pref: EnginePref, caps: DeviceCaps, probe: Probe | 
   if (pref === 'native') return { engine: 'native', reason: 'réglage' };
   if (pref === 'mpv') return { engine: 'mpv', reason: 'réglage' };
   if (!probe) return { engine: 'native', reason: '' };
+  // Built-in torrent engine, container not known yet (no byte of the torrent on the device): mpv
+  // plays whatever it turns out to be. Sniffing first meant waiting up to 3.5 s for piece 0, and on
+  // a timeout AVPlayer was tried on an MKV it cannot open, for 15 s, before mpv: 18.5 s lost.
+  if (probe.torrent && probe.container === 'unknown') return { engine: 'mpv', reason: 'moteur torrent' };
 
   const nativeOk = NATIVE_CONTAINERS[caps.platform] ?? NATIVE_CONTAINERS.ios;
   if (!nativeOk.includes(probe.container)) return { engine: 'mpv', reason: `conteneur ${LABEL[probe.container] ?? probe.container}` };

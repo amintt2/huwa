@@ -121,6 +121,10 @@ export class HybridPlayer implements EventEmitter<VideoPlayerEvents> {
   private rate = 1;
   private vol = 1;
   private detail = '';
+  /** Position mpv was asked to open the current file at (0 = start), until the next seek. */
+  private mpvStart = 0;
+  /** mpv's first frame of the current file (start timings; expo-video has `onFirstFrameRender`). */
+  private firstFrameListeners = new Set<() => void>();
   /** The first native player belongs to `useVideoPlayer` (released by the hook); later ones to us. */
   private ownsNative = false;
   /** Hidden native player warming a better source (seamless upgrade). */
@@ -169,6 +173,12 @@ export class HybridPlayer implements EventEmitter<VideoPlayerEvents> {
     };
   };
   getEngine = () => this.engine;
+  onMpvFirstFrame = (l: () => void) => {
+    this.firstFrameListeners.add(l);
+    return () => {
+      this.firstFrameListeners.delete(l);
+    };
+  };
   /** Native players to render (EngineView), stable between changes. */
   getViews = () => this.views;
 
@@ -228,6 +238,10 @@ export class HybridPlayer implements EventEmitter<VideoPlayerEvents> {
       this.native.currentTime = t;
       return;
     }
+    // The resume position the file was opened at (`loadMpv` start): already there or on its way.
+    const opened = this.mpvStart;
+    this.mpvStart = 0;
+    if (opened > 0 && Math.abs(t - opened) < 1) return;
     if (Math.abs(t - this.m.time) < 0.25) return;
     this.m.time = t;
     this.view?.seek(t).catch(() => {});
@@ -313,7 +327,12 @@ export class HybridPlayer implements EventEmitter<VideoPlayerEvents> {
     else this.native.pause();
   }
 
-  async replaceAsync(source: VideoSource): Promise<void> {
+  /**
+   * `startAt` (s): resume position. mpv opens the file there directly (`start`), instead of
+   * decoding the beginning and seeking after the load (a second request, other pieces to wait for
+   * on a torrent); the native engine is still positioned by the caller after the load.
+   */
+  async replaceAsync(source: VideoSource, opts?: { startAt?: number }): Promise<void> {
     const token = ++this.token;
     this.abortStage();
     this.settlePending();
@@ -333,7 +352,8 @@ export class HybridPlayer implements EventEmitter<VideoPlayerEvents> {
 
     if (d.engine === 'mpv') {
       if (this.engine === 'native') await this.native.replaceAsync(null).catch(() => {});
-      return this.loadMpv(src, d.reason, 0, token);
+      const at = opts?.startAt;
+      return this.loadMpv(src, d.reason, at && at > 1 ? at : 0, token);
     }
     this.setEngine('native', d.reason);
     this.armWatchdog(token);
@@ -596,6 +616,8 @@ export class HybridPlayer implements EventEmitter<VideoPlayerEvents> {
   private async loadMpv(src: Src, reason: string, start: number, token: number): Promise<void> {
     const old = this.m;
     this.m = freshMpv();
+    this.m.time = start;
+    this.mpvStart = start;
     this.detail = '';
     this.setEngine('mpv', reason);
     this.emit('statusChange', { status: 'loading', oldStatus: old.status });
@@ -684,6 +706,7 @@ export class HybridPlayer implements EventEmitter<VideoPlayerEvents> {
     },
     onStateChange: (e: { nativeEvent: MpvStateEvent }) => {
       const s = e.nativeEvent;
+      if (s.firstFrame) this.firstFrameListeners.forEach((l) => l());
       if (s.paused != null) this.setPaused(s.paused);
       if (s.buffering != null) {
         this.m.buffering = s.buffering;

@@ -34,6 +34,31 @@ export type TorrentStatus = {
   health?: TorrentHealth;
   /** Automatic recoveries since the torrent was added (this app run). */
   recoveries?: number;
+  /** Timeline of the latest `startStream` (absent with an older native build). */
+  start?: TorrentStartTimeline;
+};
+
+/**
+ * native/huwa-torrent-core/src/timeline.rs: marks in ms since the `startStream` call, whose epoch
+ * is `startedAt`; null until reached.
+ */
+export type TorrentStartTimeline = {
+  startedAt: number;
+  metaMs: number | null;
+  /** `probe` (swarm probe cache) | `magnet` (fetched from peers) | `engine` (already there) | `unknown`. */
+  metaFrom: string;
+  firstPeerMs: number | null;
+  firstPieceMs: number | null;
+  firstRequestMs: number | null;
+  firstByteMs: number | null;
+  bytesServed: number;
+  requests: number;
+  /** Requests reading the container index at the end of the file (MKV Cues/Tags, MP4 moov). */
+  tailRequests: number;
+  peersAtFirstByte: number | null;
+  initialPeers: number;
+  peerLimit: number | null;
+  pieceBytes: number | null;
 };
 
 export type TorrentHealth = 'ok' | 'searching' | 'stalled' | 'recovering' | 'idle';

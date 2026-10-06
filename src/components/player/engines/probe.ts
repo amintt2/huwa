@@ -1,5 +1,7 @@
 // Source probing for the engine policy: URL extension, then one `Range: bytes=0-4095` request
 // (Content-Type + magic bytes + MP4 sample entries). Results are cached per URL.
+import { engineHashOf } from '@/torrent/stream-input';
+
 import { conclusiveWithoutSniff, containerFromMime, containerFromUrl, sniff, type Probe } from './policy';
 
 const PROBE_BYTES = 4096;
@@ -62,22 +64,40 @@ function readHead(url: string, headers: Record<string, string> | undefined): Pro
   });
 }
 
+/**
+ * What can be known without a request: the URL extension, and whether the built-in torrent engine
+ * serves it. Its URLs carry the file's extension once the torrent metadata is known; without it, a
+ * sniff would wait for the torrent's first piece (see `decideEngine`), so none is made.
+ */
+export function probeWithoutRequest(url: string): Probe | null {
+  const p = fromUrl(url);
+  return conclusiveWithoutSniff(p) || (p.torrent && p.container === 'unknown') ? p : null;
+}
+
+function fromUrl(url: string): Probe {
+  const torrent = !!engineHashOf(url);
+  return { container: containerFromUrl(url), codecs: [], via: 'ext', ...(torrent ? { torrent } : null) };
+}
+
 /** Never throws; `{ container: 'unknown' }` when nothing could be learned. */
 export async function probeSource(url: string, headers?: Record<string, string>): Promise<Probe> {
   const hit = cache.get(url);
   if (hit) return hit;
 
-  const fromExt: Probe = { container: containerFromUrl(url), codecs: [], via: 'ext' };
-  if (conclusiveWithoutSniff(fromExt)) return remember(url, fromExt);
+  const quick = probeWithoutRequest(url);
+  if (quick) return remember(url, quick);
+  const fromExt = fromUrl(url);
+  const torrent = fromExt.torrent;
   if (!/^https?:/i.test(url)) return fromExt;
 
   const head = await readHead(url, headers);
   if (head.bytes && head.bytes.length) {
     const s = sniff(head.bytes);
-    if (s.container !== 'unknown') return remember(url, s);
+    if (s.container !== 'unknown') return remember(url, torrent ? { ...s, torrent } : s);
   }
   const mime = containerFromMime(head.contentType);
-  if (mime !== 'unknown') return remember(url, { container: mime, codecs: [], via: 'mime' });
-  // Unreachable/unknown: not cached, the next attempt may do better.
-  return fromExt.container !== 'unknown' ? fromExt : { container: 'unknown', codecs: [], via: 'none' };
+  if (mime !== 'unknown') return remember(url, { container: mime, codecs: [], via: 'mime', ...(torrent ? { torrent } : null) });
+  // Unreachable/unknown: not cached, the next attempt may do better. A torrent (MP4 whose first
+  // piece did not come within the sniff budget) stays flagged: mpv, not a 15 s AVPlayer attempt.
+  return torrent ? { container: 'unknown', codecs: [], via: 'none', torrent } : fromExt.container !== 'unknown' ? fromExt : { container: 'unknown', codecs: [], via: 'none' };
 }

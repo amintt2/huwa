@@ -241,7 +241,7 @@ export function Player({
   const [countdown, setCountdown] = useState<number | null>(null);
 
   const { isPlaying } = useEvent(player, 'playingChange', { isPlaying: player.playing });
-  usePlayerTrace(player, mediaKey);
+  usePlayerTrace(player, mediaKey, source?.uri);
   const { status, error } = useEvent(player, 'statusChange', { status: player.status, error: undefined });
 
   // ---------- fullscreen = landscape ----------
@@ -304,10 +304,11 @@ export function Player({
     }
     if (mediaKey) traceInfo(mediaKey, { warm: tookWarm });
     if (mediaKey) traceMark(mediaKey, 'url', tookWarm ? 'lecteur préchauffé' : undefined);
-    (tookWarm ? Promise.resolve() : player.replaceAsync(src))
+    // Resume position, known before the load: mpv opens the file right there (see replaceAsync).
+    const at = keep != null && keep > 1 ? keep : cb.current.startAt?.();
+    (tookWarm ? Promise.resolve() : player.replaceAsync(src, { startAt: at }))
       .then(() => {
         if (!alive) return;
-        const at = keep != null && keep > 1 ? keep : cb.current.startAt?.();
         if (tookWarm) {
           // A warm player already waits at the resume position (else: where it should be).
           const want = at && at > 1 ? at : 0;
