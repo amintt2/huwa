@@ -10,13 +10,20 @@
 //! - `clearCache` `{}` → `{freedBytes}`
 //! - `enforceQuota` `{}` → `{freedBytes}`
 //! - `setConfig` `{cacheLimitBytes?, downloadBps?, uploadBps?, seeding?}` → `Config`
+//! - `probeStart` `{infoHash, sources?, name?, fileIdx?, filename?, episode?, timeoutMs?, minPeers?}`
+//!   → `ProbeStatus` (returns at once; the probe runs in the background, see `probe.rs`)
+//! - `probeStatus` `{id}` → `ProbeStatus`; `{ids}` → `ProbeStatus[]` (unknown ids left out)
+//! - `probeCancel` `{id}` | `{ids}` → `true`
 
 use std::sync::Arc;
 
 use anyhow::{anyhow, Result};
 use serde_json::{json, Value};
 
-use crate::engine::{ConfigPatch, Engine, StartStreamRequest};
+use crate::{
+    engine::{ConfigPatch, Engine, StartStreamRequest},
+    probe::{self, ProbeRequest},
+};
 
 fn id_of(args: &Value) -> Result<String> {
     args.get("id")
@@ -61,6 +68,24 @@ pub fn dispatch(engine: &Arc<Engine>, method: &str, args: Value) -> Result<Value
         "setConfig" => {
             let patch: ConfigPatch = serde_json::from_value(args)?;
             Ok(serde_json::to_value(engine.update_config(patch))?)
+        }
+        "probeStart" => {
+            let req: ProbeRequest = serde_json::from_value(args)?;
+            Ok(serde_json::to_value(probe::start(engine, req)?)?)
+        }
+        "probeStatus" => {
+            if let Some(id) = args.get("id").and_then(Value::as_u64) {
+                let p = engine.probes.get(id).ok_or_else(|| anyhow!("unknown probe {id}"))?;
+                return Ok(serde_json::to_value(p.status())?);
+            }
+            let list: Vec<_> = probe::ids_of(&args)?.into_iter().filter_map(|id| engine.probes.get(id)).map(|p| p.status()).collect();
+            Ok(serde_json::to_value(list)?)
+        }
+        "probeCancel" => {
+            for id in probe::ids_of(&args)? {
+                engine.probes.cancel(id);
+            }
+            Ok(Value::Bool(true))
         }
         other => Err(anyhow!("unknown method {other:?}")),
     }

@@ -18,7 +18,7 @@ import { Alert } from 'react-native';
 
 import Native from '../../modules/huwa-torrent';
 import { getTorrentSettings, hydrateTorrentSettings, setTorrentSettings } from './settings';
-import type { EngineStats, StartStreamInput, StreamHandle, TorrentStatus } from './types';
+import type { EngineStats, ProbeInput, ProbeStatus, StartStreamInput, StreamHandle, TorrentStatus } from './types';
 
 export * from './settings';
 export * from './types';
@@ -89,6 +89,32 @@ export const setQuota = async (quotaBytes: number) => {
     await call('enforceQuota');
   }
 };
+
+// ---- swarm probes ("course des torrents", see ./peer-race.ts) ----
+// Metadata + peers answering a handshake, never a piece; the call returns at once and the probe
+// runs in the engine (bounded: 6 at a time, 8 s by default). A stream started afterwards on a
+// probed torrent reuses its metadata and peers.
+
+export const probeStart = (input: ProbeInput) => call<ProbeStatus>('probeStart', input);
+/** Statuses of the given probes (unknown / expired ids are left out). */
+export const probeStatuses = (ids: number[]) => call<ProbeStatus[]>('probeStatus', { ids });
+export const probeCancel = (ids: number[]) => (ids.length ? call<boolean>('probeCancel', { ids }) : Promise.resolve(true));
+
+/**
+ * May the engine probe swarms right now? Same conditions as playing through it (linked, switched
+ * on, legal notice already accepted — never asked from here —, not on cellular in "Wi-Fi only").
+ */
+export function canProbeTorrents(): boolean {
+  if (!isAvailable()) return false;
+  const s = getTorrentSettings();
+  if (!s.enabled || !s.legalAccepted) return false;
+  try {
+    if (s.wifiOnly && Native?.isOnCellular()) return false;
+  } catch {
+    return false;
+  }
+  return true;
+}
 
 /** Subscribes to the native 1 Hz status feed. No-op when unavailable. */
 export function addStatusListener(cb: (torrents: TorrentStatus[]) => void): () => void {
