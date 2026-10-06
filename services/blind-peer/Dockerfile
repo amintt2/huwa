@@ -1,7 +1,7 @@
 # Relais Huwa : blind peer Holepunch (bibliothèque blind-peer@3.15.1) + politique Huwa (policy.js).
-# Les modules natifs (rocksdb-native, udx-native, sodium-native) sont livrés précompilés pour
+# Les modules natifs (rocksdb-native, udx-native, sodium-native) sont livrés précompilés (image Debian/glibc : les prébuilds musl d’Alpine faisaient planter le relais) pour
 # linux-x64 / linux-arm64 (glibc et musl).
-FROM node:22-alpine
+FROM node:22-bookworm-slim
 WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci --omit=dev && npm cache clean --force
