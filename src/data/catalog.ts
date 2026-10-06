@@ -234,9 +234,38 @@ const MAX_EXTRAS = 400;
  */
 const chapterOverlays = new Map<string, Chapter[]>();
 
+/**
+ * Episodes out per series according to its full airing schedule (data/upcoming.ts): an episode
+ * that airs after the catalog was fetched becomes playable, one announced but not aired yet is
+ * not listed. Same count as the catalog (data/airing.ts `airedEpisodeCount`).
+ */
+const airedOverlays = new Map<string, number>();
+
+function resizeEpisodes(episodes: Episode[], seriesId: string, count: number): Episode[] {
+  if (count <= episodes.length) return episodes.slice(0, count);
+  const last = episodes[episodes.length - 1];
+  const more = makeEpisodes(seriesId, count, Math.max(count, last?.chapters[1] ?? 0), !!last?.title);
+  return [...episodes, ...more.slice(episodes.length)];
+}
+
 function withOverlay(s: Series): Series {
   const chapters = chapterOverlays.get(s.id);
-  return chapters ? { ...s, manhwa: { chapters }, chaptersKnown: true } : s;
+  let out = chapters ? { ...s, manhwa: { chapters }, chaptersKnown: true } : s;
+  const aired = airedOverlays.get(s.id);
+  if (aired && out.anime && aired !== out.anime.episodes.length) out = { ...out, anime: { episodes: resizeEpisodes(out.anime.episodes, s.id, aired) } };
+  return out;
+}
+
+/** Episodes out per series (`seriesId → count`), from the airing schedule. Rebuilds once. */
+export function setAiredCounts(counts: Record<string, number>) {
+  let changed = false;
+  for (const [id, n] of Object.entries(counts)) {
+    if (n > 0 && airedOverlays.get(id) !== n) {
+      airedOverlays.set(id, n);
+      changed = true;
+    }
+  }
+  if (changed) rebuildIndex();
 }
 
 /**

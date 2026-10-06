@@ -8,6 +8,7 @@ import { DEMO_SEASONS } from '@/demo/seasons';
 
 import { hydrateExtraSeries, makeChapters, makeEpisodes, registerSeries, setCatalog, type Palette, type Series } from './catalog';
 import { prequelOf } from './anilist-relations';
+import { airedEpisodeCount } from './airing';
 import { estimateCoverage } from './mapping';
 
 export const ENDPOINT = 'https://graphql.anilist.co';
@@ -72,8 +73,8 @@ const clean = (html: string | null) =>
 const title = (m: Media) => m.title.english ?? m.title.userPreferred;
 const status = (m: Media): Series['status'] =>
   m.status === 'FINISHED' || m.status === 'CANCELLED' ? 'completed' : m.status === 'NOT_YET_RELEASED' ? 'upcoming' : 'ongoing';
-export const episodeCount = (m: Media) =>
-  Math.min(MAX_EPISODES, m.episodes ?? (m.nextAiringEpisode ? m.nextAiringEpisode.episode - 1 : 0));
+/** Episodes out (not the announced total of a season still airing), see data/airing.ts. */
+export const episodeCount = (m: Media) => Math.min(MAX_EPISODES, airedEpisodeCount(m.episodes, m.nextAiringEpisode));
 export const isManhwa = (m: Media) => m.type === 'MANGA' && m.countryOfOrigin === 'KR';
 
 export { isTvLike, prequelOf, sequelOf } from './anilist-relations';

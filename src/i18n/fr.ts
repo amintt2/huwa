@@ -114,6 +114,9 @@ export const fr = {
   'notif.body': 'L’épisode {n} vient de sortir.',
   'notif.scheduled': '{n} notifications programmées',
   'notif.unsupported': 'Notifications indisponibles sur cette plateforme.',
+  'notif.reminderDeniedTitle': 'Notifications désactivées',
+  'notif.reminderDenied': 'Pour recevoir ce rappel, autorise les notifications de Huwa dans les réglages de ton téléphone.',
+  'notif.openSettings': 'Ouvrir les réglages',
 
   // settings
   'settings.title': 'Réglages',

@@ -1,6 +1,6 @@
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { router, useLocalSearchParams } from 'expo-router';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 import Animated, { useAnimatedScrollHandler, useSharedValue } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -13,13 +13,18 @@ import { isStoreBuild } from '@/config/channel';
 import { PRIORITY, usePresearch } from '@/components/presearch';
 import { DetailBackdrop, DetailNav, DetailTabs, Synopsis } from '@/components/detail';
 import { SeasonButton, SeasonSheet, type FranchiseSeasons } from '@/components/season-picker';
+import { NextEpisodeLine, toggleSeriesBell, UpcomingHeader, UpcomingRow } from '@/components/upcoming';
 import { ActionTile, Button, Chip, Cover, MetaLine, Press, Progress, Txt } from '@/components/ui';
+import { airedEpisodeCount, upcomingRows, type AiringNode } from '@/data/airing';
 import { approxEp, chapterRangeLabel, resumeEpisode } from '@/data/bridge';
 import { episodeLabel, getSeries, useCatalog, type Episode, type Series } from '@/data/catalog';
 import { useFranchiseSeasons, useSeasonNumber } from '@/data/franchise';
 import { useMappingSync } from '@/data/mapping-sync';
+import { ensureAired, isAiringSeries, refreshAired, useAiringNow, useUpcomingSchedule } from '@/data/upcoming';
 import { enqueueEpisodes, getItem, useDownloadItems } from '@/downloads';
 import { useThread } from '@/store/derived';
+import { reminderKey } from '@/notifications/plan';
+import { useSettings } from '@/settings/settings';
 import { toggleMyList, useStore } from '@/store/store';
 import { C, F, S, TABULAR } from '@/theme/tokens';
 
@@ -58,6 +63,9 @@ function AnimeDetailPage({ id, franchise, onSeasons }: { id: string; franchise?:
   useMappingSync(series);
   const progress = useStore((s) => s.episodes);
   const inList = useStore((s) => s.myList.includes(id));
+  const seriesBell = useStore((s) => s.seriesReminders.includes(id));
+  const episodeBells = useStore((s) => s.episodeReminders);
+  const { notifications } = useSettings();
   const commentCount = useThread(`series:${id}`).length;
   const downloads = useDownloadItems();
   const [dlFor, setDlFor] = useState<Episode | null>(null);
@@ -80,9 +88,23 @@ function AnimeDetailPage({ id, franchise, onSeasons }: { id: string; franchise?:
     const i = target && series?.anime ? series.anime.episodes.indexOf(target) : 0;
     return Math.max(EPISODE_PAGE, i + 20);
   });
+  // Episodes still to air (full AniList schedule, cached; the catalog's next airing offline).
+  const schedule = useUpcomingSchedule(series);
+  const nodes: AiringNode[] = schedule?.nodes ?? (series?.nextAiring ? [series.nextAiring] : []);
+  const nextAiring = series?.nextAiring;
+  const now = useAiringNow(nodes.map((n) => n.airingAt));
+  // An episode that airs while the page is open becomes a normal playable row.
+  useEffect(() => {
+    if (schedule?.nodes.length) refreshAired(id, now);
+    else if (nextAiring) ensureAired(id, airedEpisodeCount(null, nextAiring, now));
+  }, [schedule, nextAiring, id, now]);
   if (!series?.anime) return <Txt style={{ padding: S.xl }}>Anime introuvable.</Txt>;
 
   const eps = series.anime.episodes;
+  const upcoming = upcomingRows(nodes, eps.length, schedule?.total, now);
+  // Notified anyway: the series bell, or "Ma liste" with the global setting on.
+  const covered = seriesBell || (inList && notifications);
+  const showBell = seriesBell || isAiringSeries(series);
   const resume = resumeEpisode(series, progress) ?? eps[0];
   const started = eps.some((e) => progress[e.id]);
 
@@ -125,6 +147,7 @@ function AnimeDetailPage({ id, franchise, onSeasons }: { id: string; franchise?:
                 router.push(`/watch/${resume.id}`);
               }}
             />
+            {upcoming[0] && <NextEpisodeLine node={upcoming[0]} now={now} />}
             {resumeRatio > 0 && (
               <View style={styles.resumeRow}>
                 <View style={{ flex: 1 }}><Progress value={resumeRatio} height={3} /></View>
@@ -138,6 +161,11 @@ function AnimeDetailPage({ id, franchise, onSeasons }: { id: string; franchise?:
           <View style={styles.tiles}>
             <ActionTile icon={inList ? 'checkmark' : 'add'} label="Ma liste" active={inList} onPress={() => toggleMyList(series.id)}
               accessibilityLabel={inList ? 'Retirer de ma liste' : 'Ajouter à ma liste'} />
+            {showBell && (
+              <ActionTile icon={seriesBell ? 'notifications' : 'notifications-outline'} label="Me rappeler" active={seriesBell}
+                onPress={() => void toggleSeriesBell(series.id, !seriesBell)}
+                accessibilityLabel={seriesBell ? 'Ne plus me rappeler les nouveaux épisodes' : 'Me rappeler les nouveaux épisodes'} />
+            )}
             <ListsButton seriesId={series.id} tile />
             <ActionTile icon="chatbubble-outline" label={commentCount ? `Avis · ${commentCount}` : 'Avis'} onPress={openComments}
               accessibilityLabel={`Commentaires, ${commentCount}`} />
@@ -209,6 +237,15 @@ function AnimeDetailPage({ id, franchise, onSeasons }: { id: string; franchise?:
               label={`Afficher ${Math.min(EPISODE_PAGE, eps.length - limit)} épisodes de plus (${eps.length - limit} restants)`}
               onPress={() => setLimit((n) => n + EPISODE_PAGE)}
             />
+          )}
+          {eps.length <= limit && upcoming.length > 0 && (
+            <>
+              <UpcomingHeader />
+              {upcoming.map((n) => (
+                <UpcomingRow key={`up-${n.episode}`} seriesId={series.id} node={n}
+                  reminded={!!episodeBells[reminderKey(series.id, n.episode)]} covered={covered} />
+              ))}
+            </>
           )}
         </View>
         {dlFor && <DownloadSheet series={series} episode={dlFor} visible onClose={() => setDlFor(null)} />}
