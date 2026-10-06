@@ -102,7 +102,8 @@ test('Paperback 0.9 extension: Application.*, interceptors, state, selectors', a
   assert.equal(headers?.referer, 'https://demo.test/');
   assert.equal(headers?.Cookie, 'age=ok');
 
-  await assert.rejects(sb.call('details', 'cf'), /cloudflare/i);
+  // A Paperback CloudflareError reaches the app as a Cloudflare error (the verification sheet takes over).
+  await assert.rejects(sb.call('details', 'cf'), (e: Error & { cf?: unknown }) => !!e.cf && /blocked/.test(e.message));
 });
 
 test('Paperback 0.8 extension: App.*, RequestManager, cheerio, state manager', async () => {
