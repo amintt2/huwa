@@ -7,6 +7,7 @@ import { useSyncExternalStore } from 'react';
 import { registerRehydrate } from '@/settings/rehydrate';
 
 export type DmNotifMode = 'discreet' | 'instant';
+export type GifAutoplay = 'always' | 'wifi' | 'never';
 
 export type Prefs = {
   follows: string[];
@@ -20,6 +21,11 @@ export type Prefs = {
   petnames: Record<string, string>;
   /** Default block lists were subscribed once (after identity creation). */
   defaultsApplied: boolean;
+  /** GIFs in comments: hidden entirely (a "GIF" placeholder stays). */
+  hideGifs: boolean;
+  /** Blur GIFs from unverified authors (new identity, not followed) until tapped. */
+  blurUnverifiedGifs: boolean;
+  gifAutoplay: GifAutoplay;
 };
 
 const KEY = 'huwa/prefs/v1';
@@ -32,6 +38,9 @@ const initial: Prefs = {
   dmRequests: true,
   petnames: {},
   defaultsApplied: false,
+  hideGifs: false,
+  blurUnverifiedGifs: true,
+  gifAutoplay: 'always',
 };
 
 let prefs: Prefs = initial;

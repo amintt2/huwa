@@ -44,6 +44,14 @@ export type P2PComment = {
   deleted?: boolean;
 };
 
+/**
+ * Community report of a comment, published in the work's flag room (separate base, signed by the
+ * identity, PoW, rate limited). Every reader weighs them (src/social/community.ts); nothing is
+ * deleted. One active flag per (author, comment): the newest replaces it, `null` retracts it.
+ */
+export type FlagReason = 'spoiler' | 'abuse' | 'nsfw' | 'spam' | 'other';
+export type CommentFlag = { comment: string; author: PublicKey; reason: FlagReason; ts: number };
+
 export type Label = { by: PublicKey; target: PublicKey | string; val: 'spam' | 'abuse' | 'spoiler' | 'nsfw' | 'hide'; neg?: boolean; ts: number };
 
 export type Conversation = { peer: PublicKey; peerName: string; lastText: string; lastAt: number; unread: number; request: boolean };
@@ -106,6 +114,9 @@ export interface P2P {
   /** Only the author can edit or delete; peers enforce it in the room reducer. */
   editComment(seriesId: string, commentId: string, patch: { text: string; spoiler: boolean }): Promise<void>;
   deleteComment(seriesId: string, commentId: string): Promise<void>;
+  /** Community reports of a work's comments (see CommentFlag). */
+  watchFlags(seriesId: string, cb: (all: CommentFlag[]) => void): Unsubscribe;
+  flagComment(seriesId: string, commentId: string, reason: FlagReason | null): Promise<void>;
 
   // Moderation (phase 4)
   follow(key: PublicKey): Promise<void>;

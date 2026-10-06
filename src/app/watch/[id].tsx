@@ -28,6 +28,11 @@ import { Button, Chip, Cover, IconButton, Press, Txt } from '@/components/ui';
 import { chapterAfterEpisode } from '@/data/bridge';
 import { episodeLabel, getEpisode, useCatalog } from '@/data/catalog';
 import { useMappingSync } from '@/data/mapping-sync';
+import { useCommunityThread } from '@/p2p/community-hooks';
+import { numericParam, registerSeekTarget } from '@/social/anchor-nav';
+import { commentAnchor } from '@/social/anchors';
+import { extractGif } from '@/social/gif';
+import { plainText } from '@/social/markdown';
 import { useThread } from '@/store/derived';
 import { flushPendingWrites } from '@/store/persist';
 import { getState, markEpisodeDone, saveEpisodeProgress, toggleMyList, useStore } from '@/store/store';
@@ -39,13 +44,14 @@ import { C, S } from '@/theme/tokens';
 export { ErrorScreen as ErrorBoundary } from '@/components/error-screen';
 
 export default function Watch() {
-  const { id } = useLocalSearchParams<{ id: string }>();
+  // `t`: start at this second (comment anchors, huwa://watch/<ep>?t=767 links).
+  const { id, t } = useLocalSearchParams<{ id: string; t?: string }>();
   const found = getEpisode(id);
   if (!found) return <Txt style={{ padding: S.xl }}>Épisode introuvable.</Txt>;
-  return <WatchScreen key={id} id={id} />;
+  return <WatchScreen key={id} id={id} at={numericParam(t, 86400)} />;
 }
 
-function WatchScreen({ id }: { id: string }) {
+function WatchScreen({ id, at }: { id: string; at?: number }) {
   const insets = useSafeAreaInsets();
   // Chapter ranges change when earlier seasons or community corrections arrive.
   useCatalog();
@@ -59,13 +65,31 @@ function WatchScreen({ id }: { id: string }) {
   const count = useThread(target).length;
   const playerRef = useRef<PlayerHandle>(null);
   const [full, setFull] = useState(false);
-  const thread = useThread(target);
+  const { visible: thread } = useCommunityThread(target);
+  // Anchored comments over the video and on the scrubber: moments and ranges, plain text (no
+  // spoiler, no community-hidden comment, no GIF link).
   const timed = useMemo(
-    () => thread.filter((c) => c.timestamp != null && !c.spoiler && !c.parentId)
-      .map((c) => ({ id: c.id, author: c.author, text: c.text, timestamp: c.timestamp! }))
-      .sort((a, b) => a.timestamp - b.timestamp),
+    () => thread.flatMap((c) => {
+      if (c.deleted || c.verdict.spoiler || c.community?.hidden || c.parentId) return [];
+      const { anchor, body } = commentAnchor(c);
+      if (anchor?.type !== 'time') return [];
+      const text = plainText(extractGif(body).text) || 'GIF';
+      return [{ id: c.id, author: c.authorName, text, timestamp: anchor.start, end: anchor.end }];
+    }).sort((a, b) => a.timestamp - b.timestamp),
     [thread],
   );
+  // A comment chip tapped in the comments sheet seeks this player in place.
+  const pendingSeek = useRef(at);
+  useEffect(() => registerSeekTarget(id, (s) => playerRef.current?.seekTo(s)), [id]);
+  // Same episode reopened with another `t` (deep link while playing): seek there.
+  const firstAt = useRef(true);
+  useEffect(() => {
+    if (firstAt.current) {
+      firstAt.current = false;
+      return;
+    }
+    if (at !== undefined) playerRef.current?.seekTo(at);
+  }, [at]);
   const ids = useAnimeIds(series.id);
   const langPrefs = useSettings();
   // Downloaded episode: played from the local file, no addon is asked (works offline).
@@ -154,6 +178,11 @@ function WatchScreen({ id }: { id: string }) {
   // A finished episode starts over; a rewatch in progress (position saved again, not at the end)
   // resumes. `done` stays true for the "vu" badge, so it can't decide this alone.
   const startAt = () => {
+    if (pendingSeek.current !== undefined) {
+      const s = pendingSeek.current;
+      pendingSeek.current = undefined;
+      return s;
+    }
     const saved = getState().episodes[id];
     if (!saved || !saved.duration) return undefined;
     return saved.position / saved.duration < 0.92 ? saved.position : undefined;

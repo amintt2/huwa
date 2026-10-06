@@ -5,12 +5,13 @@ import { CommentsPanel } from '@/components/comments';
 import { StateView } from '@/components/states';
 import { Chip, IconButton, Txt } from '@/components/ui';
 import { chapterLabel, episodeLabel, getChapter, getEpisode, getSeries } from '@/data/catalog';
+import { numericParam } from '@/social/anchor-nav';
 import { useThread } from '@/store/derived';
 import { C, S, type Kind } from '@/theme/tokens';
 
 /** Bottom sheet with the full thread of an episode or a chapter. */
 export default function CommentsSheet() {
-  const params = useLocalSearchParams<{ target?: string; kind?: Kind }>();
+  const params = useLocalSearchParams<{ target?: string; kind?: Kind; page?: string }>();
   const target = typeof params.target === 'string' && /^(ep|ch|series):.+/.test(params.target) ? params.target : '';
   if (!target) {
     // Shared / hand-typed link without a valid thread.
@@ -20,7 +21,9 @@ export default function CommentsSheet() {
       </View>
     );
   }
-  return <Thread target={target} kindParam={params.kind} />;
+  // Opened from the reader: its current page, so the composer can anchor on it.
+  const page = target.startsWith('ch:') ? numericParam(params.page, 9999) : undefined;
+  return <Thread target={target} kindParam={params.kind} page={page || undefined} />;
 }
 
 /** The thread's kind: the link's `kind` when given, else what the target points to. */
@@ -33,7 +36,7 @@ function kindOf(target: string, param?: string): Kind {
   return s?.anime || !s?.manhwa ? 'anime' : 'manhwa';
 }
 
-function Thread({ target, kindParam }: { target: string; kindParam?: string }) {
+function Thread({ target, kindParam, page }: { target: string; kindParam?: string; page?: number }) {
   const kind = kindOf(target, kindParam);
   const count = useThread(target).length;
   const [type, id] = target.split(':');
@@ -67,7 +70,7 @@ function Thread({ target, kindParam }: { target: string; kindParam?: string }) {
 
   return (
     <View style={{ flex: 1, backgroundColor: C.surface }}>
-      <CommentsPanel target={target} kind={kind} header={header} />
+      <CommentsPanel target={target} kind={kind} header={header} page={page} />
     </View>
   );
 }

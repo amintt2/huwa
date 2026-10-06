@@ -25,16 +25,18 @@ import { chapterLabel, getChapter, PAGE_ASPECT } from '@/data/catalog';
 import { isDemo } from '@/demo/flags';
 import { useThread } from '@/store/derived';
 import { getState, saveChapterProgress } from '@/store/store';
+import { numericParam, registerPageTarget } from '@/social/anchor-nav';
 import { C, R, S } from '@/theme/tokens';
 
 const PREFETCH_AHEAD = 4;
 
 export default function Read() {
-  const { id } = useLocalSearchParams<{ id: string }>();
+  // `page` (1-based): open at this page (comment anchors, huwa://read/<ch>?page=12 links).
+  const { id, page } = useLocalSearchParams<{ id: string; page?: string }>();
   if (!getChapter(id)) return <Txt style={{ padding: S.xl }}>Chapitre introuvable.</Txt>;
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
-      <Reader key={id} id={id} />
+      <Reader key={id} id={id} startPage={numericParam(page, 9999)} />
     </GestureHandlerRootView>
   );
 }
@@ -60,7 +62,7 @@ function pageAt(offsets: number[], y: number) {
   return at;
 }
 
-function Reader({ id }: { id: string }) {
+function Reader({ id, startPage }: { id: string; startPage?: number }) {
   const insets = useSafeAreaInsets();
   const { width, height } = useWindowDimensions();
   const { series, chapter } = getChapter(id)!;
@@ -126,7 +128,7 @@ function Reader({ id }: { id: string }) {
     Promise.resolve().then(() => {
       if (!alive || restored.current) return;
       restored.current = true;
-      let pos = getPosition(id);
+      let pos = startPage ? { page: startPage - 1, offset: 0 } : getPosition(id);
       if (!pos) {
         const saved = getState().chapters[id];
         if (saved && !saved.done && saved.ratio > 0.05) pos = { page: Math.floor(saved.ratio * (pages.length - 1)), offset: 0 };
@@ -193,6 +195,13 @@ function Reader({ id }: { id: string }) {
     else list.current?.scrollToOffset({ offset: offsets[target], animated: true });
   };
 
+  // Comment page anchors: jump in place when this chapter is open under the comments sheet.
+  const goToRef = useRef(goTo);
+  useEffect(() => {
+    goToRef.current = goTo;
+  });
+  useEffect(() => registerPageTarget(id, (p) => goToRef.current(p - 1)), [id]);
+
   const switchMode = () => {
     setReaderMode(paged ? 'vertical' : 'paged');
     savePosition(id, { page, offset: 0 });
@@ -212,7 +221,7 @@ function Reader({ id }: { id: string }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mode]);
 
-  const openComments = () => router.push({ pathname: '/comments', params: { target: `ch:${id}`, kind: 'manhwa' } });
+  const openComments = () => router.push({ pathname: '/comments', params: { target: `ch:${id}`, kind: 'manhwa', page: String(page + 1) } });
   const onImageLoad = (uri: string, w: number, h: number) => {
     if (!w || !h) return;
     const r = w / h;

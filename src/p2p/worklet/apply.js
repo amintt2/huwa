@@ -22,6 +22,13 @@ const MAP_RATE = {
   hourMs: 3_600_000
 }
 
+/** Reports: a few per minute at most, cheap to verify, rarely sent. */
+const FLAG_RATE = {
+  minIntervalMs: 3_000,
+  perHour: 60,
+  hourMs: 3_600_000
+}
+
 const XP_RULES = {
   minEpisodeGapMs: 20 * 60_000,
   maxPerDay: 30,
@@ -230,6 +237,43 @@ function createMapApply(room) {
   }
 }
 
+// ---- flag room: community reports, one Autobase per work ---------------------
+// One active flag per (comment, author): `f/<comment>/<author>` = { r, ts }; a newer flag replaces
+// it, `on: false` retracts it. The room cannot see the comment room, so flags on unknown ids are
+// kept (they only count once a reader matches them with a comment). The outcome is computed by
+// every reader (src/social/community.ts), weighted by the author's rank.
+
+const flagKey = (id, author) => 'f/' + id + '/' + author
+
+async function flagStep(view, node, writer) {
+  const v = node.value
+  const b = v.body
+  const author = writer.who.id
+  const stats = await get(view, 'a/' + author)
+  if (!pow.check(pow.powPayload(v, writer.w), v.nonce, pow.difficultyFor(stats))) return false
+  const rate = rateOk(stats, v.ts, writer.who.dev, FLAG_RATE)
+  if (!rate.ok) return false
+  const key = flagKey(b.id, author)
+  const prev = await get(view, key)
+  if (prev && prev.ts >= v.ts) return false
+  if (b.on) await view.put(key, { r: b.r, ts: v.ts })
+  else if (prev) await view.del(key)
+  else return false
+  await view.put('a/' + author, { n: (stats ? stats.n : 0) + 1, last: Math.max((stats && stats.last) || 0, v.ts), recent: rate.recent.concat(v.ts), vouched: false, devs: { ...((stats && stats.devs) || {}), [writer.who.dev]: v.ts } })
+  return true
+}
+
+function createFlagApply(work) {
+  return async function apply(nodes, view, host) {
+    for (const node of nodes) {
+      if (node.value === null || !schema.flagNode(node.value, work)) continue
+      const writer = await resolveWriter(view, node)
+      if (!writer) continue
+      if (await flagStep(view, node, writer)) await accept(view, host, node, writer)
+    }
+  }
+}
+
 // ---- personal base: identity journal, profile, moderation, XP --------------
 
 async function logEvent(view, t, body, ts, dev) {
@@ -403,6 +447,9 @@ module.exports = {
   MAP_RATE,
   mapKey,
   createMapApply,
+  FLAG_RATE,
+  flagKey,
+  createFlagApply,
   XP_RULES,
   commentId,
   rateOk,

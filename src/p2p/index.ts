@@ -58,7 +58,7 @@ function documentsDir() {
   return decodeURIComponent(uri.replace(/^file:\/\//, '')).replace(/\/$/, '');
 }
 
-type WatchKey = 'watchComments' | 'watchLabels' | 'watchConversations' | 'watchMessages' | 'watchMapping';
+type WatchKey = 'watchComments' | 'watchLabels' | 'watchConversations' | 'watchMessages' | 'watchMapping' | 'watchFlags';
 type Watch = { method: WatchKey; args: unknown[]; unsub: Unsubscribe };
 
 /**
@@ -160,6 +160,8 @@ class SwitchingP2P implements P2P {
   toggleLike: P2P['toggleLike'] = (...a) => this.impl.toggleLike(...a);
   editComment: P2P['editComment'] = (...a) => this.impl.editComment(...a);
   deleteComment: P2P['deleteComment'] = (...a) => this.impl.deleteComment(...a);
+  watchFlags: P2P['watchFlags'] = (...a) => this.track('watchFlags', a);
+  flagComment: P2P['flagComment'] = (...a) => this.impl.flagComment(...a);
 
   follow: P2P['follow'] = (...a) => this.impl.follow(...a);
   unfollow: P2P['unfollow'] = (...a) => this.impl.unfollow(...a);

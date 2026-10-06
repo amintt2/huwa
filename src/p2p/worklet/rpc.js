@@ -23,6 +23,8 @@ const METHODS = new Set([
   'toggleLike',
   'editComment',
   'deleteComment',
+  'listFlags',
+  'flagComment',
   'vouch',
   'listComments',
   'listMapping',

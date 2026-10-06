@@ -64,8 +64,8 @@ function fetchXp(key: string): Promise<void> {
   return p;
 }
 
-/** Recomputed XP of the given authors (missing until their journal is read). */
-function useAuthorXp(authors: string[]): Record<string, number> {
+/** Recomputed XP of the given authors (missing until their journal is read). Also weighs comment reports. */
+export function useAuthorXp(authors: string[]): Record<string, number> {
   const [tick, setTick] = useState(0);
   const list = authors.join(',');
   useEffect(() => {
