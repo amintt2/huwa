@@ -33,8 +33,15 @@ des sources, avec la raison et le décodage (matériel/logiciel).
   `hwdec=auto-safe` (VideoToolbox), `profile=fast` (scalers bilinéaires, pas de dithering ni
   d'interpolation), cache borné (`demuxer-max-bytes=48MiB`, `demuxer-max-back-bytes=16MiB`,
   20 s de lecture anticipée), progression à 4 Hz seulement pendant la lecture, pause + `vid=no`
-  en arrière-plan. Sous-titres intégrés (ASS/SSA rendus par libass avec leur style, SRT, PGS),
-  pistes audio, vitesse, volume, en-têtes HTTP (dont `User-Agent`).
+  en arrière-plan. Sous-titres intégrés (ASS/SSA rendus par libass avec leur style et les polices
+  jointes au MKV, SRT, PGS, VobSub), pistes audio, vitesse, volume, en-têtes HTTP (dont `User-Agent`).
+- Formats (bloc séparé de `MpvCore.start`) : `sub-ass-override=scale` (style du fichier gardé ;
+  `force` depuis JS si « respecter le style de la vidéo » est coupé), `sub-codepage=auto`
+  (uchardet), `sub-fonts-dir`, `vd-lavc-check-hw-profile` + `hwdec-software-fallback=yes` (Hi10P
+  et profils refusés par VideoToolbox : logiciel tout de suite), `vd-lavc-threads` = nombre de
+  cœurs. Depuis JS : `setSubtitleOption` (options `sub-…` seulement : style de l'utilisateur,
+  décalage) et `addSubtitleFile` / `removeSubtitle` (ASS externe dessiné par libass). Décodeurs et
+  démuxeurs réellement présents : `scripts/format-samples/README.md`.
 - Pas de PiP ni d'AirPlay vidéo avec mpv (ce sont des fonctions d'AVPlayer).
 
 Construire :

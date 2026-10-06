@@ -135,6 +135,12 @@ public final class HuwaMpvView: ExpoView {
     #endif
   }
 
+  func command(_ args: [String]) {
+    #if HUWA_MPV
+    core?.command(args)
+    #endif
+  }
+
   func destroy() {
     #if HUWA_MPV
     core?.destroy()

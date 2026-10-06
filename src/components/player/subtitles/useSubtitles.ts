@@ -84,8 +84,8 @@ export async function pickSubtitleFile(): Promise<{ name: string; parsed: Parsed
 
 // ---------- controller ----------
 
-type LocalTrack = { track: Track; doc: SubtitleDoc };
-type LoadState = { url?: string; doc: SubtitleDoc | null; error?: string };
+type LocalTrack = { track: Track; doc: SubtitleDoc; text: string };
+type LoadState = { url?: string; doc: SubtitleDoc | null; text?: string; error?: string };
 
 export function useSubtitleController({
   external,
@@ -154,7 +154,7 @@ export function useSubtitleController({
     if (!url) return;
     let alive = true;
     loadSubtitleDoc(url)
-      .then((p) => alive && setLoad({ url, doc: p.doc }))
+      .then((p) => alive && setLoad({ url, doc: p.doc, text: p.text }))
       .catch((e: unknown) => alive && setLoad({ url, doc: null, error: errorMessage(e) }));
     return () => {
       alive = false;
@@ -164,6 +164,8 @@ export function useSubtitleController({
   const local = selected?.kind === 'local' ? locals.find((l) => l.track.key === selected.key) : undefined;
   const tr = useTranslatedDoc(current ? load.doc : null, url, selected?.fromLang, selected?.lang, time, translating && trStatus === 'installed');
   const doc = local ? local.doc : !current ? null : translating ? tr.doc : load.doc;
+  // Text of the file as is (not for a translation): what mpv's libass draws for styled ASS.
+  const docText = local ? local.text : current && !translating ? load.text : undefined;
   const trError = translating && trStatus !== undefined && trStatus !== 'installed' && prompted
     ? 'Modèle de traduction non téléchargé : Réglages → Sous-titres pour l’installer.'
     : tr.error;
@@ -210,7 +212,7 @@ export function useSubtitleController({
         name: res.name,
         sourceRank: -1,
       };
-      setLocals((l) => [...l, { track, doc: res.parsed.doc }]);
+      setLocals((l) => [...l, { track, doc: res.parsed.doc, text: res.parsed.text }]);
       setUserKey(track.key);
     } catch (e) {
       setPickError(e instanceof SubtitleParseError ? e.message : 'Fichier illisible.');
@@ -228,6 +230,8 @@ export function useSubtitleController({
     select,
     /** Parsed document to draw (external or local track), null for embedded / off. */
     doc,
+    /** Decoded text of that document's file (undefined for a translation). */
+    docText,
     loading: !!url && !current,
     error: current ? load.error ?? trError : pickError,
     /** Short notice over the video (translated subtitles shown for the first time). */

@@ -45,6 +45,11 @@ export type MpvViewHandle = {
   setSubtitleTrack(id: number): Promise<void>;
   setFill(fill: boolean): Promise<void>;
   stop(): Promise<void>;
+  /** `sub-…` option (subtitle look and delay). Missing on builds older than this API. */
+  setSubtitleOption?(name: string, value: string): Promise<void>;
+  /** Adds and selects a local subtitle file (libass), for the current file only. */
+  addSubtitleFile?(path: string, title: string, lang: string): Promise<void>;
+  removeSubtitle?(id: number): Promise<void>;
 };
 
 export type MpvViewProps = ViewProps & {

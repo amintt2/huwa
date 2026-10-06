@@ -31,6 +31,7 @@ import { C, F, R, S } from '@/theme/tokens';
 import { useSkipTimes, type Segment } from './aniskip';
 import { SourceLoadingBar, type LoadPhase } from './SourceLoadingBar';
 import { EngineView, useEnginePlayer, type EnginePlayer as VideoPlayer } from './engines';
+import { useMpvSubtitles } from './engines/use-mpv-subtitles';
 import { GestureLayer, type Hud } from './GestureLayer';
 import { AUTO_NEXT_SECONDS, NextCard, Pill } from './overlays';
 import { PlayerSettings, type Option } from './PlayerSettings';
@@ -435,6 +436,8 @@ export function Player({
   useEffect(() => {
     onSubLangsRef.current?.(subLangsKey ? subLangsKey.split(',') : []);
   }, [subLangsKey, source?.uri]);
+  // mpv engine: the user's look on the tracks it draws; styled ASS files drawn by libass.
+  const libass = useMpvSubtitles(player, subs.doc, subs.docText, subs.selected?.lang ?? 'und', subs.offset);
   const shownNotice = notice || subs.badge || undefined;
   const embIndex = subs.embeddedIndex;
   useEffect(() => {
@@ -584,7 +587,7 @@ export function Player({
 
       {!pip && (
         <SubtitleOverlay
-          doc={subs.doc}
+          doc={libass ? null : subs.doc}
           time={time.t}
           playing={isPlaying}
           rate={prefs.rate}
