@@ -6,6 +6,7 @@ import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
 
 import { containerFromMime, containerFromUrl, decideEngine, sniff, type DeviceCaps } from '../policy';
+import { probeSource, probeWithoutRequest } from '../probe';
 
 const head = (name: string) => new Uint8Array(readFileSync(new URL(`./fixtures/${name}.head`, import.meta.url)));
 
@@ -74,4 +75,26 @@ test('the setting wins, and nothing breaks without mpv', () => {
   assert.equal(decideEngine('mpv', iphone, sniff(head('sintel-h264.mp4'))).engine, 'mpv');
   assert.equal(decideEngine('auto', noMpv, mkv).engine, 'native');
   assert.equal(decideEngine('mpv', noMpv, mkv).engine, 'native');
+});
+
+test('built-in torrent engine: straight to mpv unless the URL says MP4, never a sniff that waits for piece 0', async () => {
+  const h = 'cd'.repeat(20);
+  const bare = `http://127.0.0.1:50000/${h}/0`;
+  const mkvUrl = `http://127.0.0.1:50000/${h}/0.mkv`;
+  const mp4Url = `http://127.0.0.1:50000/${h}/0.mp4`;
+  // No extension (metadata not known yet): decided without any request.
+  const p = probeWithoutRequest(bare)!;
+  assert.deepEqual(p, { container: 'unknown', codecs: [], via: 'ext', torrent: true });
+  assert.deepEqual(decideEngine('auto', iphone, p), { engine: 'mpv', reason: 'moteur torrent' });
+  // probeSource answers at once (there is no XMLHttpRequest here: a request would throw).
+  assert.deepEqual(await probeSource(bare), p);
+  assert.equal(decideEngine('auto', iphone, probeWithoutRequest(mkvUrl)).engine, 'mpv');
+  // MP4 still needs its sample entries (hvc1 vs hev1, AV1…): sniffed.
+  assert.equal(probeWithoutRequest(mp4Url), null);
+  assert.equal(decideEngine('auto', iphone, { ...sniff(head('sintel-h264.mp4')), torrent: true }).engine, 'native');
+  // The user's engine setting still wins.
+  assert.equal(decideEngine('native', iphone, p).engine, 'native');
+  // Other servers: unchanged.
+  assert.equal(probeWithoutRequest('https://debrid.test/dl/ABCDEF'), null);
+  assert.equal(decideEngine('auto', iphone, { container: 'unknown', codecs: [], via: 'none' }).engine, 'native');
 });

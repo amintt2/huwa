@@ -30,6 +30,8 @@ final class MpvCore {
   private var paused = true
   private var lastError = ""
   private var loaded = false
+  /// First frame of the current file reported (start timings).
+  private var firstFrameSent = false
 
   init(layer: CAMetalLayer) {
     self.layer = layer
@@ -61,7 +63,15 @@ final class MpvCore {
       ("demuxer-max-bytes", "48MiB"),
       ("demuxer-max-back-bytes", "16MiB"),
       ("demuxer-readahead-secs", "20"),
+      // Fast first frame: play as soon as the first frame is decoded (mpv's default, pinned here:
+      // waiting for `cache-pause-wait` seconds of cache before frame 1 would cost seconds on a
+      // torrent that delivers piece by piece). After an underrun mid-playback, resume with 2 s.
+      ("cache-pause-initial", "no"),
       ("cache-pause-wait", "2"),
+      // libavformat containers (MP4, TS, AVI): codec parameters from 1 s of packets instead of 5 s,
+      // and probing within 2 MiB. MKV uses mpv's own demuxer (headers only, no analysis).
+      ("demuxer-lavf-analyzeduration", "1"),
+      ("demuxer-lavf-probesize", "2097152"),
       ("network-timeout", "20"),
       // Keep the file open at EOF (eof-reached → JS "playToEnd"; seeking back still works).
       ("keep-open", "yes"),
@@ -139,6 +149,7 @@ final class MpvCore {
     queue.async { [self] in
       guard let ctx = mpv else { return }
       loaded = false
+      firstFrameSent = false
       lastError = ""
       var fields: [String] = []
       for (k, v) in headers {
@@ -221,6 +232,13 @@ final class MpvCore {
         ]
         main { $0.mpvLoaded(info) }
         emitProgress(ctx)
+      case MPV_EVENT_PLAYBACK_RESTART:
+        // "Playback (re)started after loading or seeking": the first one after FILE_LOADED is
+        // the first frame on screen (a `start` position included). Reported once per file.
+        if loaded && !firstFrameSent {
+          firstFrameSent = true
+          main { $0.mpvState(["firstFrame": true]) }
+        }
       case MPV_EVENT_VIDEO_RECONFIG:
         // hwdec-current is only known once the decoder is up.
         let hw = getString(ctx, "hwdec-current") ?? "no"

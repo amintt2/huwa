@@ -28,6 +28,8 @@ export type MpvStateEvent = {
   /** Display size of the video (after reconfig). */
   width?: number;
   height?: number;
+  /** First frame of the file on screen (first playback restart after load; iOS). */
+  firstFrame?: boolean;
 };
 
 /** Imperative API of the native view (ref). All calls are fire-and-forget on the mpv queue. */

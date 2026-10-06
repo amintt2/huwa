@@ -26,8 +26,12 @@
 //!   networks). Before that only the serving stream's queue (+ the MP4 index) is requested: with
 //!   many peers, the natural-order queue, the walker and an MKV tail used to fan the first
 //!   connected peers out over dozens of pieces, each getting a sliver of the downlink, and piece 0
-//!   came last: popular swarms started slower than obscure ones. The walker and the MKV index wait
-//!   for the window's first bytes; an MP4 `moov` (needed before the first frame) is fetched at once.
+//!   came last: popular swarms started slower than obscure ones. The walker waits for the window's
+//!   first bytes; the container index the player reads before its first frame (MP4 `moov`, MKV
+//!   Cues + Tags: mpv seeks to the end of an mkvmerge file before playing) is fetched at once.
+//! - **Anchor** (one per playback, see `spawn_anchor`): an engine-held stream parked on the
+//!   playhead, so an empty selection never meets "no stream open" between two player requests —
+//!   librqbit takes that for a finished torrent and drops the seeders.
 //! - **Seeks**: the responses of the previous window that are still open and far from the new
 //!   position are ended (their `FileStream` queues leave librqbit's priority list at once), the
 //!   tail prefetch is stopped and the walker restarts at the new offset. librqbit has no API to
@@ -64,7 +68,7 @@ use tracing::{debug, info, warn};
 
 use crate::{
     engine::{Engine, Entry, ManagedTorrentHandle},
-    priorities::{readahead_target_bytes, tail_prefetch_bytes, PlaybackIntent},
+    priorities::{readahead_target_bytes, startup_tail_plan, ContainerIndex, PlaybackIntent},
 };
 
 /// Size of librqbit's blocking-work semaphore (`SessionOptions::runtime_worker_threads`).
@@ -86,6 +90,11 @@ pub const BIG_SWARM: usize = 40;
 /// faster dialling) the phone's downlink was shared by as many in-flight pieces and piece 0 — the
 /// only one the player waits for — arrived at a fiftieth of the link. 12 peers of a healthy swarm
 /// still exceed a mobile downlink; small swarms keep the configured limit (every peer counts there).
+///
+/// Not raised with the start fixes of the anchor stream: the limit is a semaphore over connecting +
+/// live peers fixed when the torrent goes live (librqbit cannot lift it "until the first bytes"),
+/// and the device timelines showed the time going to seeders dropped by librqbit, not to a lack of
+/// slots. `peersAtFirstByte` / `peerLimit` in the start timeline tell whether it ever starves one.
 pub const BIG_SWARM_PEERS: usize = 12;
 
 /// Per-torrent connected-peer limit for a stream, from the swarm size its probe saw.
@@ -195,6 +204,8 @@ pub struct Playback {
     next_reader: AtomicU64,
     /// Metered network: smaller read-ahead, nothing selected (see the module docs).
     pub metered: AtomicBool,
+    /// Anchor stream (see `spawn_anchor`), for the whole life of the playback.
+    anchor: Mutex<Option<tokio::task::AbortHandle>>,
 }
 
 impl Playback {
@@ -218,6 +229,7 @@ impl Playback {
             blocked: Mutex::new(HashMap::new()),
             next_reader: AtomicU64::new(1),
             metered: AtomicBool::new(false),
+            anchor: Mutex::new(None),
         }
     }
 
@@ -289,6 +301,13 @@ impl Playback {
         if let Some(w) = self.walker.lock().take() {
             w.task.abort();
         }
+        if let Some(a) = self.anchor.lock().take() {
+            a.abort();
+        }
+    }
+
+    pub fn has_anchor(&self) -> bool {
+        self.anchor.lock().as_ref().is_some_and(|a| !a.is_finished())
     }
 }
 
@@ -296,6 +315,9 @@ impl Drop for Playback {
     fn drop(&mut self) {
         if let Some(w) = self.walker.get_mut().take() {
             w.task.abort();
+        }
+        if let Some(a) = self.anchor.get_mut().take() {
+            a.abort();
         }
         if let Some(t) = self.tail.get_mut().take() {
             t.abort();
@@ -343,9 +365,8 @@ impl Streaming {
 
     /// Called by the HTTP server for every request, before the body is streamed. Returns the
     /// playback and the response generation (for `TrackedReader`).
-    /// `index_first`: the container index may be needed before the first frame (MP4 `moov` at the
-    /// end of the file), so it is fetched in parallel with the head; otherwise (MKV Cues, only used
-    /// for seeking) once the head arrived.
+    /// `index`: what the player reads at the end of the file before its first frame (MP4 `moov`,
+    /// MKV Cues + Tags): fetched in parallel with the head (see `startup_tail_plan`).
     #[allow(clippy::too_many_arguments)]
     pub fn on_request(
         &self,
@@ -357,7 +378,7 @@ impl Streaming {
         intent: PlaybackIntent,
         cache_limit_bytes: u64,
         metered: bool,
-        index_first: bool,
+        index: ContainerIndex,
     ) -> Option<(Arc<Playback>, u64)> {
         let geometry = Geometry::of(handle, file_idx)?;
         let pb = {
@@ -367,6 +388,7 @@ impl Streaming {
                 Some(p) => p,
                 None => {
                     let p = Arc::new(Playback::new(file_idx, geometry));
+                    *p.anchor.lock() = Some(spawn_anchor(runtime, handle.clone(), file_idx, Arc::downgrade(&p)));
                     if let Some(old) = map.insert(hex.to_string(), p.clone()) {
                         old.stop_walker();
                     }
@@ -392,7 +414,7 @@ impl Streaming {
         };
 
         if intent == PlaybackIntent::DirectInitial && !pb.tail_started.swap(true, Ordering::AcqRel) {
-            let tail = tail_prefetch_bytes(geometry.file_len, geometry.piece_len);
+            let (tail, index_first) = startup_tail_plan(index, geometry.file_len, geometry.piece_len);
             let tail_start = geometry.file_len.saturating_sub(tail);
             // Pointless when the tail is within the head's own 32 MiB look-ahead.
             if tail > 0 && tail_start > start.saturating_add(32 * 1024 * 1024) {
@@ -470,6 +492,55 @@ pub async fn walk_pieces(handle: ManagedTorrentHandle, file_idx: usize, g: Geome
         pos = g.next_piece_start(pos);
     }
     Ok(())
+}
+
+/// How often the anchor follows the playhead.
+const ANCHOR_TICK: Duration = Duration::from_millis(250);
+
+/// Anchor stream: one `FileStream` held by the engine for the whole playback, parked on the
+/// playhead. Its queue is the serving stream's own (no extra fan-out); it exists so that librqbit
+/// never sees "nothing selected and no stream open" while a playback is alive.
+///
+/// That state happens between two HTTP responses of the player (the app's 4 KiB container sniff
+/// ends before the player opens its stream; AVPlayer's `bytes=0-1` probe; every mpv/ffmpeg seek
+/// closes its connection before opening the next one) while the selection is empty (window not
+/// settled yet, metered network). librqbit 9.0.1 then treats the torrent as *finished*
+/// (`is_finished_and_no_active_streams`): each peer task sends `not interested` and sleeps 5 s
+/// before looking again, peers that have the whole torrent — the seeders, most of an anime swarm —
+/// are disconnected and marked `NotNeeded` (never re-dialled until the selection grows again), and
+/// any piece completing in that gap disconnects all of them at once. The next request then found
+/// a swarm without its seeders: the 15 s+ first frames and the starts that never showed one.
+fn spawn_anchor(runtime: &tokio::runtime::Runtime, handle: ManagedTorrentHandle, file_idx: usize, pb: Weak<Playback>) -> tokio::task::AbortHandle {
+    runtime
+        .spawn(async move {
+            let mut stream = None;
+            let mut at = u64::MAX;
+            loop {
+                let Some(p) = pb.upgrade() else { return };
+                let want = p.playhead.load(Ordering::Acquire);
+                drop(p);
+                if stream.is_none() {
+                    match handle.clone().stream(file_idx).await {
+                        Ok(s) => {
+                            stream = Some(s);
+                            at = u64::MAX;
+                        }
+                        Err(e) => debug!("anchor cannot open stream: {e:#}"),
+                    }
+                }
+                if let Some(s) = stream.as_mut() {
+                    if want != at {
+                        if s.seek(SeekFrom::Start(want)).await.is_ok() {
+                            at = want;
+                        } else {
+                            stream = None;
+                        }
+                    }
+                }
+                tokio::time::sleep(ANCHOR_TICK).await;
+            }
+        })
+        .abort_handle()
 }
 
 #[allow(clippy::too_many_arguments)]

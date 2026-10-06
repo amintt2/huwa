@@ -14,8 +14,15 @@
 //! 150 ms with every live peer plus stale ones; a cold DHT answers from 600 ms on, in batches,
 //! mostly stale addresses; metadata = first live peer known + 3 RTT; a handshake to a live peer =
 //! 2 RTT, to a dead address = the handshake timeout; a peer connects + unchokes in 3 RTT; adding a
-//! probed torrent and initialising it = 100 ms; the first frame needs piece 0 (MKV) and, for MP4,
-//! the tail index pieces.
+//! probed torrent and initialising it = 100 ms; the first frame needs piece 0 and the tail index
+//! pieces (MP4 `moov`; MKV Cues + Tags, which mpv reads before playing).
+//!
+//! What this model missed, and the device timelines (`timeline.rs`) showed: first frames of 15 s
+//! and more, or none. Between two player requests librqbit 9.0.1 saw "nothing selected, no stream
+//! open", took the torrent for finished and dropped its seeders (fixed by the anchor stream, see
+//! `streaming::spawn_anchor`); the app sniffed the loopback URL for 3.5 s, then tried AVPlayer on
+//! MKV for 15 s before mpv. Every peer here also unchokes at once. Treat its numbers as a lower
+//! bound, not as the expected time on a phone.
 
 use std::collections::{HashSet, VecDeque};
 use std::net::SocketAddr;
@@ -260,11 +267,13 @@ fn simulate_stream(p: &Profile, c: &Config, swarm: usize) -> u64 {
     let pieces = p.file.div_ceil(p.piece);
     // Head window of the serving stream (+ the walker, a duplicate before the first bytes).
     let window: Vec<u64> = (0..STREAM_WINDOW.div_ceil(p.piece).min(pieces)).collect();
-    // Tail index prefetch (`tail_prefetch_bytes`): with the head for MP4; MKV only after the first
-    // bytes now, at once before.
-    let tail_len = crate::priorities::tail_prefetch_bytes(p.file, p.piece);
+    // Tail index prefetch (`startup_tail_plan`): with the head for MP4 (moov) and MKV (mpv reads the
+    // Cues + Tags of an mkvmerge file before frame 1: only the last MiB); the whole tail budget at
+    // once before the narrow startup.
+    use crate::priorities::{startup_tail_plan, tail_prefetch_bytes, ContainerIndex};
+    let kind = if p.mp4 { ContainerIndex::MoovAtEnd } else { ContainerIndex::MatroskaTail };
+    let (tail_len, tail_with_head) = if c.narrow_startup { startup_tail_plan(kind, p.file, p.piece) } else { (tail_prefetch_bytes(p.file, p.piece), true) };
     let tail: Vec<u64> = ((p.file - tail_len) / p.piece..pieces).collect();
-    let tail_with_head = p.mp4 || !c.narrow_startup;
     let mut priority: Vec<u64> = Vec::new();
     // librqbit interleaves the stream queues: serving, (walker), tail.
     let longest = window.len().max(tail.len());
@@ -280,7 +289,8 @@ fn simulate_stream(p: &Profile, c: &Config, swarm: usize) -> u64 {
     }
     // Natural order (file selected) only before this change set during startup.
     let natural: Vec<u64> = if c.narrow_startup { Vec::new() } else { (0..pieces).collect() };
-    let needed: Vec<u64> = if p.mp4 { std::iter::once(0).chain(tail.iter().copied()).collect() } else { vec![0] };
+    // MP4: head + moov. MKV: head + the last piece (Cues + Tags, read by mpv before frame 1).
+    let needed: Vec<u64> = if p.mp4 { std::iter::once(0).chain(tail.iter().copied()).collect() } else { vec![0, pieces - 1] };
 
     // Peers: those that answered the probe are dialled first (initial_peers), the others come from
     // the trackers' re-announce. Each needs 3 RTT to be connected and unchoked.
@@ -340,7 +350,10 @@ fn start_path_meets_the_time_to_first_frame_budgets() {
         (POPULAR_MP4, 1_500, 2_000),
         (MID, 3_000, 5_000),
         (OBSCURE, 3_000, 5_000),
-        (OBSCURE_ONE, 3_000, 5_000),
+        // A single peer at 300 KB/s: once the MKV tail (Cues + Tags, read by mpv before frame 1)
+        // is counted, two 512 KiB pieces come one after the other from it: ~3.5 s of transfer
+        // after a 1.6 s race, the physics of this swarm rather than a wait of ours.
+        (OBSCURE_ONE, 3_000, 6_000),
     ];
     for (p, commit_budget, frame_budget) in budgets {
         let new = timeline(&p, &NEW);

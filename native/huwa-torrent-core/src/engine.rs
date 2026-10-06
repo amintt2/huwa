@@ -39,6 +39,7 @@ use tracing::{info, warn};
 use crate::{
     cache,
     probe::{MetaCache, Probes},
+    timeline::{StartTimeline, StartTimelineView, META_ENGINE, META_MAGNET, META_PROBE},
 };
 
 /// Session-wide configuration, sent by the Expo module at `initialize`.
@@ -151,6 +152,8 @@ pub struct TorrentStatus {
     pub health: &'static str,
     /// Automatic recoveries (pause + resume re-announce) since the torrent was added this run.
     pub recoveries: u32,
+    /// Timeline of the latest `startStream` of this torrent (see `timeline.rs`).
+    pub start: StartTimelineView,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -206,6 +209,11 @@ pub struct Entry {
     /// Background magnet resolution (`start_stream`). Aborted and awaited by `remove`, so a torrent
     /// deleted while resolving cannot come back as an unlisted download.
     pub resolver: parking_lot::Mutex<Option<tokio::task::JoinHandle<()>>>,
+    /// How the resolution was started (`timeline::META_*`): a magnet resolution still running when
+    /// a probe has cached the metadata is restarted from it (see `start_stream`).
+    pub resolving_from: AtomicU8,
+    /// Where the time of the current start goes (see `timeline.rs`).
+    pub timeline: StartTimeline,
 }
 
 impl Entry {
@@ -320,6 +328,28 @@ pub fn build_magnet(hex: &str, trackers: &[String], name: Option<&str>) -> Strin
 }
 
 const VIDEO_EXT: &[&str] = &["mkv", "mp4", "webm", "m4v", "mov", "avi", "ts", "m2ts", "wmv", "flv"];
+
+/// Lower-case video extension of a file name (one of `VIDEO_EXT`), for the stream URL.
+pub fn video_ext(name: &str) -> Option<&'static str> {
+    let ext = Path::new(name).extension()?.to_str()?.to_ascii_lowercase();
+    VIDEO_EXT.iter().copied().find(|e| *e == ext)
+}
+
+/// Extension of file `idx` of a resolved torrent.
+pub fn file_ext_of(handle: &ManagedTorrentHandle, idx: usize) -> Option<&'static str> {
+    handle
+        .with_metadata(|m| m.file_infos.get(idx).and_then(|f| video_ext(&f.relative_filename.to_string_lossy())))
+        .ok()
+        .flatten()
+}
+
+pub fn url_of(port: u16, hex: &str, file: Option<usize>, ext: Option<&str>) -> String {
+    let file = file.map_or_else(|| "auto".to_string(), |i| i.to_string());
+    match ext {
+        Some(e) => format!("http://127.0.0.1:{port}/{hex}/{file}.{e}"),
+        None => format!("http://127.0.0.1:{port}/{hex}/{file}"),
+    }
+}
 
 pub fn is_video_name(name: &str) -> bool {
     Path::new(name)
@@ -450,11 +480,10 @@ impl Engine {
         }
     }
 
-    pub fn url_for(&self, hex: &str, file: Option<usize>) -> String {
-        match file {
-            Some(i) => format!("http://127.0.0.1:{}/{}/{}", self.port(), hex, i),
-            None => format!("http://127.0.0.1:{}/{}/auto", self.port(), hex),
-        }
+    /// `http://127.0.0.1:<port>/<hash>/<file>[.<ext>]`: the extension (when the file is known)
+    /// tells the app's player policy the container without a request (see `server::parse_file`).
+    pub fn url_for(&self, hex: &str, file: Option<usize>, ext: Option<&str>) -> String {
+        url_of(self.port(), hex, file, ext)
     }
 
     pub fn entry(&self, hex: &str) -> Option<Arc<Entry>> {
@@ -530,6 +559,8 @@ impl Engine {
                 metered: AtomicBool::new(false),
                 selection: AtomicU8::new(SELECTION_UNKNOWN),
                 resolver: parking_lot::Mutex::new(None),
+                resolving_from: AtomicU8::new(META_ENGINE),
+                timeline: StartTimeline::default(),
             });
             map.insert(hex, entry);
         }
@@ -567,10 +598,31 @@ impl Engine {
             }
             // A previously failed resolution is retried.
             let failed = matches!(&*existing.state.read(), EntryState::Failed(_));
+            // A magnet resolution still running (cold DHT, the probe had not answered yet when it
+            // started) while the probe has the metadata by now: it is restarted from that metadata
+            // instead of keeping the player on the magnet (the URL came back at once and nothing
+            // ever played: one of the `timeout` starts).
+            let stuck = matches!(&*existing.state.read(), EntryState::Resolving)
+                && existing.resolving_from.load(Ordering::Relaxed) == META_MAGNET
+                && self.meta_cache.get(&hex, std::time::Instant::now()).is_some();
             if failed {
                 self.entries.write().remove(&hex);
+            } else if stuck {
+                info!(hex = %hex, "magnet still resolving, restarting from the probe's metadata");
+                let _ = self.runtime.block_on(self.remove(&hex));
             } else {
+                existing.timeline.begin();
                 if let Some(h) = existing.handle() {
+                    existing.timeline.mark_meta(META_ENGINE);
+                    // Another episode of a season pack already in the engine: that file is the one
+                    // to select (and to report the first piece of).
+                    let files = h.with_metadata(|m| m.file_infos.len()).unwrap_or(0);
+                    if let Some(i) = req.file_idx.filter(|i| *i < files) {
+                        if *existing.selected_file.read() != Some(i) {
+                            *existing.selected_file.write() = Some(i);
+                            existing.selection.store(SELECTION_UNKNOWN, Ordering::Release);
+                        }
+                    }
                     if h.is_paused() {
                         let session = self.session.clone();
                         let h2 = h.clone();
@@ -580,11 +632,30 @@ impl Engine {
                             }
                         });
                     }
+                    // Played before: if the selection was left empty (metered network, or the
+                    // previous playback ended before its window settled), librqbit has dropped the
+                    // seeders as "not needed" and only re-dials them when the selection grows. The
+                    // player's first request narrows it again (see `sync_selection`).
+                    let reselect = async { tokio::time::timeout(Duration::from_secs(2), self.sync_selection(&existing, &h, true)).await };
+                    if self.runtime.block_on(reselect).is_err() {
+                        warn!(hex = %hex, "re-selecting the played file timed out");
+                    }
                 }
+                self.spawn_start_watcher(&existing);
                 let file = req.file_idx.or(*existing.selected_file.read());
-                return Ok(StartStreamResponse { id: hex.clone(), url: self.url_for(&hex, file), info_hash: hex });
+                let ext = existing.handle().and_then(|h| file.and_then(|i| file_ext_of(&h, i)));
+                return Ok(StartStreamResponse { id: hex.clone(), url: self.url_for(&hex, file, ext), info_hash: hex });
             }
         }
+
+        // Probed a moment ago (torrent race): no magnet resolution, the peers that answered the
+        // probe are dialled first, and only the wanted file is allocated.
+        let probed = self.meta_cache.get(&hex, std::time::Instant::now());
+        let max_peers = self.config.read().max_peers;
+        // The file is known with the probe's metadata: the URL carries its extension, so the app
+        // picks the player (mpv for MKV) without sniffing a torrent that has no byte yet.
+        let probed_file = probed.as_ref().and_then(|m| req.file_idx.filter(|i| *i < m.files.len()).or_else(|| pick_file(&m.files)));
+        let url_ext = probed.as_ref().zip(probed_file).and_then(|(m, i)| m.files.get(i)).and_then(|(n, _)| video_ext(n));
 
         let entry = Arc::new(Entry {
             id20,
@@ -604,16 +675,19 @@ impl Engine {
             metered: AtomicBool::new(req.metered),
             selection: AtomicU8::new(SELECTION_UNKNOWN),
             resolver: parking_lot::Mutex::new(None),
+            resolving_from: AtomicU8::new(if probed.is_some() { META_PROBE } else { META_MAGNET }),
+            timeline: StartTimeline::default(),
         });
+        entry.timeline.begin();
+        match &probed {
+            Some(m) => entry.timeline.set_swarm_setup(m.peers.len(), crate::streaming::peer_limit_for(m.swarm, max_peers)),
+            None => entry.timeline.set_swarm_setup(0, max_peers),
+        }
         self.entries.write().insert(hex.clone(), entry.clone());
         self.persist_entries();
 
         let engine = self.clone();
         let magnet = build_magnet(&hex, &trackers, req.name.as_deref());
-        // Probed a moment ago (torrent race): no magnet resolution, the peers that answered the
-        // probe are dialled first, and only the wanted file is allocated.
-        let probed = self.meta_cache.get(&hex, std::time::Instant::now());
-        let max_peers = self.config.read().max_peers;
         let task_entry = entry.clone();
         let task = self.runtime.spawn(async move {
             let entry = task_entry;
@@ -622,9 +696,10 @@ impl Engine {
                 trackers: if trackers.is_empty() { None } else { Some(trackers.clone()) },
                 ..Default::default()
             };
+            let from = if probed.is_some() { META_PROBE } else { META_MAGNET };
             let add = match probed {
                 Some(m) => {
-                    opts.only_files = entry.requested_file.filter(|i| *i < m.files.len()).or_else(|| pick_file(&m.files)).map(|i| vec![i]);
+                    opts.only_files = probed_file.map(|i| vec![i]);
                     opts.peer_limit = crate::streaming::peer_limit_for(m.swarm, max_peers);
                     if !m.peers.is_empty() {
                         opts.initial_peers = Some(m.peers.clone());
@@ -683,6 +758,7 @@ impl Engine {
                             engine.discard_late(&entry, &handle).await;
                             return;
                         }
+                        entry.timeline.mark_meta(from);
                     }
                     None => {
                         *entry.state.write() = EntryState::Failed("torrent added in list-only mode".into());
@@ -701,8 +777,58 @@ impl Engine {
             }
         });
         *entry.resolver.lock() = Some(task);
+        self.spawn_start_watcher(&entry);
 
-        Ok(StartStreamResponse { id: hex.clone(), url: self.url_for(&hex, req.file_idx), info_hash: hex })
+        let file = if url_ext.is_some() { probed_file } else { req.file_idx };
+        Ok(StartStreamResponse { id: hex.clone(), url: self.url_for(&hex, file, url_ext), info_hash: hex })
+    }
+
+    /// Fills the startup marks librqbit has no callback for (first connected peer, first piece of
+    /// the played file, piece size) by polling the torrent every 100 ms until they are known, the
+    /// first byte was served, a new start begins, or 90 s passed. Cheap: one `stats()` per tick,
+    /// for one torrent, only during a start.
+    pub fn spawn_start_watcher(self: &Arc<Self>, entry: &Arc<Entry>) {
+        if !entry.timeline.try_start_watching() {
+            return;
+        }
+        // Weak references only: a removed torrent or a stopped engine is never kept alive by it.
+        let weak = Arc::downgrade(self);
+        let weak_entry = Arc::downgrade(entry);
+        let epoch = entry.timeline.epoch();
+        self.runtime.spawn(async move {
+            const WATCH_FOR: Duration = Duration::from_secs(90);
+            let mut deadline = tokio::time::Instant::now() + WATCH_FOR;
+            let mut epoch = epoch;
+            loop {
+                tokio::time::sleep(Duration::from_millis(100)).await;
+                let (Some(engine), Some(entry)) = (weak.upgrade(), weak_entry.upgrade()) else { return };
+                let t = &entry.timeline;
+                if t.epoch() != epoch {
+                    // A new start of the same torrent: same watcher, new marks, new budget.
+                    epoch = t.epoch();
+                    deadline = tokio::time::Instant::now() + WATCH_FOR;
+                }
+                let done = !engine.owns(&entry)
+                    || tokio::time::Instant::now() >= deadline
+                    || (t.has_first_peer() && t.has_first_piece() && t.has_first_byte());
+                if done {
+                    t.stop_watching();
+                    return;
+                }
+                let Some(handle) = entry.handle() else { continue };
+                let stats = handle.stats();
+                if stats.live.as_ref().is_some_and(|l| l.snapshot.peer_stats.live > 0) {
+                    t.mark_first_peer();
+                }
+                let file = *entry.selected_file.read();
+                if let Some(g) = file.and_then(|i| crate::streaming::Geometry::of(&handle, i)) {
+                    t.set_piece_len(g.piece_len);
+                }
+                if file.and_then(|i| stats.file_progress.get(i).copied()).unwrap_or(0) > 0 {
+                    t.mark_first_piece();
+                }
+            }
+        });
     }
 
     /// Selects the played file in librqbit (`whole_file`) or nothing (only the open streams'
@@ -727,7 +853,9 @@ impl Engine {
     }
 
     pub fn status_of(&self, entry: &Entry) -> TorrentStatus {
-        let url = self.url_for(&entry.hex, *entry.selected_file.read());
+        let selected = *entry.selected_file.read();
+        let ext = entry.handle().and_then(|h| selected.and_then(|i| file_ext_of(&h, i)));
+        let url = self.url_for(&entry.hex, selected, ext);
         let mut st = TorrentStatus {
             id: entry.hex.clone(),
             info_hash: entry.hex.clone(),
@@ -751,6 +879,7 @@ impl Engine {
             size_on_disk: 0,
             health: self.streaming.health_of(&entry.hex),
             recoveries: self.streaming.recoveries_of(&entry.hex),
+            start: entry.timeline.view(),
         };
 
         let handle = match &*entry.state.read() {
@@ -1063,6 +1192,29 @@ mod tests {
         // Only `entry` (this test) still references it: the aborted task dropped its clone.
         assert_eq!(Arc::strong_count(&entry), 1);
         assert_eq!(session_torrents(&engine), 0);
+        engine.shutdown();
+    }
+
+    #[test]
+    fn a_magnet_still_resolving_restarts_from_the_probe_metadata() {
+        let engine = test_engine("stuck");
+        let hex = "00112233445566778899aabbccddeeff00112244";
+        let req = || StartStreamRequest { info_hash: hex.into(), file_idx: None, sources: vec![], name: None, metered: false };
+        engine.start_stream(req()).unwrap();
+        let first = engine.entry(hex).unwrap();
+        assert_eq!(first.resolving_from.load(Ordering::Relaxed), META_MAGNET);
+        // Same hash again, still nothing from the magnet: kept as is (no restart loop).
+        engine.start_stream(req()).unwrap();
+        assert!(Arc::ptr_eq(&first, &engine.entry(hex).unwrap()));
+        // The probe has the metadata by now: the stuck resolution is replaced.
+        let files = vec![("Show - 01.mkv".to_string(), 1000)];
+        engine.meta_cache.insert(hex, crate::probe::CachedMeta::new(bytes::Bytes::from_static(b"d4:infod6:lengthi1000eee"), files, vec![], std::time::Instant::now()));
+        let resp = engine.start_stream(req()).unwrap();
+        let second = engine.entry(hex).unwrap();
+        assert!(!Arc::ptr_eq(&first, &second), "new entry");
+        assert_eq!(second.resolving_from.load(Ordering::Relaxed), META_PROBE);
+        assert!(first.resolver.lock().is_none(), "old resolution aborted");
+        assert!(resp.url.ends_with("/0.mkv"), "{}", resp.url);
         engine.shutdown();
     }
 

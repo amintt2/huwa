@@ -1,7 +1,7 @@
 # huwa-torrent-core
 
 Moteur torrent natif de Huwa (phase 7c du PLAN) : une session **librqbit 9.0.1** (Apache-2.0, épinglée
-`=9.0.1`) + un serveur HTTP loopback maison (axum) servant `/{infoHash}/{fileIdx|auto}` avec `Range` /
+`=9.0.1`) + un serveur HTTP loopback maison (axum) servant `/{infoHash}/{fileIdx|auto}[.ext]` avec `Range` /
 `206` et `/stats.json`. Exposé à Expo par un C-ABI (iOS) et des exports JNI (Android), voir
 `modules/huwa-torrent/`.
 
@@ -18,7 +18,8 @@ Moteur torrent natif de Huwa (phase 7c du PLAN) : une session **librqbit 9.0.1**
 | `src/engine.rs` | Session librqbit (DHT + persistance JSON + fastresume, seeding **off** par défaut via la feature `disable-upload`), registre des torrents, `startStream` (résolution magnet en tâche de fond), statut, pause/reprise/suppression, quota de cache (éviction LRU des torrents inactifs), fichier `huwa-entries.json`. |
 | `src/server.rs` | Routeur axum sur `127.0.0.1:<port aléatoire>`. Attend la résolution des métadonnées (504 après `resolveTimeoutSecs`), ouvre un `FileStream` librqbit, applique la politique de fenêtres, répond 200/206/416. |
 | `src/priorities.rs` | Politique adaptée de `stream-server/enginefs/src/backend/priorities.rs` (MIT, en-tête conservé) : classification des requêtes (lecture / seek / index de conteneur), fenêtres en pièces, et tailles en octets de la lecture anticipée (`readahead_target_bytes`, 1/12 du fichier entre 48 et 256 Mio) et de l'index de fin (`tail_prefetch_bytes`, 1–8 Mio). |
-| `src/streaming.rs` | Matérialise les priorités avec des `FileStream` librqbit (pas d'API de priorité par pièce) : un *walker* par lecture posé sur la première pièce manquante après la tête de lecture (fenêtre glissante au-delà des 32 Mio fixes de librqbit, remplacé dès un seek), préchargement de l'index de fin (`moov`/Cues), suivi tête de lecture / attente, santé (`health` : ok, searching, stalled, recovering, idle) et reprise automatique (pause + reprise = nouvelle annonce trackers/DHT, back-off des pairs remis à zéro). Réglages session : 64 permis bloquants (8 par défaut : chaque `FileStream` en garde un, le 9ᵉ bloquait), connexion pair 4 s, amorçage DHT élargi, table DHT sauvée toutes les 20 s. |
+| `src/streaming.rs` | Matérialise les priorités avec des `FileStream` librqbit (pas d'API de priorité par pièce) : un *walker* par lecture posé sur la première pièce manquante après la tête de lecture (fenêtre glissante au-delà des 32 Mio fixes de librqbit, remplacé dès un seek), préchargement de l'index de fin (`moov`, Cues + Tags MKV lus par mpv avant la 1re image), *ancre* (un `FileStream` tenu par le moteur sur la tête de lecture pendant toute la lecture : sans lui, entre deux requêtes du lecteur avec une sélection vide, librqbit croit le torrent terminé et coupe les seeders), suivi tête de lecture / attente, santé (`health` : ok, searching, stalled, recovering, idle) et reprise automatique (pause + reprise = nouvelle annonce trackers/DHT, back-off des pairs remis à zéro). Réglages session : 64 permis bloquants (8 par défaut : chaque `FileStream` en garde un, le 9ᵉ bloquait), connexion pair 4 s, amorçage DHT élargi, table DHT sauvée toutes les 20 s. |
+| `src/timeline.rs` | Chronologie mesurée de chaque démarrage (`status().start`) : métadonnées (sonde / magnet / déjà là), 1er pair, 1re pièce, 1re requête du lecteur, 1er octet servi, octets et requêtes. Affichée dans « Statistiques de lecture ». |
 | `src/trackers.rs` | Trackers publics UDP/HTTPS ajoutés aux magnets qui en ont moins de 5 (sauf si `defaultTrackers` est fourni). |
 | `src/range.rs` | Parsing RFC 9110 de `Range` (premier intervalle, suffixe, clamp, 416). |
 | `src/cache.rs` | Taille récursive du dossier de données. |

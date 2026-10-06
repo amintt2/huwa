@@ -5,16 +5,27 @@
 //   [huwa:start] al154587:3 · écran 180 ms · sources 420 ms (cache) · choix 900 ms · URL 900 ms · image 1650 ms
 // Cheap: a Map entry per episode opened and a few timestamps. The episode id is only the key of
 // the trace in memory: it is never written to the statistics.
-import type { EngineKind, FailReason, NetKind, PlaybackEvent, PlayPath, StartKind } from '@/stats/model';
+import { engineStartOf, type EngineKind, type EngineTimeline, type FailReason, type NetKind, type PlaybackEvent, type PlayPath, type StartKind } from '@/stats/model';
 import { recordPlayback } from '@/stats/store';
 
 declare const __DEV__: boolean | undefined;
 const dev = typeof __DEV__ !== 'undefined' && !!__DEV__;
 const now = () => (typeof performance !== 'undefined' ? performance.now() : Date.now());
 
-export type StartMark = 'screen' | 'sources' | 'decision' | 'url' | 'first-frame';
+/** `file-loaded`: the player opened the file (mpv `file-loaded`, expo-video `sourceLoad`). */
+export type StartMark = 'screen' | 'sources' | 'decision' | 'url' | 'file-loaded' | 'first-frame';
 /** What the watch screen / player know about the start (see `traceInfo`). */
-export type TraceInfo = { kind: StartKind; path: PlayPath; engine: EngineKind; warm: boolean; fallbackToMpv: boolean; network: NetKind };
+export type TraceInfo = {
+  kind: StartKind;
+  path: PlayPath;
+  engine: EngineKind;
+  warm: boolean;
+  fallbackToMpv: boolean;
+  network: NetKind;
+  /** Built-in torrent engine: its start timeline (latest status) and the bytes served at the first frame. */
+  engineTimeline: EngineTimeline;
+  engineBytesAtFrame: number;
+};
 
 type Trace = {
   t0: number;
@@ -41,7 +52,7 @@ const traces = new Map<string, Trace>();
 let active: string | undefined;
 /** Last finished start (series + number), to tell "Épisode suivant" from a fresh start. */
 let lastDone: { id: string; at: number } | undefined;
-const LABEL: Record<StartMark, string> = { screen: 'écran', sources: 'sources', decision: 'choix', url: 'URL', 'first-frame': 'image' };
+const LABEL: Record<StartMark, string> = { screen: 'écran', sources: 'sources', decision: 'choix', url: 'URL', 'file-loaded': 'fichier ouvert', 'first-frame': 'image' };
 
 const fresh = (tapped: boolean): Trace => ({
   t0: now(), at: Date.now(), marks: {}, notes: [], printed: false, tapped, info: {}, stalls: 0, stalledMs: 0, done: false,
@@ -162,6 +173,8 @@ export function eventOf(t: Pick<Trace, 'at' | 'marks' | 'info' | 'stalls' | 'sta
     failed,
     fallbackToMpv: !!t.info.fallbackToMpv,
     network: t.info.network,
+    tFileLoaded: r(t.marks['file-loaded']),
+    engineStart: t.info.engineTimeline ? engineStartOf(t.info.engineTimeline, t.at, t.info.engineBytesAtFrame) : undefined,
   };
 }
 

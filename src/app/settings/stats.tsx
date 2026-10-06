@@ -15,7 +15,7 @@ import { Button, Txt } from '@/components/ui';
 import { isDemo } from '@/demo/flags';
 import { communityView, K_MIN, WEEK_MS } from '@/stats/community';
 import { DEMO_ADDONS, DEMO_COMMUNITY, DEMO_EVENTS } from '@/stats/demo';
-import { addonTable, formatMs, formatPct, PATH_LABEL, PATHS, summarize, type Group as StatGroup } from '@/stats/model';
+import { addonTable, describeStart, formatMs, formatPct, PATH_LABEL, PATHS, summarize, type Group as StatGroup } from '@/stats/model';
 import { useCommunityStats } from '@/stats/share';
 import { resetStats, setCommunity, useStats } from '@/stats/store';
 import { C, S } from '@/theme/tokens';
@@ -24,7 +24,10 @@ const ENGINE_LABEL = { native: 'Lecteur natif (AVPlayer)', mpv: 'mpv' } as const
 const KIND_LABEL = { start: 'Nouvel épisode', resume: 'Reprise', next: 'Épisode suivant' } as const;
 const FAIL_LABEL = { 'no-source': 'aucune source', network: 'réseau', http: 'lien refusé', format: 'format', timeout: 'trop long', other: 'autre' } as const;
 
-const daysUntil = (ts: number) => Math.max(1, Math.ceil((ts - Date.now()) / 86_400_000));
+/** Starts detailed step by step in "Derniers démarrages". */
+const RECENT_STARTS = 8;
+
+const daysUntil =(ts: number) => Math.max(1, Math.ceil((ts - Date.now()) / 86_400_000));
 
 const detailOf = (g: StatGroup) =>
   `${g.n} lecture${g.n > 1 ? 's' : ''} · p90 ${formatMs(g.p90)}${g.success != null ? ` · ${formatPct(g.success)} réussies` : ''}`;
@@ -38,6 +41,16 @@ export default function PlaybackStats() {
   const events = demo ? DEMO_EVENTS : stored;
   const addons = demo ? DEMO_ADDONS : storedAddons;
   const sum = useMemo(() => summarize(events), [events]);
+  // Newest first, only starts that ended (played or failed).
+  const recent = useMemo(
+    () =>
+      events
+        .filter((e) => e.tFirstFrame != null || e.failed)
+        .slice(-RECENT_STARTS)
+        .reverse()
+        .map((e, i) => ({ key: `${e.at}-${i}`, line: describeStart(e) })),
+    [events],
+  );
   const rows = useMemo(() => addonTable(addons), [addons]);
   const net = useCommunityStats();
   const network = communityView(demo && community ? DEMO_COMMUNITY : net.data);
@@ -128,6 +141,23 @@ export default function PlaybackStats() {
               <MetricRow label="Lien prêt" value={formatMs(sum.steps.url)} />
               <MetricRow label="Image" value={formatMs(sum.overall.median)} last />
             </StatCard>
+
+            {recent.length > 0 && (
+              <StatCard
+                title="Derniers démarrages"
+                footer="Chaque étape en temps depuis l’appui. Moteur torrent : métadonnées (sonde, magnet ou déjà là), 1er pair connecté, requête du lecteur, 1re pièce du fichier, 1er octet servi au lecteur.">
+                {recent.map(({ key, line }, i) => (
+                  <MetricRow
+                    key={key}
+                    label={line.label}
+                    value={line.value}
+                    tone={line.failed ? DANGER : undefined}
+                    detail={[line.stages, line.slowest, line.engine].filter(Boolean).join('\n')}
+                    last={i === recent.length - 1}
+                  />
+                ))}
+              </StatCard>
+            )}
 
             <StatCard title="Coupures et échecs" footer="Coupure : la vidéo s’arrête pour charger, dans les 5 premières minutes.">
               <MetricRow label="Lectures avec coupure" value={formatPct(sum.stalls.rate)} detail={sum.stalls.medianMs != null ? `${formatMs(sum.stalls.medianMs)} d’attente médiane quand ça coupe` : undefined}

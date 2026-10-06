@@ -704,6 +704,7 @@ async fn run(engine: Arc<Engine>, probe: Arc<Probe>, req: ProbeRequest, id20: Id
                         // Tracker answers and the peers that served the metadata: alive a moment ago.
                         enqueue(&mut queue, &mut seen, &mut seen_order, &lo.seen_peers, true);
                         engine.meta_cache.insert(&hex, CachedMeta::new(lo.torrent_bytes.clone(), files.clone(), Vec::new(), Instant::now()));
+                        engine.meta_cache.set_peers(&hex, &good, &seen_order);
                         meta = Some(Meta { files, from_list_only: true });
                     }
                     Ok(other) => {
@@ -732,6 +733,10 @@ async fn run(engine: Arc<Engine>, probe: Arc<Probe>, req: ProbeRequest, id20: Id
             Some((addr, ok)) = handshakes.next(), if !handshakes.is_empty() => {
                 if ok {
                     good.push(addr);
+                    // Kept as they come: the race commits at 1.5–2.5 s and cancels the probes that
+                    // still run (an aborted task never reaches the final `set_peers` below). The
+                    // winner's stream used to start with no initial peer and no swarm size.
+                    engine.meta_cache.set_peers(&hex, &good, &seen_order);
                 }
             }
         }
@@ -912,6 +917,24 @@ mod tests {
         }
         assert!(c.get("k0", t0).is_none(), "oldest evicted");
         assert!(c.get(&format!("k{}", META_CAP + 2), t0).is_some());
+    }
+
+    #[test]
+    fn peers_are_kept_as_they_answer() {
+        // The probe updates the cache on every answering peer: a probe cancelled by the race
+        // (task aborted) still hands its peers to the stream.
+        let c = MetaCache::default();
+        let t0 = Instant::now();
+        let p = |i: u8| -> SocketAddr { format!("10.0.0.{i}:6881").parse().unwrap() };
+        c.insert("h", CachedMeta::new(Bytes::from_static(b"x"), vec![f("a.mkv", 1)], vec![], t0));
+        let seen: Vec<SocketAddr> = (1..=50).map(p).collect();
+        c.set_peers("h", &[p(7)], &seen);
+        c.set_peers("h", &[p(7), p(30)], &seen);
+        let m = c.get("h", t0).unwrap();
+        assert_eq!(&m.peers[..2], &[p(7), p(30)], "answering peers first, in answer order");
+        assert_eq!(m.peers.len(), 50, "no duplicates");
+        assert_eq!(m.swarm, 50);
+        assert_eq!(crate::streaming::peer_limit_for(m.swarm, Some(60)), Some(crate::streaming::BIG_SWARM_PEERS));
     }
 
     #[test]

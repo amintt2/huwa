@@ -4,7 +4,8 @@
 //! Methods (args → result):
 //! - `startStream` `{infoHash, fileIdx?, sources?, name?, metered?}` → `{id, url, infoHash}`
 //!   (`metered`: cellular, only a ~60–90 s window is downloaded, see `streaming.rs`)
-//! - `status` `{id}` → `TorrentStatus`
+//!   (`url` ends with the file's extension once the metadata is known: `/{hash}/{idx}.mkv`)
+//! - `status` `{id}` → `TorrentStatus` (`start`: timeline of the latest start, see `timeline.rs`)
 //! - `list` `{}` → `TorrentStatus[]`
 //! - `stats` `{}` → `EngineStats`
 //! - `pause` / `resume` / `remove` `{id}` → `true`

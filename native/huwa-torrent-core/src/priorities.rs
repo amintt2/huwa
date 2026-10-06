@@ -456,6 +456,36 @@ pub fn tail_prefetch_bytes(file_size: u64, piece_length: u64) -> u64 {
     (file_size / 512).clamp(MIN_TAIL_PREFETCH_BYTES, MAX_TAIL_PREFETCH_BYTES).min(file_size)
 }
 
+/// What the player reads at the end of the file before its first frame.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ContainerIndex {
+    /// MP4 / MOV: the `moov` (sample tables) may sit at the end; nothing plays without it.
+    MoovAtEnd,
+    /// Matroska / WebM: mkvmerge writes the Cues and the track statistics Tags after the last
+    /// cluster, and mpv's Matroska demuxer reads every SeekHead element it can reach before
+    /// playing (it only defers the Cues when they are the *only* element left): one seek to the
+    /// end before frame 1, serialized after piece 0. Cues + Tags are tens of KiB.
+    MatroskaTail,
+    /// Anything else (AVI, TS…): the tail only serves seeking.
+    Other,
+}
+
+/// Matroska tail fetched with the head. Cues hold ~20 bytes per keyframe (≈ 15 KiB for a
+/// 24-minute episode, ≈ 100 KiB for a film) and the statistics Tags a few KiB: the last 256 KiB
+/// hold both, i.e. the last piece (two when the file ends just past a piece boundary).
+pub const MATROSKA_TAIL_BYTES: u64 = 256 * 1024;
+
+/// Bytes at the end of the file prefetched on the first request, and whether they go with the
+/// head (read before the first frame) or only once the head delivered.
+pub fn startup_tail_plan(kind: ContainerIndex, file_size: u64, piece_length: u64) -> (u64, bool) {
+    let tail = tail_prefetch_bytes(file_size, piece_length);
+    match kind {
+        ContainerIndex::MoovAtEnd => (tail, true),
+        ContainerIndex::MatroskaTail => (tail.min(MATROSKA_TAIL_BYTES), true),
+        ContainerIndex::Other => (tail, false),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -692,5 +722,17 @@ mod tests {
         assert_eq!(tail_prefetch_bytes(200 * mib, mib), MIN_TAIL_PREFETCH_BYTES);
         assert_eq!(tail_prefetch_bytes(1400 * mib, mib), 1400 * mib / 512);
         assert_eq!(tail_prefetch_bytes(40 * 1024 * mib, mib), MAX_TAIL_PREFETCH_BYTES);
+    }
+
+    #[test]
+    fn index_read_before_the_first_frame_goes_with_the_head() {
+        let mib = 1024 * 1024;
+        // MP4: the whole moov budget, with the head.
+        assert_eq!(startup_tail_plan(ContainerIndex::MoovAtEnd, 1400 * mib, 2 * mib), (1400 * mib / 512, true));
+        // MKV: only the last MiB (Cues + Tags), but with the head: mpv seeks there before frame 1.
+        assert_eq!(startup_tail_plan(ContainerIndex::MatroskaTail, 1400 * mib, 2 * mib), (MATROSKA_TAIL_BYTES, true));
+        assert_eq!(startup_tail_plan(ContainerIndex::MatroskaTail, 8 * mib, mib), (0, true), "tiny file: nothing extra");
+        // Others: after the head, as before.
+        assert_eq!(startup_tail_plan(ContainerIndex::Other, 1400 * mib, 2 * mib), (1400 * mib / 512, false));
     }
 }

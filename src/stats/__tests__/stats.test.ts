@@ -17,7 +17,22 @@ import {
   monthOf,
   type StatsContribution,
 } from '../community';
-import { addonTable, classifyPath, failReason, formatMs, median, pushRing, quantile, summarize, type PlaybackEvent } from '../model';
+import {
+  addonTable,
+  classifyPath,
+  describeStart,
+  engineStartOf,
+  failReason,
+  formatMs,
+  median,
+  META_FROM,
+  pushRing,
+  quantile,
+  slowestStep,
+  startStages,
+  summarize,
+  type PlaybackEvent,
+} from '../model';
 
 /** Deterministic [0, 1) generator (mulberry32). */
 function seeded(seed: number) {
@@ -138,10 +153,86 @@ test('eventOf: abandoned quickly = nothing, long wait = timeout, played = timing
   )!;
   assert.deepEqual(e, {
     at: 5, kind: 'start', path: 'debrid', engine: 'native', warm: true, tSources: 400, tDecision: 900, tUrl: 950, tFirstFrame: 1651,
-    stalls: 1, stalledMs: 800, failed: undefined, fallbackToMpv: false, network: 'wifi',
+    stalls: 1, stalledMs: 800, failed: undefined, fallbackToMpv: false, network: 'wifi', tFileLoaded: undefined, engineStart: undefined,
   });
   // Nothing identifying in an event.
   assert.ok(!/https?:|al\d+:/.test(JSON.stringify(e)));
+});
+
+// Engine timeline as `status().start` reports it: ms since the engine's startStream (epoch 10 400).
+const timeline = {
+  startedAt: 10_400, metaMs: 20, metaFrom: 'probe', firstPeerMs: 300, firstPieceMs: 2_900, firstRequestMs: 450, firstByteMs: 3_000,
+  bytesServed: 9_000_000, requests: 4, tailRequests: 1, peersAtFirstByte: 5, initialPeers: 42, peerLimit: 12, pieceBytes: 2_097_152,
+};
+
+test('engine timeline on the axis of the tap (numbers only)', () => {
+  // Tap at epoch 10 000: the engine started 400 ms later.
+  const g = engineStartOf(timeline, 10_000, 3_500_000);
+  assert.deepEqual(g, {
+    tMeta: 420, metaFrom: META_FROM.probe, tPeer: 700, tPiece: 3_300, tRequest: 850, tFirstByte: 3_400,
+    bytes: 3_500_000, requests: 4, tailRequests: 1, peers: 5, initialPeers: 42, peerLimit: 12, pieceKiB: 2048,
+  });
+  // Marks not reached stay absent; bytes default to the running count; a prefetch started before the tap clamps to 0.
+  const cold = engineStartOf({ ...timeline, firstPieceMs: null, firstByteMs: null, peersAtFirstByte: null, metaFrom: 'magnet', startedAt: 9_000 }, 10_000);
+  assert.equal(cold.tPiece, undefined);
+  assert.equal(cold.tFirstByte, undefined);
+  assert.equal(cold.tMeta, 0);
+  assert.equal(cold.metaFrom, META_FROM.magnet);
+  assert.equal(cold.bytes, 9_000_000);
+  assert.ok(!/[a-z]{6,}/i.test(JSON.stringify(Object.values(g))), 'no strings in the event');
+});
+
+test('eventOf carries the file-loaded mark and the engine side of a torrent start', () => {
+  const e = eventOf(
+    {
+      at: 10_000,
+      marks: { screen: 10, sources: 100, decision: 330, url: 365, 'file-loaded': 3_600, 'first-frame': 4_000 },
+      info: { path: 'torrent-engine', engine: 'mpv', engineTimeline: timeline, engineBytesAtFrame: 3_500_000 },
+      stalls: 0,
+      stalledMs: 0,
+    },
+    10_000,
+  )!;
+  assert.equal(e.tFileLoaded, 3_600);
+  assert.equal(e.engineStart?.tFirstByte, 3_400);
+  assert.equal(e.engineStart?.bytes, 3_500_000);
+  // A failed start keeps the engine's last state: where it was stuck.
+  const failed = eventOf(
+    { at: 10_000, marks: { screen: 10, url: 365 }, info: { path: 'torrent-engine', engineTimeline: { ...timeline, firstPieceMs: null, firstByteMs: null } }, stalls: 0, stalledMs: 0 },
+    25_000,
+  )!;
+  assert.equal(failed.failed, 'timeout');
+  assert.equal(failed.engineStart?.tPeer, 700);
+  assert.equal(failed.engineStart?.tPiece, undefined);
+});
+
+test('start breakdown: stages in order, the longest step, engine facts', () => {
+  const e = ev({
+    path: 'torrent-engine', engine: 'mpv', tSources: 100, tDecision: 330, tUrl: 365, tFileLoaded: 3_600, tFirstFrame: 17_430,
+    engineStart: engineStartOf(timeline, 10_000, 3_500_000),
+  });
+  const stages = startStages(e);
+  assert.deepEqual(stages.map((s) => s.key), ['sources', 'decision', 'url', 'meta', 'peer', 'request', 'piece', 'byte', 'loaded', 'frame']);
+  assert.ok(stages.every((s, i) => i === 0 || s.ms >= stages[i - 1].ms));
+  const slow = slowestStep(stages)!;
+  assert.equal(slow.to.key, 'frame');
+  assert.equal(slow.ms, 17_430 - 3_600);
+  const line = describeStart(e);
+  assert.equal(line.value, '17 s');
+  assert.equal(line.failed, false);
+  assert.match(line.label, /Moteur torrent · mpv/);
+  assert.match(line.stages, /métadonnées \(sonde\) 420 ms → 1er pair 700 ms/);
+  assert.match(line.slowest!, /fichier ouvert → image, 14 s/);
+  assert.match(line.engine!, /3,3 Mo servis · 4 requêtes \(dont 1 en fin de fichier\) · 5 pairs au 1er octet · 42 pairs de la sonde · limite 12 · pièces 2048 Kio/);
+  // Without the engine (HTTP source), fast start: no "longest step" under a second, no engine line.
+  const quick = describeStart(ev({ path: 'debrid', engine: 'native', tSources: 200, tUrl: 400, tFirstFrame: 900 }));
+  assert.equal(quick.slowest, undefined);
+  assert.equal(quick.engine, undefined);
+  assert.equal(quick.label, 'Débrid · AVPlayer');
+  const failed = describeStart(ev({ path: 'torrent-engine', engine: 'mpv', fallbackToMpv: true, tUrl: 2_291, failed: 'timeout' }));
+  assert.equal(failed.value, 'trop long');
+  assert.equal(failed.failed, true);
+  assert.match(failed.label, /mpv après AVPlayer/);
 });
 
 test('buckets and geometric noise', () => {
