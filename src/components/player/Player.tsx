@@ -28,7 +28,7 @@ import { Txt, type IconName } from '@/components/ui';
 import { usePlayerTrace } from '@/stats/use-player-trace';
 import { C, F, R, S } from '@/theme/tokens';
 
-import { useIntroGuess, useSkipTimes, type Segment } from './aniskip';
+import { useSkipTimes, type Segment } from './aniskip';
 import { SourceLoadingBar, type LoadPhase } from './SourceLoadingBar';
 import { EngineView, useEnginePlayer, type EnginePlayer as VideoPlayer } from './engines';
 import { GestureLayer, type Hud } from './GestureLayer';
@@ -80,8 +80,6 @@ export type PlayerProps = {
   /** MyAnimeList id + episode number → AniSkip timestamps. */
   malId?: number | null;
   episodeNumber?: number;
-  /** Seconds skipped by "Passer l'intro" when AniSkip has no data. */
-  introSkip?: number;
   /** Text shown when there is no source yet. */
   emptyText?: string;
   /** Bold line above `emptyText` (why nothing plays). */
@@ -116,7 +114,6 @@ export type PlayerProps = {
   onUpgradeDeferred?: (key: string, reason: string) => void;
 };
 
-const INTRO_WINDOW = 180;
 const NEXT_WINDOW = 90;
 const LIVE_COMMENT_SECONDS = 7;
 const hitSlop = 10;
@@ -175,7 +172,6 @@ export function Player({
   next,
   malId,
   episodeNumber = 1,
-  introSkip = 85,
   emptyText = 'Choisis une source pour lancer la lecture.',
   emptyTitle,
   emptyAction,
@@ -363,9 +359,8 @@ export function Player({
   useEventListener(player, 'audioTrackChange', (e) => setAudioTrack(e.audioTrack));
 
   // ---------- AniSkip segments ----------
-  const { segments, loaded: skipLoaded } = useSkipTimes(malId, episodeNumber, duration);
+  const { segments } = useSkipTimes(malId, episodeNumber, duration);
   const intro = segments.find((s) => s.kind === 'intro');
-  const introGuess = useIntroGuess(malId, episodeNumber, duration, skipLoaded && !intro);
   const outro = segments.find((s) => s.kind === 'outro');
   const segRef = useRef<{ outro?: Segment; countdownFired: boolean }>({ countdownFired: false });
   useEffect(() => {
@@ -518,21 +513,6 @@ export function Player({
     if (intro && inSeg(intro) && !skipped.includes('intro')) return { key: 'intro', label: 'Passer l’intro', to: intro.end };
     if (recap && inSeg(recap) && !skipped.includes('recap')) return { key: 'recap', label: 'Passer le récap', to: recap.end };
     if (outro && inSeg(outro) && !skipped.includes('outro') && outro.end < duration - 3) return { key: 'outro', label: 'Passer le générique', to: outro.end };
-    // No AniSkip data for this episode: the season's other episodes tell where / how long the
-    // opening is. Without an agreed start, the button only says what it does ("Avancer de 1:30"),
-    // since it could land in a recap or a cold open.
-    if (skipLoaded && !intro && !skipped.includes('intro') && t >= 2 && (duration === 0 || duration > introSkip + 60)) {
-      if (introGuess?.start != null) {
-        const g = { kind: 'intro' as const, start: introGuess.start, end: introGuess.start + introGuess.length };
-        if (inSeg(g)) return { key: 'intro', label: 'Passer l’intro', to: g.end };
-      } else if (t < INTRO_WINDOW) {
-        const jump = Math.round(introGuess?.length ?? introSkip);
-        // A blind jump only once the target is already downloaded: jumping into what isn't
-        // loaded yet freezes the picture, for a skip that may not even land after the opening.
-        if (time.buffered < t + jump) return null;
-        return { key: 'intro', label: `Avancer de ${Math.floor(jump / 60)}:${String(jump % 60).padStart(2, '0')}`, to: t + jump };
-      }
-    }
     return null;
   })();
   // A skip button shows on its own for 5 s, then only with the controls (it stays usable).
