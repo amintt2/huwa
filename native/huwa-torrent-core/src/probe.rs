@@ -41,7 +41,7 @@ use tokio::{
     task::JoinHandle,
 };
 
-use crate::engine::{build_magnet, is_video_name, normalize_hash, pick_file, trackers_from_sources, Engine};
+use crate::engine::{build_magnet, is_video_name, normalize_hash, pick_file, Engine};
 
 /// Probes actually running at once (more are queued). JS asks for 4 on Wi-Fi, 2 on cellular.
 pub const MAX_CONCURRENT_PROBES: usize = 6;
@@ -608,7 +608,9 @@ async fn run(engine: Arc<Engine>, probe: Arc<Probe>, req: ProbeRequest, id20: Id
         }
     }
 
-    let trackers = trackers_from_sources(&req.sources);
+    // Same list as the stream start (public trackers added to poor magnets): a probe that only had
+    // the magnet's trackers + a cold DHT reported popular swarms as dead.
+    let trackers = engine.torrent_trackers(&req.sources);
     let session = engine.session.clone();
     let mut add_fut = if meta.is_none() {
         let opts = AddTorrentOptions {

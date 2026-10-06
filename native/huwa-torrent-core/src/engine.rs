@@ -396,6 +396,11 @@ impl Engine {
         Ok(engine)
     }
 
+    /// Trackers announced for a torrent (stream start and probes alike, see `trackers::for_torrent`).
+    pub fn torrent_trackers(&self, sources: &[String]) -> Vec<String> {
+        crate::trackers::for_torrent(sources, !self.config.read().default_trackers.is_empty())
+    }
+
     pub fn config(&self) -> Config {
         self.config.read().clone()
     }
@@ -519,10 +524,7 @@ impl Engine {
     /// returns the loopback URL immediately. The HTTP handler waits for readiness.
     pub fn start_stream(self: &Arc<Self>, req: StartStreamRequest) -> Result<StartStreamResponse> {
         let (id20, hex) = normalize_hash(&req.info_hash)?;
-        let mut trackers = trackers_from_sources(&req.sources);
-        if self.config.read().default_trackers.is_empty() {
-            trackers = crate::trackers::augment(trackers);
-        }
+        let trackers = self.torrent_trackers(&req.sources);
 
         if let Some(existing) = self.entry(&hex) {
             existing.touch();
@@ -1010,6 +1012,16 @@ mod tests {
         assert_eq!(Arc::strong_count(&engine), 1, "server task gone: nothing else keeps the engine alive");
         assert!(std::net::TcpStream::connect(("127.0.0.1", port)).is_err(), "listener closed");
         drop(engine); // runtime shut down without blocking
+    }
+
+    #[test]
+    fn probes_get_the_public_trackers_too() {
+        let engine = test_engine("trackers");
+        // What `probe::run` announces to for a magnet without trackers: the public list.
+        let list = engine.torrent_trackers(&["dht:x".to_string()]);
+        assert_eq!(list.len(), crate::trackers::MAX_ADDED);
+        assert!(list.iter().all(|t| crate::trackers::PUBLIC_TRACKERS.contains(&t.as_str())));
+        engine.shutdown();
     }
 
     #[test]
