@@ -1,30 +1,54 @@
-# blind-peer — boîte aux lettres chiffrée toujours allumée
+# Relais Huwa (blind peer)
 
-Livre les messages privés quand le destinataire est hors-ligne : l'expéditeur pousse les blocs (chiffrés de bout en bout, voir PLAN.md phase 5) vers le blind peer, qui les réplique au destinataire à sa prochaine connexion. Il ne possède ni la clé de déchiffrement ni la clé d'écriture des cores.
+Pair Holepunch toujours allumé. L'app lui demande (bibliothèque `blind-peering`, voir `src/p2p/worklet/relay.js`) de garder :
 
-## Vérifié à la source
+| Priorité | Quoi | Pourquoi |
+|---|---|---|
+| 2 | core pointeur (possédé par la racine de la phrase) + base perso (tous ses writers + vue) | **restaurer un compte depuis la phrase quand le seul téléphone a été effacé** |
+| 1 | bases de MP où l'on écrit | livrer un message en attente quand les deux ne sont jamais en ligne en même temps |
+| 0 | salons publics ouverts (commentaires, correspondances, signalements), 48 par session max | garder les salons vivants quand peu de pairs sont en ligne |
 
-- npm : `blind-peer@3.15.1` (bibliothèque), `blind-peer-cli@1.15.1` (binaires `blind-peer`, `blind-peer-bare`), `blind-peering@2.10.0` (client côté app, « Request blind peers to keep hypercores and autobases available »). Dépôts `holepunchto/*`.
-- `bin.js` du CLI : options listées dans `docker-compose.yml`. Notables : `--push-gateway-key` (relais des notifications vers `services/push-gateway`), `--trusted-peer`, `--max-storage`, `--control-socket` + sous-commande `readiness-probe` (sonde de santé).
-- Au démarrage il journalise `publicKey` et `encryptionPublicKey` (pino/ndjson) : c'est la clé à saisir dans l'app.
+Le relais ne s'annonce pas sur les sujets Hyperswarm : l'app s'y connecte directement par sa clé publique (HyperDHT). À la restauration, l'app lui demande le core pointeur pendant la même fenêtre que la recherche des appareils, avant de déclarer `RESTORE_NOT_FOUND`.
 
-## Déploiement
+## Fichiers
 
-```sh
-cp .env.example .env
-docker compose up -d --build
-sudo ufw allow 49738/udp
-docker compose logs blind-peer | grep '"Listening"'   # → publicKey à donner aux utilisateurs
-```
+- `server.js` : démarre `blind-peer@3.15.1` (bibliothèque, pas le CLI), applique la politique, sonde `GET /health` (port 8080, interne), écrit la clé publique dans `/data/public-key.txt` et dans les logs (`"msg":"Listening","publicKey":"…"`).
+- `policy.js` : politique de stockage Huwa (ci-dessous).
+- `Dockerfile`, `docker-compose.yml`, `.env.example`.
 
-Sauvegarder `./data` : la paire de clés du service en dérive ; la perdre change la clé publique que les apps ont enregistrée.
+## Stockage : ce que fait la bibliothèque, ce qu'ajoute Huwa
 
-## Ce que ce service voit
+Vérifié dans `node_modules/blind-peer/index.js` et `lib/db.js` :
 
-- Clé publique Hyperswarm de chaque pair qui se connecte, son IP, les clés de découverte des cores qu'il demande de garder, la taille et la fréquence des blocs.
-- Il **ne peut pas lire** les blocs (chiffrement Hypercore + enveloppe X3DH/Double Ratchet côté app) ni forger des blocs (signature du writer).
-- Il peut déduire *qui écrit à qui* en corrélant les cores : c'est pourquoi l'enveloppe côté app utilise une clé éphémère par message (gift wrap) et pourquoi chacun peut choisir ses propres blind peers.
+- **Natif** : un budget total (`MAX_STORAGE_MB`, 20 Go par défaut). Au-delà, le GC vide les blocs des cores dans l'ordre (priorité, dernière activité) ; l'entrée reste (un client qui revient renvoie les blocs). Priorités 0–2 demandables par n'importe quel client. Limite optionnelle de requêtes par base (`REFERRER_RATE_*`). Pas de quota par client, pas d'expiration.
+- **Ajouté (`policy.js`)** :
+  - quota par groupe (`GROUP_QUOTA_MB`, 50 Mo) : un groupe = la base (clé `referrer` : clé de l'Autobase ; l'app range aussi le pointeur sous sa base perso) ou le core seul. Au-delà, les cores du groupe sont vidés dans le même ordre que le GC natif ;
+  - expiration (`MAX_IDLE_DAYS`, 120 j) : un core ni demandé ni répliqué depuis 120 jours est supprimé (blocs + entrée) ;
+  - chaque requête d'un client rafraîchit la date d'activité (la bibliothèque ne le fait qu'en cas de transfert : un compte à jour qui se connecte serait sinon vu comme inactif).
+- Limite connue : le quota est par base, pas par personne (une clé Hyperswarm est gratuite). Le budget total + le GC natif restent la borne dure.
 
-## Côté app
+## Déploiement sur Coolify (après fusion dans la branche déployée)
 
-Réglages → Messages → « Relais hors-ligne » : coller la `publicKey`. L'app utilise `blind-peering` pour demander la réplication de son core de messages et de ceux de ses conversations. Sans blind peer : les MP ne partent que si les deux appareils sont en ligne simultanément.
+1. Coolify → projet → **+ New → Application → Public/Private repository** `amintt2/huwa`, branche fusionnée.
+2. Build pack **Docker Compose**, *Base directory* `/services/blind-peer`, *Docker Compose location* `/docker-compose.yml`.
+3. Variables d'environnement : celles de `.env.example` (les défauts conviennent). Aucun secret.
+4. Pas de domaine : le service ne sert pas de HTTP public. Le port `49738/udp` est publié par le compose.
+5. **Pare-feu du serveur** : ouvrir `49738/udp` (`ufw allow 49738/udp` et la règle équivalente du fournisseur cloud). Sans ça, le relais reste joignable par hole-punching mais moins bien.
+6. Persistance : `./data` (monté sur `/data`). Il contient la **paire de clés** : le sauvegarder ; le perdre change la clé publique des apps.
+7. Déployer, puis lire la clé : logs `"msg":"Listening"` → `publicKey`, ou `cat data/public-key.txt` dans le dossier de l'application.
+8. Santé : statut Docker *healthy* (sonde interne `GET http://127.0.0.1:8080/health` : clé, nombre de cores, octets, connexions).
+
+Sans Coolify : `cp .env.example .env && docker compose up -d --build`. Sans Docker : `npm ci && STORAGE=./data node server.js`.
+
+## Brancher l'app
+
+- Clé par défaut : `HUWA_RELAY_KEYS=<publicKey>` au build (variable d'environnement EAS ou `eas.json` → `env`), ou `app.json` → `expo.extra.relayKeys: ["<publicKey>"]`. Lue par `src/p2p/relays.ts` via `extra.relayKeys` (`app.config.js`). Vide par défaut : sans clé, pas de relais.
+- Utilisateur : Réglages → Sécurité → **Relais Huwa** (activer/désactiver, désactiver le relais par défaut, ajouter ses propres relais).
+
+## Ce que voit le relais
+
+- **Lisible** (comme par n'importe quel pair qui connaît la clé de la base, ce sont des données publiques du réseau Huwa) : profil (pseudo, bio, avatar), journal de progression (œuvre, épisode/chapitre, date), abonnements/blocages/signalements publics, liste des appareils liés et révocations, commentaires, correspondances, signalements. Aucun core Huwa n'est chiffré au niveau Hypercore : la base perso est lue par les autres utilisateurs (profil, journal, listes de blocage), la chiffrer casserait ces fonctions et les comptes existants.
+- **Métadonnées seulement** pour les MP : le texte est scellé (X25519) pour le destinataire et l'expéditeur ; le relais voit qui écrit à qui (identités de la paire), les horodatages, la taille et les accusés de lecture.
+- **Réseau** : IP et clé Hyperswarm de chaque appareil qui se connecte (en mémoire pour les compteurs anti-abus, pas journalisées), clés des cores demandés, tailles.
+- **Jamais** : la phrase, la clé racine, les clés de signature des appareils, la clé de boîte (MP).
+- Rétention : tant que le compte est actif ; 120 jours sans activité → supprimé. Quota 50 Mo par base, 20 Go au total.

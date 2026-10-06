@@ -1,29 +1,40 @@
-# Blind peer Holepunch : réplique des blocs Hypercore chiffrés pour livrer les MP hors-ligne.
-# Options vérifiées dans blind-peer-cli@1.15.1/bin.js (paquet npm `blind-peer-cli`, binaire `blind-peer`) :
-#   --storage|-s <path>        (défaut ./blind-peer)
-#   --port|-p <int>            port DHT (défaut aléatoire) — le fixer pour le pare-feu
-#   --max-storage|-m <Mo>      (défaut 100000)
-#   --trusted-peer|-t <clé>    pairs autorisés à demander announce:true (plusieurs fois)
-#   --push-gateway-key <clé>   clé publique d'une passerelle push vers laquelle relayer (plusieurs fois)
-#   --ip-ban-list-key <clé>, --router-key <clé>, --debug, --control-socket <path>, sous-commande readiness-probe
-# Le blind peer expose sa clé publique dans les logs au démarrage ({"msg":"Listening","publicKey":"…"}).
-# Stocker ce keypair : il est dérivé du corestore dans --storage → sauvegarder le volume.
+# Relais Huwa (blind peer). Déployable tel quel sur Coolify (build pack « Docker Compose »,
+# base directory /services/blind-peer) ou à la main : `docker compose up -d --build`.
+#
+# Réseau : HyperDHT parle en UDP. Le port publié doit être le même dehors et dedans (49738),
+# et le pare-feu de l'hôte doit l'ouvrir : `ufw allow 49738/udp` (+ règle du fournisseur cloud).
+# La sonde HTTP (8080) n'est PAS publiée : elle sert au healthcheck dans le conteneur.
+#
+# Volume : ./data contient la base RocksDB ET la paire de clés du relais. La perdre change la clé
+# publique que les apps connaissent : sauvegarder ce dossier.
 
 services:
   blind-peer:
     build: .
     restart: unless-stopped
-    network_mode: host
-    env_file: .env
+    ports:
+      - "${PORT:-49738}:${PORT:-49738}/udp"
     volumes:
       - ./data:/data
-    command: >
-      sh -c 'exec blind-peer
-      --storage /data
-      --port ${PORT:-49738}
-      --max-storage ${MAX_STORAGE_MB:-20000}
-      ${PUSH_GATEWAY_KEY:+--push-gateway-key $PUSH_GATEWAY_KEY}
-      ${TRUSTED_PEER:+--trusted-peer $TRUSTED_PEER}'
+    environment:
+      STORAGE: /data
+      PORT: ${PORT:-49738}
+      MAX_STORAGE_MB: ${MAX_STORAGE_MB:-20000}
+      GROUP_QUOTA_MB: ${GROUP_QUOTA_MB:-50}
+      MAX_IDLE_DAYS: ${MAX_IDLE_DAYS:-120}
+      SWEEP_MINUTES: ${SWEEP_MINUTES:-60}
+      REFERRER_RATE_CAPACITY: ${REFERRER_RATE_CAPACITY:-60}
+      REFERRER_RATE_INTERVAL_MS: ${REFERRER_RATE_INTERVAL_MS:-1000}
+      TRUSTED_PEERS: ${TRUSTED_PEERS:-}
+      PUSH_GATEWAY_KEYS: ${PUSH_GATEWAY_KEYS:-}
+      HEALTH_PORT: 8080
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8080/health').then(r=>process.exit(r.ok?0:1),()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      start_period: 60s
+      retries: 3
+    stop_grace_period: 30s
     deploy:
       resources:
         limits:
