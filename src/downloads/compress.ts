@@ -7,6 +7,10 @@
 // Web releases are often H.264 at 4–8 Mb/s, so the saving is typically 50–70 %. Re-encoding a
 // file that is already lean costs battery for nothing (and loses a generation), so a file is
 // only touched when the expected saving is at least 25 %.
+//
+// Files the encoder cannot read (MKV, AVI…, or an MP4 with DTS / TrueHD / MP3 audio, Hi10P,
+// MPEG-4 Part 2, hev1…) keep their original, which the player opens with mpv.
+import { nativeGap } from '@/components/player/engines/policy';
 
 export type CompressMode = 'off' | 'balanced' | 'max';
 
@@ -26,6 +30,8 @@ export type MediaInfo = {
   durationSec: number;
   sizeBytes: number;
   fps?: number | null;
+  /** Codec tags of the engine policy (`sniffLocalFile`): audio included, unlike `codec`. */
+  codecs?: string[];
 };
 
 /** Inputs AVFoundation reads (MKV / WebM / AVI are not). HLS packages keep their downloaded variant. */
@@ -70,6 +76,9 @@ export function decideCompression(m: MediaInfo, mode: CompressMode): CompressDec
   if (!READABLE.has(c)) {
     return { compress: false, unsupported: true, reason: `${c.toUpperCase()} : format non lu par l’encodeur de l’iPhone, l’original est gardé.` };
   }
+  // AVAssetReader skips a DTS / MP3 track (the result would be silent) and fails on Hi10P & co.
+  const gap = m.codecs?.length ? nativeGap(m.codecs) : null;
+  if (gap) return { compress: false, unsupported: true, reason: `${gap} : non lu par l’encodeur de l’iPhone, l’original est gardé (lu avec mpv).` };
   if (!(m.durationSec > 0) || !(m.sizeBytes > 0) || !(m.width > 0) || !(m.height > 0)) {
     return { compress: false, reason: 'Durée ou taille inconnue : l’original est gardé.' };
   }

@@ -2,6 +2,7 @@
 // addon is an HTTP server exposing `manifest.json` and `/{resource}/{type}/{id}[/{extra}].json`.
 // Any Stremio-compatible addon URL works here, hosted by its author (Huwa ships none).
 // Resources used: stream, catalog, meta, subtitles, addon_catalog.
+import { resolveTorrentFileStreams } from './torrent-file';
 
 export type Resource = 'stream' | 'catalog' | 'meta' | 'subtitles' | 'addon_catalog';
 
@@ -233,14 +234,29 @@ export const extraPath = (extra?: Record<string, string | number | undefined>) =
 
 const MAGNET_HASH = /^magnet:\?.*xt=urn:btih:([a-f0-9]{40}|[a-z2-7]{32})/i;
 
-/** Cleans one answer: `magnet:` URLs become torrents, junk entries are dropped. */
+/** Base32 (BEP 9 short form) info hash → hex. */
+function base32ToHex(s: string): string {
+  const A = 'abcdefghijklmnopqrstuvwxyz234567';
+  let bits = '';
+  for (const c of s.toLowerCase()) bits += A.indexOf(c).toString(2).padStart(5, '0');
+  let hex = '';
+  for (let i = 0; i + 4 <= bits.length; i += 4) hex += parseInt(bits.slice(i, i + 4), 2).toString(16);
+  return hex;
+}
+
+/**
+ * Cleans one answer: `magnet:` links (in `url`, or in `externalUrl` with nothing else to play)
+ * become torrents, junk entries are dropped. `.torrent` links are read later, see `fetchStreams`.
+ */
 export function normalizeStream(s: StreamItem): StreamItem | null {
   if (!s || typeof s !== 'object') return null;
   let out = s;
-  const magnet = s.url ? MAGNET_HASH.exec(s.url) : null;
+  const link = s.url ?? (!s.infoHash && !s.ytId ? s.externalUrl : undefined);
+  const magnet = link ? MAGNET_HASH.exec(link) : null;
   if (magnet) {
-    const trackers = [...s.url!.matchAll(/[?&]tr=([^&]+)/g)].map((m) => `tracker:${safeDecode(m[1])}`);
-    out = { ...s, url: undefined, infoHash: magnet[1].toLowerCase(), sources: s.sources ?? (trackers.length ? trackers : undefined) };
+    const trackers = [...link!.matchAll(/[?&]tr=([^&]+)/g)].map((m) => `tracker:${safeDecode(m[1])}`);
+    const hash = magnet[1].length === 32 ? base32ToHex(magnet[1]) : magnet[1].toLowerCase();
+    out = { ...s, url: undefined, externalUrl: s.url ? s.externalUrl : undefined, infoHash: hash, sources: s.sources ?? (trackers.length ? trackers : undefined) };
   }
   if (out.infoHash) out = { ...out, infoHash: out.infoHash.toLowerCase() };
   if (out.subtitles) out = { ...out, subtitles: out.subtitles.filter((x) => x?.url && /^https?:\/\//i.test(x.url)) };
@@ -249,7 +265,7 @@ export function normalizeStream(s: StreamItem): StreamItem | null {
 
 export async function fetchStreams(baseUrl: string, type: string, id: string): Promise<StreamItem[]> {
   const res = await getJson<{ streams?: StreamItem[] }>(`${baseUrl}/stream/${type}/${encodeURIComponent(id)}.json`, 12000);
-  return (res.streams ?? []).map(normalizeStream).filter((s): s is StreamItem => !!s);
+  return resolveTorrentFileStreams((res.streams ?? []).map(normalizeStream).filter((s): s is StreamItem => !!s));
 }
 
 export type CatalogExtraValues = { search?: string; genre?: string; skip?: number };

@@ -33,6 +33,15 @@ test('media links are recognised by extension, player pages by extension or embe
   assert.equal(guessFromUrl('https://debrid.example/d/XYZ', 'Show S01E01 1080p.mkv'), 'direct');
 });
 
+test('every container mpv plays is a media link, not a page', () => {
+  for (const ext of ['avi', 'm2ts', 'vob', 'mpg', 'ogm', 'ogv', 'rmvb', 'wmv', 'flv', 'divx', 'mk3d', '3gp', 'mpd', 'm3u'])
+    assert.equal(guessFromUrl(`https://cdn.example/x/Show%20-%2001.${ext.toUpperCase()}`), 'direct', ext);
+  assert.equal(guessFromUrl('https://x.example/dl?name=Show.01.rmvb'), 'direct');
+  assert.equal(guessFromUrl('https://debrid.example/d/XYZ', 'Show - 01 [Hi10P].avi'), 'direct');
+  assert.equal(guessFromContentType('application/x-matroska'), 'direct');
+  assert.equal(guessFromContentType('application/force-download'), 'direct');
+});
+
 test('content types', () => {
   assert.equal(guessFromContentType('video/mp4'), 'direct');
   assert.equal(guessFromContentType('application/vnd.apple.mpegurl; charset=utf-8'), 'direct');

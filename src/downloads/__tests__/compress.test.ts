@@ -41,6 +41,24 @@ test('already lean files, unreadable containers and small gains are kept', () =>
   assert.equal(decideCompression({ ...web1080, container: 'movpkg' }, 'balanced').compress, false);
 });
 
+test('MP4s the encoder cannot read keep their original (played with mpv)', () => {
+  for (const [codecs, why] of [
+    [['avc1', 'dts'], /DTS/],
+    [['avc1', 'mp3'], /MP3/],
+    [['avc1', 'truehd'], /TrueHD/],
+    [['avc1', 'h264-hi10', 'aac'], /Hi10P/],
+    [['mp4v', 'aac'], /MPEG-4 Part 2/],
+    [['hev1', 'aac'], /hev1/],
+  ] as const) {
+    const d = decideCompression({ ...web1080, codecs: [...codecs] }, 'balanced');
+    assert.ok(!d.compress && d.unsupported, codecs.join());
+    assert.match(d.reason, why);
+    assert.match(d.reason, /original est gardé/);
+  }
+  assert.equal(decideCompression({ ...web1080, codecs: ['avc1', 'aac'] }, 'balanced').compress, true);
+  assert.equal(decideCompression({ ...web1080, codecs: ['avc1', 'eac3'] }, 'balanced').compress, true);
+});
+
 test('power rules', () => {
   assert.ok(canCompressNow({ batteryLevel: 0.3, charging: true, lowPower: false }));
   assert.ok(canCompressNow({ batteryLevel: 0.8, charging: false, lowPower: false }));
