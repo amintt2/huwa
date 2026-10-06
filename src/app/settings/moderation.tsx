@@ -5,7 +5,7 @@ import { useMemo, useState } from 'react';
 import { KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { Field, Group, Row, ScreenHeader, SwitchRow, shortKey } from '@/components/social';
+import { Field, Group, OptionRow, Row, ScreenHeader, SwitchRow, shortKey } from '@/components/social';
 import { Button, Txt } from '@/components/ui';
 import { social, useBlocked, useLabels, useMe, useProfile } from '@/p2p/hooks';
 import { setPrefs, usePrefs } from '@/p2p/prefs';
@@ -57,6 +57,9 @@ export default function Moderation() {
   const subscriptions = usePrefs((p) => p.subscriptions);
   const known = usePrefs((p) => p.knownLabelers);
   const words = usePrefs((p) => p.words);
+  const hideGifs = usePrefs((p) => p.hideGifs);
+  const blurGifs = usePrefs((p) => p.blurUnverifiedGifs);
+  const gifAutoplay = usePrefs((p) => p.gifAutoplay);
   const [listInput, setListInput] = useState('');
   const [listError, setListError] = useState<string>();
   const [word, setWord] = useState('');
@@ -92,8 +95,9 @@ export default function Moderation() {
         <View style={styles.rule}>
           <Ionicons name="shield-half-outline" size={20} color={C.accentText} />
           <Txt v="small" style={{ flex: 1, lineHeight: 18 }}>
-            Rien n’est supprimé du réseau : Huwa masque sur ton appareil. Un compte est masqué si tu le bloques, ou si{' '}
-            <Txt v="small" color={C.text}>au moins 2 de tes listes</Txt> le bloquent.
+            Il n’y a pas d’équipe de modération centrale, et rien n’est supprimé du réseau : Huwa masque sur ton appareil. Un compte est masqué si tu le bloques, ou si{' '}
+            <Txt v="small" color={C.text}>au moins 2 de tes listes</Txt> le bloquent. Un commentaire signalé par{' '}
+            <Txt v="small" color={C.text}>au moins 3 membres établis</Txt> est replié pour tous, et reste lisible d’un toucher.
           </Txt>
         </View>
 
@@ -164,6 +168,24 @@ export default function Moderation() {
             </Pressable>
           </View>
         </View>
+
+        <Group title="GIFs dans les commentaires" footer="Les GIFs viennent uniquement de GIPHY, Tenor ou Klipy. Ceux des comptes bloqués sont masqués avec leurs commentaires.">
+          <SwitchRow icon="image-outline" label="Masquer les GIFs" value={hideGifs} onChange={(v) => setPrefs((p) => ({ ...p, hideGifs: v }))} />
+          <SwitchRow
+            icon="eye-off-outline"
+            label="Flouter les GIFs non vérifiés"
+            detail="Comptes récents que tu ne suis pas : touche pour afficher."
+            value={blurGifs}
+            onChange={(v) => setPrefs((p) => ({ ...p, blurUnverifiedGifs: v }))}
+          />
+          {([
+            ['always', 'Animer : toujours'],
+            ['wifi', 'Animer : en Wi-Fi seulement'],
+            ['never', 'Animer : jamais (première image)'],
+          ] as const).map(([val, label], i) => (
+            <OptionRow key={val} label={label} selected={gifAutoplay === val} onPress={() => setPrefs((p) => ({ ...p, gifAutoplay: val }))} last={i === 2} />
+          ))}
+        </Group>
 
         {me && (
           <Row
