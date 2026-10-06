@@ -12,7 +12,7 @@ import { getSeries, manhwaSeries, registerSeries, type Series } from './catalog'
 import { buildBrowseQuery, buildHomeQuery, filterLocal, filtersKey, HOME_SECTIONS, type HomeSectionId, type MangaFilters, type Origin } from './manhwa-filters';
 
 type BrowseMedia = Media & { startDate?: { year: number | null } | null };
-const FIELDS = `${NODE} startDate { year }`;
+const FIELDS = NODE;
 const HOME_KEY = 'huwa/manhwa/home/v1';
 const HOME_TTL = 30 * 60e3;
 const PER_PAGE = 30;

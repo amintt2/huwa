@@ -53,6 +53,8 @@ export type Series = {
    * undefined when unknown (older cache, demo series). See `data/franchise.ts`.
    */
   prequel?: number | null;
+  /** First air / publication date (YYYY-MM-DD) when the provider knows the day. */
+  start?: string;
   /** Position in the provider's trending chart. */
   trendRank?: number;
   /** Episode ↔ chapter mapping is an estimate (no public source has exact data). */
