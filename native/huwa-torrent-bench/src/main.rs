@@ -7,11 +7,13 @@
 //!   run --root <dir> --label <l> --host <engine-host-bin> [--engine-info <json>] [--reps 3]
 //!       [--only a,b] [--jobs 1] [--quick] [--no-sandbox] [--resume]
 //!   summarize --root <dir> --label <l>
+//!   probe-real --root <dir> --host <engine-host-bin>   (real swarms: metadata + handshakes only)
 //!   compare --root <dir> <labelA> <labelB>
 
 mod enginehost;
 mod media;
 mod player;
+mod realprobe;
 mod report;
 mod runner;
 mod scenarios;
@@ -75,6 +77,10 @@ fn main() -> Result<()> {
             }
         }
         "run" => rt.block_on(run(&args))?,
+        "probe-real" => {
+            let host = PathBuf::from(args.get("host").context("--host <engine host binary with probeStart>")?);
+            rt.block_on(realprobe::run(&args.root(), &host))?;
+        }
         "summarize" => {
             let label = args.get("label").context("--label")?;
             let dir = args.root().join("results").join(label);

@@ -61,6 +61,8 @@ pub const METRICS: &[(&str, &str, bool, &str)] = &[
     ("longest_stall_s", "s", true, "longest stall in the watch window"),
     ("seek_ttfb_s", "s", true, "seek → first byte (all seeks)"),
     ("seek_ready_s", "s", true, "seek → 5 s buffered (all seeks)"),
+    ("seek50_ready_s", "s", true, "seek to 50 % → 5 s buffered (timeout counted as 45 s)"),
+    ("seek95_ready_s", "s", true, "seek to 95 % → 5 s buffered (timeout counted as 45 s)"),
     ("seek_stall_time_s", "s", true, "stall time after seeks (sum per run)"),
     ("avg_mbps", "Mbit/s", false, "average wire throughput"),
     ("peak_mbps", "Mbit/s", false, "peak 1 s wire throughput"),
@@ -86,6 +88,12 @@ fn run_metrics(r: &RunResult) -> BTreeMap<&'static str, Vec<Option<f64>>> {
     for s in &p.seeks {
         m.entry("seek_ttfb_s").or_default().push(s.ttfb_s);
         m.entry("seek_ready_s").or_default().push(s.ready_s);
+        let censored = Some(s.ready_s.unwrap_or(45.0));
+        if (s.target_frac - 0.5).abs() < 1e-6 {
+            m.entry("seek50_ready_s").or_default().push(censored);
+        } else if (s.target_frac - 0.95).abs() < 1e-6 {
+            m.entry("seek95_ready_s").or_default().push(censored);
+        }
     }
     m.entry("seek_stall_time_s")
         .or_default()
@@ -212,18 +220,20 @@ pub fn markdown(label: &str, engine_info: &str, sums: &[ScenarioSummary], runs: 
         );
     }
     let _ = writeln!(md, "\n## Playback (watch window) and seeks\n");
-    let _ = writeln!(md, "| scenario | stalls | stall time s | longest stall s | seek first byte s | seek ready s | seek timeouts | stall after seeks s |");
-    let _ = writeln!(md, "|---|---|---|---|---|---|---|---|");
+    let _ = writeln!(md, "| scenario | stalls | stall time s | longest stall s | seek first byte s | seek ready s | seek→50 % ready s | seek→95 % ready s | seek timeouts | stall after seeks s |");
+    let _ = writeln!(md, "|---|---|---|---|---|---|---|---|---|---|");
     for s in sums {
         let _ = writeln!(
             md,
-            "| {} | {} | {} | {} | {} | {} | {}/{} | {} |",
+            "| {} | {} | {} | {} | {} | {} | {} | {} | {}/{} | {} |",
             s.scenario,
             mp(s.metrics.get("stalls")),
             mp(s.metrics.get("stall_time_s")),
             mp(s.metrics.get("longest_stall_s")),
             mp(s.metrics.get("seek_ttfb_s")),
             mp(s.metrics.get("seek_ready_s")),
+            mp(s.metrics.get("seek50_ready_s")),
+            mp(s.metrics.get("seek95_ready_s")),
             s.seek_timeouts,
             s.seeks_total,
             mp(s.metrics.get("seek_stall_time_s")),
@@ -310,7 +320,7 @@ pub fn compare(a_dir: &Path, b_dir: &Path, a: &str, b: &str) -> Result<String> {
         "Medians over repetitions (p90 in parentheses). Δ% is relative to `{a}`; a verdict is given when the change exceeds 10 % and the absolute change is meaningful.\n"
     );
 
-    let key: &[&str] = &["metadata_s", "first_byte_s", "playable_s", "stalls", "stall_time_s", "seek_ready_s", "avg_mbps", "wire_overhead", "cpu_s", "rss_mb"];
+    let key: &[&str] = &["metadata_s", "first_byte_s", "playable_s", "stalls", "stall_time_s", "seek50_ready_s", "seek95_ready_s", "avg_mbps", "wire_overhead", "cpu_s", "rss_mb"];
     let (mut better, mut worse) = (0, 0);
     let mut lines = Vec::new();
     for x in &sa {

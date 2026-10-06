@@ -203,6 +203,8 @@ pub fn all() -> Vec<Scenario> {
         v.push(base(name, desc, media, n(8, |i| PeerSpec::rate(3.0).rtt(40.0 + 15.0 * i as f64, 8.0))));
     }
 
+    v.extend(calibrated());
+
     v.push(Scenario {
         watch_s: 30.0,
         seeks: vec![0.5, 0.1, 0.95, 0.3, 0.7, 0.05, 0.85, 0.6],
@@ -216,4 +218,61 @@ pub fn all() -> Vec<Scenario> {
     });
 
     v
+}
+
+/// Swarm profiles calibrated on REAL swarms (`scripts/torrent-real-sample.mjs report` →
+/// `<root>/real/calibration.json`): how many peers really answer on the torrent the race would
+/// pick, and when the k-th of them shows up. What the probe cannot measure (no piece is ever
+/// requested from real torrents) is assumed and stated in the description: peer upload rates
+/// (residential mix), RTT, freezes and churn.
+pub fn calibrated() -> Vec<Scenario> {
+    let root = std::env::var("TBENCH_ROOT").unwrap_or_else(|_| "/private/tmp/claude-501/tbench".into());
+    let Ok(bytes) = std::fs::read(std::path::Path::new(&root).join("real/calibration.json")) else { return Vec::new() };
+    let Ok(cal) = serde_json::from_slice::<serde_json::Value>(&bytes) else { return Vec::new() };
+    let mut out = Vec::new();
+    for (tier, name) in [("popular", "real-popular"), ("mid", "real-mid"), ("obscure", "real-obscure")] {
+        let Some(c) = cal.get(tier) else { continue };
+        let n = c.pointer("/bestAnswering/median").and_then(|v| v.as_f64()).unwrap_or(1.0).round().clamp(1.0, 40.0) as usize;
+        let kth: Vec<f64> = c
+            .get("kthPeerS")
+            .and_then(|v| v.as_array())
+            .map(|a| a.iter().map(|x| x.as_f64().unwrap_or(f64::NAN)).collect())
+            .unwrap_or_default();
+        let first = c.pointer("/firstAnswerS/median").and_then(|v| v.as_f64()).unwrap_or(1.0);
+        let reveal = |i: usize| -> f64 {
+            match kth.get(i) {
+                Some(t) if t.is_finite() => *t,
+                // Past the 10 measured arrivals (or missing): keep the last known pace.
+                _ => {
+                    let known: Vec<f64> = kth.iter().copied().filter(|t| t.is_finite()).collect();
+                    let last = known.last().copied().unwrap_or(first);
+                    last + (i + 1 - known.len().min(i + 1)) as f64 * 1.0
+                }
+            }
+        };
+        let desc: &'static str = Box::leak(
+            format!(
+                "CALIBRATED on real {tier} swarms: {n} answering peers (median of the best probed torrent per episode), \
+                 k-th peer revealed at the measured median time (first at {first:.1} s); ASSUMED: residential uplinks \
+                 30 % 5 / 40 % 1.5 / 30 % 0.3 Mbit/s, RTT 80-250 ms, a freeze every ~15 s, peers online ~90 s / offline ~30 s"
+            )
+            .into_boxed_str(),
+        );
+        let peers = (0..n)
+            .map(|i| {
+                let rate = match i % 10 {
+                    0 | 3 | 6 => 5.0,
+                    1 | 4 | 7 | 9 => 1.5,
+                    _ => 0.3,
+                };
+                let mut p = PeerSpec::rate(rate).rtt(80.0 + (i * 53 % 170) as f64, 20.0).stalls(15.0, (300, 2000)).reveal(reveal(i));
+                if n > 1 {
+                    p = p.churn(90.0, 30.0);
+                }
+                p
+            })
+            .collect();
+        out.push(Scenario { tracker_interval_s: 5, ..base(name, desc, "medium-mkv", peers) });
+    }
+    out
 }
