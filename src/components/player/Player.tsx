@@ -18,7 +18,7 @@ import {
   type SubtitleTrack,
   type VideoView,
 } from 'expo-video';
-import { useEffect, useImperativeHandle, useRef, useState, type ReactNode, type Ref } from 'react';
+import { useEffect, useImperativeHandle, useMemo, useRef, useState, type ReactNode, type Ref } from 'react';
 import { ActivityIndicator, BackHandler, Platform, Pressable, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
 import Animated, { FadeIn, FadeOut, SlideInLeft, SlideInRight, SlideOutLeft, SlideOutRight } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -51,7 +51,8 @@ export type PlayerHandle = {
   pause: () => void;
 };
 
-export type TimedComment = { id: string; author: string; text: string; timestamp: number };
+/** `timestamp`: start; `end`: end of a range (shown while the playhead is inside it). Text is plain. */
+export type TimedComment = { id: string; author: string; text: string; timestamp: number; end?: number };
 
 export type PlayerProps = {
   ref?: Ref<PlayerHandle>;
@@ -542,10 +543,11 @@ export function Player({
   const skipVisible = !!skipBtn && (controls || (skipSeen?.id === skipId && t - skipSeen.at < 5));
   const showNext = !!next && !ended && countdown === null && duration > 60 && (outro ? t >= outro.start : duration - t <= NEXT_WINDOW);
   const markers = segments.filter((s) => s.kind !== 'recap');
+  const commentMarks = useMemo(() => timedComments.map((c) => ({ start: c.timestamp, end: c.end })), [timedComments]);
 
   // ---------- live comments ----------
   const live = full && prefs.liveComments && !commentsOpen
-    ? timedComments.filter((c) => c.timestamp <= t && t - c.timestamp < LIVE_COMMENT_SECONDS).slice(-3)
+    ? timedComments.filter((c) => t >= c.timestamp && t < Math.max(c.end ?? 0, c.timestamp + LIVE_COMMENT_SECONDS)).slice(-3)
     : [];
 
   const pipOk = Platform.OS !== 'web' && isPictureInPictureSupported();
@@ -681,7 +683,7 @@ export function Player({
         <View pointerEvents="none" style={[styles.live, { bottom: bottomOffset + 8 }, panelLeft ? { right: sideInset } : { left: sideInset }]}>
           {live.map((c) => (
             <Animated.View key={c.id} entering={FadeIn.duration(220)} exiting={FadeOut.duration(220)} style={styles.liveRow}>
-              <Text style={styles.liveAuthor}>{c.author}</Text>
+              <Text style={styles.liveAuthor}>{c.author}{c.end !== undefined ? `  ·  ${formatTime(c.timestamp)}–${formatTime(c.end)}` : ''}</Text>
               <Text style={styles.liveText} numberOfLines={2}>{c.text}</Text>
             </Animated.View>
           ))}
@@ -756,7 +758,7 @@ export function Player({
 
           <View pointerEvents="box-none" style={[styles.bottomRow, full && { paddingBottom: Math.max(insets.bottom, S.md), paddingHorizontal: sideInset }]}>
             <Text style={styles.time}>{formatTime(t)}</Text>
-            <SeekBar position={t} duration={duration} buffered={time.buffered} markers={markers} onScrubStart={wake} onSeek={(x) => { seekTo(x); wake(); }} />
+            <SeekBar position={t} duration={duration} buffered={time.buffered} markers={markers} commentMarks={prefs.liveComments ? commentMarks : undefined} onScrubStart={wake} onSeek={(x) => { seekTo(x); wake(); }} />
             <Text style={styles.time}>{duration > 0 ? `-${formatTime(Math.max(0, remaining))}` : '--:--'}</Text>
             {prefs.rate !== 1 && <Text style={[styles.time, { color: C.accentText }]}>{String(prefs.rate).replace('.', ',')}×</Text>}
             <Ctl icon={full ? 'contract' : 'expand'} label={full ? 'Quitter le plein écran' : 'Plein écran'} onPress={() => (full ? exitFull() : enterFull())} size={20} />

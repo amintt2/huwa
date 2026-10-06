@@ -11,6 +11,7 @@ export function SeekBar({
   onSeek,
   onScrubStart,
   markers = [],
+  commentMarks = [],
 }: {
   position: number;
   duration: number;
@@ -19,6 +20,8 @@ export function SeekBar({
   onScrubStart?: () => void;
   /** Highlighted ranges (opening / ending) drawn on the track. */
   markers?: { start: number; end: number }[];
+  /** Anchored comments: thin ticks for moments, translucent segments for ranges. */
+  commentMarks?: { start: number; end?: number }[];
 }) {
   const box = useRef<View>(null);
   const frame = useRef({ x: 0, w: 1 });
@@ -72,6 +75,21 @@ export function SeekBar({
           />
         ))}
       </View>
+      {ok && commentMarks.length > 0 && (
+        <View pointerEvents="none" style={{ position: 'absolute', left: 0, right: 0, top: 4, height: 3 }}>
+          {commentMarks.slice(0, 80).map((m, i) =>
+            m.end !== undefined ? (
+              <View key={i} style={{
+                position: 'absolute', top: 0, height: 3, borderRadius: 1.5, backgroundColor: 'rgba(127,176,255,0.55)',
+                left: `${(Math.min(m.start, duration) / duration) * 100}%`,
+                width: `${Math.max(0.6, ((Math.min(m.end, duration) - Math.min(m.start, duration)) / duration) * 100)}%`,
+              }} />
+            ) : (
+              <View key={i} style={{ position: 'absolute', top: 0, width: 2, height: 3, borderRadius: 1, backgroundColor: 'rgba(255,255,255,0.7)', left: `${(Math.min(m.start, duration) / duration) * 100}%` }} />
+            ),
+          )}
+        </View>
+      )}
       <View
         pointerEvents="none"
         style={{
