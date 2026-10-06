@@ -1,6 +1,7 @@
 // Onboarding: an account phrase already in iCloud Keychain (e.g. new iPhone, same Apple account)
 // is offered first — one tap restores it. The keychain is read in the background; the card only
 // slides in when something valid is found (unavailable keychain / invalid item → nothing shown).
+// No device of the account answers (e.g. the app was deleted on the only one): RestoreOfflineNotice.
 import Ionicons from '@expo/vector-icons/Ionicons';
 import * as Haptics from 'expo-haptics';
 import { useEffect, useState } from 'react';
@@ -8,13 +9,15 @@ import { Pressable, StyleSheet, View } from 'react-native';
 import Animated, { FadeInDown, FadeOut } from 'react-native-reanimated';
 
 import { cloudBackup, cloudBackupSupported } from '@/p2p/cloud-backup';
-import { isRestoreNotFound } from '@/p2p/errors';
+import type { RestoreOptions } from '@/p2p/contract';
+import { errorCode, isRestoreNotFound } from '@/p2p/errors';
 import { social } from '@/p2p/hooks';
 import { hintLabel, type AccountHint } from '@/p2p/passkey-core';
 import { requestPasskeyOffer } from '@/p2p/passkey';
 import { isValidPhrase } from '@/social/identity';
 import { C, F, R, S } from '@/theme/tokens';
 
+import { RestoreOfflineNotice } from './restore-offline';
 import { Avatar, DANGER } from './social';
 import { Button, Txt } from './ui';
 
@@ -59,28 +62,47 @@ export function CloudAccountCard({
   if (!visible || !found) return null;
   const label = hintLabel(found.hint);
 
-  const restore = async () => {
+  const restore = async (opts?: RestoreOptions) => {
     if (busy) return;
     setBusy(true);
     setError(undefined);
     try {
       requestPasskeyOffer();
-      await social.restoreIdentity(found.words);
+      await social.restoreIdentity(found.words, opts);
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       // The protected stack switches to the app on its own.
     } catch (e) {
       requestPasskeyOffer(false);
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
-      // No device of the account answered: the account is untouched, the same tap retries.
-      setOffline(isRestoreNotFound(e));
-      setError(
-        isRestoreNotFound(e)
-          ? 'Aucun de tes appareils n’a répondu. Ton compte n’a pas été modifié : ouvre Huwa sur un appareil déjà connecté, puis réessaie.'
-          : e instanceof Error ? e.message : 'Restauration impossible.',
-      );
+      console.warn('[huwa] iCloud restore failed', errorCode(e) ?? '', e instanceof Error ? e.message : e);
+      // No device of the account answered: the account is untouched (see RestoreOfflineNotice).
+      if (isRestoreNotFound(e)) setOffline(true);
+      else setError(e instanceof Error ? e.message : 'Restauration impossible.');
       setBusy(false);
     }
   };
+
+  if (offline) {
+    return (
+      <Animated.View entering={FadeInDown.duration(380)} exiting={FadeOut.duration(160)} style={{ gap: S.md }}>
+        <RestoreOfflineNotice
+          busy={busy}
+          hint={found.hint}
+          onRetry={() => restore()}
+          onRestoreWithoutData={(name) => restore({ allowNewHome: true, name })}
+        />
+        {error ? <Txt v="small" color={DANGER}>{error}</Txt> : null}
+        <Pressable
+          onPress={() => setDismissed(true)}
+          disabled={busy}
+          accessibilityRole="button"
+          hitSlop={8}
+          style={{ minHeight: 36, alignItems: 'center', justifyContent: 'center' }}>
+          <Txt v="label" color={C.accentText} style={F.semibold}>Utiliser un autre compte</Txt>
+        </Pressable>
+      </Animated.View>
+    );
+  }
 
   return (
     <Animated.View entering={FadeInDown.duration(380)} exiting={FadeOut.duration(160)} style={styles.card}>
@@ -101,7 +123,7 @@ export function CloudAccountCard({
         </View>
       </View>
       {error ? <Txt v="small" color={DANGER}>{error}</Txt> : null}
-      <Button label={busy ? 'Connexion…' : offline ? 'Réessayer' : label.action} icon="log-in-outline" onPress={restore} />
+      <Button label={busy ? 'Recherche de tes appareils…' : label.action} icon="log-in-outline" loading={busy} onPress={() => restore()} />
       <Pressable
         onPress={() => setDismissed(true)}
         disabled={busy}
