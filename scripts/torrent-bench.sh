@@ -13,6 +13,10 @@
 #   scripts/torrent-bench.sh run     --engine <dir|git-ref> --label <label> [--reps 3] [--jobs 2] [--only <regex>] [--quick]
 #   scripts/torrent-bench.sh compare <labelA> <labelB>               # Markdown diff (before → after)
 #   scripts/torrent-bench.sh list                                   # scenario matrix
+#   scripts/torrent-bench.sh real    --engine <dir|git-ref> --label <label>
+#       real swarms (AniList tiers → Torrentio/Comet → engine probe: metadata + handshakes ONLY,
+#       never a piece) → real/real-report.md + real/calibration.json, which adds the calibrated
+#       scenarios real-popular / real-mid / real-obscure to the matrix. Needs an engine with probeStart.
 #   scripts/torrent-bench.sh clean-media                            # delete generated media (~5 GB)
 #
 # Examples:
@@ -106,6 +110,23 @@ case "$cmd" in
     build_tbench
     "$TBENCH" list "$@"
     ;;
+  real)
+    ENGINE_SPEC="" LABEL=""
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        --engine) ENGINE_SPEC="$2"; shift 2 ;;
+        --label) LABEL="$2"; shift 2 ;;
+        *) shift ;;
+      esac
+    done
+    [ -n "$ENGINE_SPEC" ] && [ -n "$LABEL" ] || die "real --engine <dir|git-ref> --label <label>"
+    resolve_engine "$ENGINE_SPEC" "$LABEL"
+    build_host "$LABEL"
+    build_tbench
+    TBENCH_ROOT="$TB" node "$ROOT/scripts/torrent-real-sample.mjs" select
+    "$TBENCH" probe-real --root "$TB" --host "$HOST_BIN"
+    TBENCH_ROOT="$TB" node "$ROOT/scripts/torrent-real-sample.mjs" report
+    ;;
   build|run)
     ENGINE_SPEC="" LABEL="" REST=()
     while [ $# -gt 0 ]; do
@@ -131,7 +152,7 @@ case "$cmd" in
     "$TBENCH" compare --root "$TB" "$1" "$2"
     ;;
   *)
-    sed -n '2,32p' "$0"
+    sed -n '2,36p' "$0"
     exit 1
     ;;
 esac
