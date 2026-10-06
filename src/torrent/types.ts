@@ -53,6 +53,12 @@ export type StartStreamInput = {
   /** Stremio `sources`: `tracker:udp://…`, `dht:<hash>`. */
   sources?: string[];
   name?: string;
+  /**
+   * Metered network (cellular): the engine only downloads a window of ~60–90 s ahead of the
+   * playhead instead of the whole file in the background. Sent with every call (the network can
+   * change between two episodes).
+   */
+  metered?: boolean;
 };
 
 export type StreamHandle = { id: string; url: string; infoHash: string };

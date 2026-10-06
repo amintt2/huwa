@@ -18,10 +18,12 @@ import { Alert } from 'react-native';
 
 import Native from '../../modules/huwa-torrent';
 import { getTorrentSettings, hydrateTorrentSettings, setTorrentSettings } from './settings';
+import { startStreamInput, type TorrentStreamLike } from './stream-input';
 import type { EngineStats, ProbeInput, ProbeStatus, StartStreamInput, StreamHandle, TorrentStatus } from './types';
 
 export * from './settings';
 export * from './types';
+export type { TorrentStreamLike } from './stream-input';
 
 type Envelope<T> = { ok: T } | { error: string };
 
@@ -116,6 +118,18 @@ export function canProbeTorrents(): boolean {
   return true;
 }
 
+/**
+ * Metered connection right now (cellular), as the network settings see it (`useUnmetered`,
+ * `useTorrentProbeBudget`). Unknown → unmetered, like there.
+ */
+export function isMeteredNow(): boolean {
+  try {
+    return !!Native?.isOnCellular();
+  } catch {
+    return false;
+  }
+}
+
 /** Subscribes to the native 1 Hz status feed. No-op when unavailable. */
 export function addStatusListener(cb: (torrents: TorrentStatus[]) => void): () => void {
   if (!Native || !isAvailable()) return () => {};
@@ -181,14 +195,6 @@ export async function enableTorrentEngine(): Promise<boolean> {
   return true;
 }
 
-export type TorrentStreamLike = {
-  infoHash?: string;
-  fileIdx?: number | null;
-  sources?: string[];
-  name?: string;
-  title?: string;
-};
-
 /**
  * Extension point for the stream resolver: returns a playable loopback URL for a torrent
  * stream, or `null` when the caller should fall back to debrid (engine not linked, disabled by
@@ -199,14 +205,10 @@ export async function resolveTorrent(stream: TorrentStreamLike): Promise<StreamH
   await hydrateTorrentSettings();
   const s = getTorrentSettings();
   if (!s.enabled) return null;
-  if (s.wifiOnly && Native?.isOnCellular()) return null;
+  const metered = isMeteredNow();
+  if (s.wifiOnly && metered) return null;
   if (!(await ensureLegalAccepted())) return null;
-  return startStream({
-    infoHash: stream.infoHash,
-    fileIdx: stream.fileIdx ?? null,
-    sources: stream.sources ?? [],
-    name: stream.name ?? stream.title?.split('\n')[0],
-  });
+  return startStream(startStreamInput({ ...stream, infoHash: stream.infoHash }, metered));
 }
 
 export function formatBytes(n: number): string {
