@@ -24,5 +24,12 @@ module.exports = ({ config }) => {
   // Optional GIPHY API key for the comment GIF search (never committed: set HUWA_GIF_API_KEY at build
   // time). Without it, the picker only takes pasted GIPHY / Tenor links.
   const gifApiKey = process.env.HUWA_GIF_API_KEY || undefined;
-  return { ...config, updates, extra: { ...config.extra, channel, gifApiKey } };
+  // Public key(s) of the Huwa relay(s) (services/blind-peer, printed at start and in
+  // /data/public-key.txt): HUWA_RELAY_KEYS (comma separated) wins over app.json `extra.relayKeys`.
+  // Not a secret, but empty until a relay is deployed: the app then simply has no default relay.
+  const relayKeys = String(process.env.HUWA_RELAY_KEYS ?? (config.extra?.relayKeys || []).join(','))
+    .split(',')
+    .map((k) => k.trim())
+    .filter(Boolean);
+  return { ...config, updates, extra: { ...config.extra, channel, gifApiKey, relayKeys } };
 };

@@ -1,0 +1,26 @@
+{
+  "schemaVersion": 1,
+  "_note": "PROPOSITION (non appliquée) : label App Store à utiliser quand la build Store embarque une clé de relais Huwa par défaut (HUWA_RELAY_KEYS). Le relais du développeur conserve des données au-delà du temps réel = collecte au sens d'Apple. Liées : elles sont rattachées à l'identité Huwa (clé publique = identifiant de compte). Aucun suivi publicitaire. Les MP, chiffrés de bout en bout et illisibles par le développeur, n'ont pas à être déclarés. Les adresses IP ne sont pas conservées. Retirer _note avant tout import.",
+  "dataUsages": [
+    {
+      "category": "PERFORMANCE_DATA",
+      "purposes": ["APP_FUNCTIONALITY", "ANALYTICS"],
+      "dataProtections": ["DATA_NOT_LINKED_TO_YOU"]
+    },
+    {
+      "category": "OTHER_USER_CONTENT",
+      "purposes": ["APP_FUNCTIONALITY"],
+      "dataProtections": ["DATA_LINKED_TO_YOU"]
+    },
+    {
+      "category": "PRODUCT_INTERACTION",
+      "purposes": ["APP_FUNCTIONALITY"],
+      "dataProtections": ["DATA_LINKED_TO_YOU"]
+    },
+    {
+      "category": "USER_ID",
+      "purposes": ["APP_FUNCTIONALITY"],
+      "dataProtections": ["DATA_LINKED_TO_YOU"]
+    }
+  ]
+}

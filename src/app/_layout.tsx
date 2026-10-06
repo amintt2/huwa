@@ -141,6 +141,7 @@ export default function RootLayout() {
           <Stack.Screen name="settings/general" />
           <Stack.Screen name="settings/subtitles" />
           <Stack.Screen name="settings/security" />
+          <Stack.Screen name="settings/relays" />
           <Stack.Screen name="settings/phrase" />
           <Stack.Screen name="settings/pair" options={SHEET} />
           <Stack.Screen name="passkey" options={{ ...SHEET, sheetAllowedDetents: [0.62, 1] }} />

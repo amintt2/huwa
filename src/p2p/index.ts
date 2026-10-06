@@ -11,6 +11,7 @@ import type { P2P, P2PStatus, Unsubscribe } from './contract';
 import { isDemo } from '@/demo/flags';
 
 import { createLocalP2P } from './local';
+import { onRelayConfig, relayConfig } from './relays';
 
 export type * from './contract';
 
@@ -88,9 +89,11 @@ class SwitchingP2P implements P2P {
         storage: documentsDir(),
         bootstrap: BOOTSTRAP,
         deviceName: Device.deviceName ?? Device.modelName ?? 'appareil',
+        relays: relayConfig(),
         onBoot: (ok, info) => console.log('[huwa] worklet', ok ? `prêt en ${info.readyMs} ms` : `échec: ${info.error}`),
       });
       bare.ready.then(() => excludeP2PStoreFromBackup(), () => this.fallback());
+      onRelayConfig((c) => bare.setRelays(c).catch((e: unknown) => console.warn('[huwa] relais', e)));
       this.bare = bare;
       this.backend = 'bare';
       return bare;

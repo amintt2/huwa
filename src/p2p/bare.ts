@@ -28,6 +28,7 @@ import type {
   Unsubscribe,
 } from './contract';
 import { P2PError } from './errors';
+import type { RelayConfig } from './relays';
 
 const CMD = { CALL: 1, EVENT: 2 } as const;
 const DEFAULT_TIMEOUT = 30_000;
@@ -67,11 +68,16 @@ export type BareConfig = {
   /** Custom DHT bootstrap nodes, `host:port`. Empty = public Holepunch nodes. */
   bootstrap?: string[];
   deviceName?: string;
+  /** Huwa relays (src/p2p/relays.ts); updated live with `setRelays`. */
+  relays?: RelayConfig;
   /** Called once when the worklet answered its first request, or failed to. */
   onBoot?: (ok: boolean, info: { readyMs?: number; error?: string }) => void;
 };
 
 type Sub = { kind: string; arg?: string; cb: (data: never) => void };
+
+/** What the worklet reports about its relays (src/p2p/worklet/relay.js). */
+export type RelayStatus = { enabled: boolean; relays: number; connected: number; cores: number; bases: number };
 
 const decoder = new TextDecoder();
 const encoder = new TextEncoder();
@@ -110,7 +116,7 @@ export class BareP2P implements P2P {
     const worklet = new Worklet({ memoryLimit: 0 });
     worklet.start('/huwa.bundle', source, [
       this.config.storage,
-      JSON.stringify({ bootstrap: this.config.bootstrap ?? [], deviceName: this.config.deviceName }),
+      JSON.stringify({ bootstrap: this.config.bootstrap ?? [], deviceName: this.config.deviceName, relays: this.config.relays ?? null }),
     ]);
     const onDead = (err?: Error) => {
       if (generation === this.generation) this.recover(err?.message ?? 'IPC fermé');
@@ -278,6 +284,17 @@ export class BareP2P implements P2P {
   }
   vouch(seriesId: string, key: PublicKey) {
     return this.call<void>('vouch', [seriesId, key]);
+  }
+
+  // ---- Huwa relays (not part of the contract: the local backend has no network) -------
+
+  /** Also kept for the next worklet (re)start. */
+  async setRelays(relays: RelayConfig) {
+    this.config = { ...this.config, relays };
+    if (this.rpc) await this.call<RelayStatus>('setRelays', [relays]);
+  }
+  relayStatus() {
+    return this.call<RelayStatus>('relayStatus', []);
   }
 
   // ---- P2P contract ------------------------------------------------------------

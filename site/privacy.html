@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Huwa — confidentialité</title>
-  <meta name="description" content="Politique de confidentialité de l'app Huwa : aucun compte, aucun serveur central, rien de collecté par défaut ; statistiques de lecture anonymes seulement sur option.">
+  <meta name="description" content="Politique de confidentialité de l'app Huwa : pas de compte e-mail ni de publicité ; un relais désactivable garde une copie de tes données publiques et de tes messages chiffrés en attente ; statistiques de lecture anonymes seulement sur option.">
   <meta name="theme-color" content="#05070D">
   <link rel="icon" href="/favicon.png" type="image/png">
   <style>
@@ -67,11 +67,21 @@
     <section style="border-top:0">
       <h2>Confidentialité</h2>
       <div class="card" style="display:grid;gap:14px">
-        <p><strong style="color:var(--text)">En bref : par défaut, Huwa ne collecte aucune donnée.</strong> Il n’y a ni compte, ni publicité, ni outil de mesure d’audience, ni serveur Huwa qui stockerait tes informations. La seule mesure qui peut quitter ton appareil est optionnelle, désactivée par défaut et anonyme : un résumé de tes temps de démarrage des vidéos, si tu actives « Comparer avec la communauté » (voir plus bas).</p>
+        <p><strong style="color:var(--text)">En bref : Huwa n’a ni compte e-mail, ni publicité, ni outil de mesure d’audience.</strong> Seule exception au « sans serveur » : le relais Huwa, désactivable, garde une copie de tes données publiques et de tes messages chiffrés en attente pour que ton compte reste récupérable (voir « Relais Huwa »). La seule mesure qui peut quitter ton appareil est optionnelle, désactivée par défaut et anonyme : un résumé de tes temps de démarrage des vidéos, si tu actives « Comparer avec la communauté » (voir plus bas).</p>
         <h3>Ce qui reste sur ton appareil</h3>
         <p>Ta progression, tes listes, tes réglages et ta clé d’identité sont enregistrés uniquement sur ton appareil. Ta phrase de récupération est dans le trousseau sécurisé d’iOS ; si tu laisses l’option activée, iOS en garde une copie chiffrée de bout en bout dans ton Trousseau iCloud, lisible par toi seul.</p>
         <h3>Ce qui passe de pair à pair</h3>
-        <p>Les commentaires, ton profil public (pseudo, bio) et ton journal de progression que tu choisis de publier sont signés par ta clé et échangés directement avec les autres utilisateurs, sans passer par un serveur Huwa. Les messages privés sont chiffrés de bout en bout.</p>
+        <p>Les commentaires, ton profil public (pseudo, bio) et ton journal de progression que tu choisis de publier sont signés par ta clé et échangés directement avec les autres utilisateurs, et copiés sur les relais Huwa (voir plus bas). Les messages privés sont chiffrés de bout en bout.</p>
+        <h3>Relais Huwa</h3>
+        <p>Pour que ton compte reste disponible quand tous tes appareils sont éteints, et surtout pour pouvoir le retrouver avec ta phrase si ton seul téléphone est perdu, l’app confie une copie de certaines données à un <strong style="color:var(--text)">relais Huwa</strong> : un pair toujours allumé hébergé par l’auteur de Huwa (tu peux aussi ajouter les tiens). Il garde :</p>
+        <ul>
+          <li>ton compte : profil public (pseudo, bio, avatar), journal de progression (œuvre, épisode ou chapitre, date), abonnements, blocages et signalements publics, liste de tes appareils liés. Ces données sont déjà publiques sur le réseau Huwa : n’importe quel pair qui connaît ta clé peut les lire, le relais aussi ;</li>
+          <li>tes conversations privées en attente : le texte des messages est chiffré de bout en bout et illisible pour le relais, qui voit seulement entre quelles identités Huwa la conversation a lieu, quand les messages sont envoyés et leur taille ;</li>
+          <li>les salons publics que tu ouvres (commentaires, corrections d’épisodes, signalements).</li>
+        </ul>
+        <p>Le relais voit aussi l’adresse IP de ta connexion (pour la durée de la connexion, sans l’enregistrer dans un journal), les identifiants techniques des espaces qu’il garde et leur taille. Il ne reçoit jamais ta phrase, ta clé racine ni les clés de tes appareils, et ne peut rien publier en ton nom.</p>
+        <p><strong style="color:var(--text)">Limites et durée.</strong> 50 Mo au plus par compte ou par salon, 20 Go au total ; au-delà, les données les moins utiles sont effacées en premier. Tout ce qui n’a été ni demandé ni mis à jour pendant 120 jours est supprimé.</p>
+        <p><strong style="color:var(--text)">Désactiver.</strong> Réglages → Sécurité → Relais Huwa. Sans relais, ton compte n’est récupérable que si un de tes appareils est en ligne au moment de la restauration. Ce qui est déjà sur le relais s’efface au bout de 120 jours sans activité ; pour une suppression immédiate, écris-nous (contact ci-dessous) en donnant l’empreinte de ta clé publique.</p>
         <h3>Statistiques de lecture</h3>
         <p>Huwa mesure sur ton appareil combien de temps chaque épisode met à démarrer (selon la source : lien direct, débrid, moteur torrent, lecteur web), les coupures, les échecs et le temps de réponse des extensions. Ces mesures ne contiennent ni titre, ni épisode, ni lien, et restent sur ton appareil (Réglages → Statistiques de lecture, où tu peux les effacer).</p>
         <p><strong style="color:var(--text)">Option « Comparer avec la communauté » (désactivée par défaut).</strong> Si tu l’actives après avoir lu l’écran d’explication, Huwa publie au plus une fois par semaine, sur le réseau pair-à-pair, un résumé de ta semaine : pour chaque type de source, le nombre de démarrages par tranche de durée (moins de 0,5 s, 1 s, 2 s…), et trois compteurs (lectures réussies, échouées, avec coupure). Chaque nombre est brouillé par un bruit aléatoire. Le résumé ne contient ni titre, ni épisode, ni lien, ni extension, ni heure de visionnage, et n’est signé ni par ton identité Huwa ni par ton appareil : il part d’une clé jetable, sur une connexion séparée, et deux résumés ne peuvent pas être reliés entre eux. Ces résumés sont lisibles par tous les pairs du réseau (y compris l’auteur de Huwa) et servent à afficher des moyennes communes, seulement à partir de 20 contributions. Comme pour toute connexion pair-à-pair, ton adresse IP est visible des pairs connectés à ce moment-là. Un résumé publié ne peut pas être retiré (rien ne le relie à toi) ; désactiver l’option arrête les suivants.</p>
@@ -81,7 +91,7 @@
         <p>Huwa n’est pas destiné aux enfants de moins de 13 ans.</p>
         <h3>Contact</h3>
         <p>Pour toute question : <a href="mailto:amin2020e@gmail.com">amin2020e@gmail.com</a>.</p>
-        <p class="note">Dernière mise à jour : 1er octobre 2026.</p>
+        <p class="note">Dernière mise à jour : 6 octobre 2026.</p>
       </div>
     </section>
     <footer>Huwa · <a href="/">Accueil</a> · <a href="/terms.html">Conditions d’utilisation</a></footer>

@@ -1,7 +1,16 @@
+# Relais Huwa : blind peer Holepunch (bibliothèque blind-peer@3.15.1) + politique Huwa (policy.js).
+# Les modules natifs (rocksdb-native, udx-native, sodium-native) sont livrés précompilés pour
+# linux-x64 / linux-arm64 (glibc et musl).
 FROM node:22-alpine
-# blind-peer-cli 1.15.1 fournit les binaires `blind-peer` (Node) et `blind-peer-bare` (Bare).
-RUN npm install -g blind-peer-cli@1.15.1 && npm cache clean --force
+WORKDIR /app
+COPY package.json package-lock.json ./
+RUN npm ci --omit=dev && npm cache clean --force
+COPY server.js policy.js ./
 RUN mkdir -p /data && chown node:node /data
 USER node
+ENV STORAGE=/data PORT=49738 HEALTH_PORT=8080 NODE_ENV=production
 VOLUME ["/data"]
-CMD ["blind-peer", "--storage", "/data"]
+EXPOSE 49738/udp
+HEALTHCHECK --interval=30s --timeout=5s --start-period=60s --retries=3 \
+  CMD node -e "fetch('http://127.0.0.1:'+(process.env.HEALTH_PORT||8080)+'/health').then(r=>process.exit(r.ok?0:1),()=>process.exit(1))"
+CMD ["node", "server.js"]
