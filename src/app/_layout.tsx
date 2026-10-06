@@ -21,6 +21,7 @@ import { loadCatalog } from '@/data/anilist';
 import { installMappingOverlay } from '@/data/mapping-overlay';
 import { hydrateLinks } from '@/manga-ext/link';
 import { PaperbackHost } from '@/manga-ext/PaperbackHost';
+import { CloudflareSheet } from '@/components/cloudflare-sheet';
 import { hydrateMangaExt } from '@/manga-ext/registry';
 import { useEpisodeNotifications } from '@/notifications/episodes';
 import { useMe, useP2PStatus } from '@/p2p/hooks';
@@ -180,6 +181,7 @@ export default function RootLayout() {
       {me ? <PendingLink /> : null}
       <OfflineBanner />
       <PaperbackHost />
+      <CloudflareSheet />
       {me ? <PresearchHost /> : null}
       {me ? <DownloadsHost /> : null}
     </ThemeProvider>

@@ -39,6 +39,8 @@ export type InstalledSource = {
   contentRating: ContentRating;
   installedAt: number;
   enabled: boolean;
+  /** Site of the source when the repository says (0.8 `websiteBaseURL`): page of the Cloudflare check. */
+  website?: string;
 };
 
 type State = { repos: RepoEntry[]; installed: InstalledSource[]; legalAccepted: boolean; showAdult: boolean };
@@ -206,6 +208,7 @@ export async function installSource(repoUrl: string, id: string): Promise<Instal
     contentRating: info.contentRating,
     installedAt: getInstalled(key)?.installedAt ?? Date.now(),
     enabled: true,
+    website: info.website,
   };
   commit({ installed: [...state.installed.filter((s) => s.key !== key), entry] });
   return entry;
