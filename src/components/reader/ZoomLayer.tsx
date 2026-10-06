@@ -20,7 +20,8 @@ export function ZoomLayer({
   children: ReactNode;
   /** `x`: horizontal pan only (vertical list), `xy`: free pan (paged). */
   axis: 'x' | 'xy';
-  onTap: () => void;
+  /** Single tap, in screen points (tap zones). */
+  onTap: (x: number, y: number) => void;
   onZoomedChange?: (zoomed: boolean) => void;
 }) {
   const { width, height } = useWindowDimensions();
@@ -112,10 +113,11 @@ export function ZoomLayer({
     });
 
   const tap = Gesture.Tap()
-    .maxDuration(250)
-    .onEnd((_e, ok) => {
+    .maxDuration(500)
+    .maxDistance(12)
+    .onEnd((e, ok) => {
       'worklet';
-      if (ok) scheduleOnRN(onTap);
+      if (ok) scheduleOnRN(onTap, e.absoluteX, e.absoluteY);
     });
 
   const gesture = Gesture.Simultaneous(pinch, Gesture.Exclusive(doubleTap, tap), pan);

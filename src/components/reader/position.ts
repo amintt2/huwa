@@ -1,7 +1,6 @@
 // Exact reading position (page index + offset inside that page) and reader preferences.
 // The shared store keeps the coarse chapter ratio used across the app; this adds precision.
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { useSyncExternalStore } from 'react';
 import { registerRehydrate } from '@/settings/rehydrate';
 
 export type ReadPosition = { page: number; /** 0‒1 inside the page */ offset: number };
@@ -46,6 +45,8 @@ function persist() {
 }
 
 export const isReaderHydrated = () => hydrated;
+/** Old vertical / paged switch (now part of the reader settings). */
+export const getReaderMode = () => saved.mode;
 export const getPosition = (chapterId: string): ReadPosition | undefined => saved.positions[chapterId];
 
 export function savePosition(chapterId: string, pos: ReadPosition) {
@@ -68,15 +69,3 @@ export function saveAspects(chapterId: string, aspects: number[]) {
   persist();
 }
 
-export function setReaderMode(mode: ReaderMode) {
-  saved = { ...saved, mode };
-  persist();
-}
-
-const subscribe = (l: () => void) => {
-  listeners.add(l);
-  return () => {
-    listeners.delete(l);
-  };
-};
-export const useReaderMode = () => useSyncExternalStore(subscribe, () => saved.mode, () => saved.mode);

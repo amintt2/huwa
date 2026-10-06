@@ -41,6 +41,13 @@ export function usePages(chapterId: string): State & { retry: () => void } {
   return { ...(state.chapterId === chapterId ? state : { chapterId, pages: [], origin: 'placeholder' as const, loading: true }), retry };
 }
 
+/** One-shot resolution (offline copy → addon sources → placeholder), for the continuous reader. */
+export async function resolvePages(chapterId: string): Promise<ResolvedPages> {
+  const now = immediate(chapterId);
+  if (now) return now;
+  return remotePages(chapterId);
+}
+
 /** Warm the image cache for upcoming pages (and the next chapter's first pages). */
 export function prefetchPages(urls: string[], headers?: Record<string, string>) {
   const remote = urls.filter((u) => /^https?:/i.test(u));
