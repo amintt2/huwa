@@ -1,6 +1,7 @@
 /* global Bare, BareKit */
 // Bare worklet entry point (bundled by `npm run build:worklet` into src/p2p/worklet.bundle.js).
-// Args: [documentsDir, configJson]. Config: { bootstrap?: string[], deviceName?: string }.
+// Args: [documentsDir, configJson]. Config: { bootstrap?: string[], deviceName?: string,
+// relays?: { enabled: boolean, keys: string[] } }.
 
 // An uncaught error in a worklet kills the whole app: install the handlers before anything else.
 Bare.on('uncaughtException', (err) => {
@@ -30,6 +31,7 @@ const { node } = serve(
       storage: documents.replace(/\/$/, '') + '/huwa-p2p',
       bootstrap: Array.isArray(config.bootstrap) ? config.bootstrap : undefined,
       deviceName: typeof config.deviceName === 'string' ? config.deviceName.slice(0, 40) : 'appareil',
+      relays: config.relays && typeof config.relays === 'object' ? config.relays : null,
       onevent,
       log
     }),

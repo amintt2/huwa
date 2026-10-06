@@ -20,6 +20,7 @@ const seal = require('./seal')
 const { makeAuth, verifyDeviceProof } = require('./auth')
 const { commentId, createRoomApply, createHomeApply, createDmApply, createMapApply, createFlagApply, rateOk, mapKey, flagKey, MAP_RATE, FLAG_RATE } = require('./apply')
 const stats = require('./stats')
+const { RelayMirror, homeReferrer } = require('./relay')
 
 const ROOM_IDLE_MS = 60_000
 const LOOKUP_MS = 6_000
@@ -102,8 +103,9 @@ class HuwaNode {
    * @param {Array} [opts.bootstrap]  DHT bootstrap nodes (`host:port` or `{host, port}`)
    * @param {string} [opts.deviceName]
    * @param {(ev: object) => void} [opts.onevent]  status / me / subscription pushes
+   * @param {{ enabled?: boolean, keys?: string[] }} [opts.relays]  Huwa relays (see relay.js)
    */
-  constructor({ storage, bootstrap, deviceName = 'appareil', onevent = noop, log = noop, restoreLookupMs = RESTORE_LOOKUP_MS }) {
+  constructor({ storage, bootstrap, deviceName = 'appareil', onevent = noop, log = noop, restoreLookupMs = RESTORE_LOOKUP_MS, relays = null }) {
     this.storage = storage
     this.restoreLookupMs = restoreLookupMs
     this.bootstrap = bootstrap && bootstrap.length ? bootstrap : undefined
@@ -141,6 +143,8 @@ class HuwaNode {
     this.statsWakeup = null
     this.statsBases = new Map() // month -> { id, base, discovery }
     this._statsTimer = null
+    this.relay = new RelayMirror({ log })
+    this._relayCfg = relays || { enabled: false, keys: [] }
   }
 
   // ---- lifecycle ----------------------------------------------------------
@@ -153,6 +157,8 @@ class HuwaNode {
     this.swarm = new Hyperswarm({ bootstrap: this.bootstrap })
     this.swarm.on('connection', (conn, info) => this._onconnection(conn, info))
     this.swarm.on('update', () => this._emitStatus())
+    this.relay.attach({ dht: this.swarm.dht, store: this.store, wakeup: this.wakeup })
+    this.relay.configure(this._relayCfg)
 
     for (const e of await rangeValues(this.local, 'peer/')) this.peers.set(e.key.slice(5), e.value)
 
@@ -183,6 +189,7 @@ class HuwaNode {
     this.suspended = true
     this._emitStatus()
     if (this.pairing) await this.pairing.suspend().catch(noop)
+    await this.relay.suspend()
     if (this.swarm) await this.swarm.suspend().catch(noop)
     await this._closeStats().catch(noop)
     await this.store.suspend().catch(noop)
@@ -193,6 +200,7 @@ class HuwaNode {
     this.suspended = false
     await this.store.resume()
     if (this.swarm) await this.swarm.resume().catch(noop)
+    await this.relay.resume()
     if (this.pairing) this.pairing.resume()
     this._emitStatus()
   }
@@ -206,6 +214,7 @@ class HuwaNode {
     for (const room of [...this.rooms.values(), ...this.mapRooms.values(), ...this.flagRooms.values()]) if (room.timer) clearTimeout(room.timer)
     for (const member of this.pairingMembers) await member.close().catch(noop)
     if (this.pairing) await this.pairing.close().catch(noop)
+    await this.relay.close()
     if (this.swarm) await this.swarm.destroy().catch(noop)
     await this._closeStats().catch(noop)
     if (this.statsStore) await this.statsStore.close().catch(noop)
@@ -387,11 +396,13 @@ class HuwaNode {
     await this.home.ready()
     this.home.on('update', () => this._onHomeUpdate())
     this._join(this.home.discoveryKey)
+    this.relay.mirrorBase(this.home, 'own')
     this._join(idTopic(s.identity), { server: true, client: false })
     if (s.pointer) {
       this.pointer = this.store.get({ key: fromHex(s.pointer) })
       await this.pointer.ready()
       this._join(this.pointer.discoveryKey, { server: true, client: false })
+      this.relay.mirrorCore(this.pointer, { referrer: homeReferrer(this.home) })
     }
     for (const e of await rangeValues(this.local, 'conv/')) this._openDm(e.key.slice(5)).catch(noop)
     for (const e of await rangeValues(this.home.view, 'sub/')) this._openPeerHome(e.key.slice(4)).catch(noop)
@@ -644,6 +655,8 @@ class HuwaNode {
     // Devices linked by QR do not hold the pointer, but every device of the account announces on
     // the identity topic and presents its personal base in its (identity-signed) hello.
     const idDiscovery = this._join(idTopic(out.identity), { server: false, client: true })
+    // Every device of the account may be gone (wiped phone): the Huwa relays keep the pointer.
+    this.relay.fetch(pointer, this.restoreLookupMs).catch(noop)
     const fromPointer = async () => {
       await pointer.update({ wait: false }).catch(noop)
       if (pointer.length === 0) return null
@@ -865,6 +878,7 @@ class HuwaNode {
       this.rooms.set(work, room)
       await room.ready
       room.discovery = this._join(base.discoveryKey)
+      this.relay.mirrorBase(base, 'room')
       base.on('update', () => this._notify('comments:' + work))
       this._propagateRevocations(base, 'work:' + work).catch(noop)
     }
@@ -1001,6 +1015,7 @@ class HuwaNode {
       this.mapRooms.set(key, room)
       await room.ready
       room.discovery = this._join(base.discoveryKey)
+      this.relay.mirrorBase(base, 'room')
       base.on('update', () => this._notify('mapping:' + key))
     }
     await room.ready
@@ -1060,6 +1075,7 @@ class HuwaNode {
       this.flagRooms.set(work, room)
       await room.ready
       room.discovery = this._join(base.discoveryKey)
+      this.relay.mirrorBase(base, 'room')
       base.on('update', () => this._notify('flags:' + work))
     }
     await room.ready
@@ -1170,6 +1186,7 @@ class HuwaNode {
     this.dms.set(peer, entry)
     await entry.ready
     entry.discovery = this._join(base.discoveryKey)
+    this.relay.mirrorBase(base, 'dm')
     base.on('update', () => this._onDmUpdate(peer).catch(noop))
     this._propagateRevocations(base, 'dm').catch(noop)
     return base
@@ -1441,6 +1458,18 @@ class HuwaNode {
       for (const e of await rangeValues(base.view, 's/', { limit: MAX_STATS_READ })) stats.mergeInto(out, e.value)
     }
     return out
+  }
+
+  // ---- Huwa relays (relay.js) -------------------------------------------------------
+
+  /** `{ enabled, keys }` from the app settings (default key from the app config + user-added). */
+  setRelays(cfg) {
+    this._relayCfg = { enabled: !!(cfg && cfg.enabled !== false), keys: (cfg && Array.isArray(cfg.keys) ? cfg.keys : []).slice(0, 16) }
+    return this.relay.configure(this._relayCfg)
+  }
+
+  relayStatus() {
+    return this.relay.status()
   }
 
   // ---- subscriptions ------------------------------------------------------------
