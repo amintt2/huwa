@@ -26,7 +26,9 @@ import {
   type SubtitleItem,
 } from './protocol';
 import { dropDemoWhenReal } from './builtin-demo';
+import { otherWork } from './other-work';
 import { timedAddon } from '@/stats/addon-timing';
+import { getSeries } from '@/data/catalog';
 import { lazyImdbId } from '@/data/imdb-episode';
 
 import {
@@ -174,7 +176,12 @@ export function useStreams(seriesId: string, episode: number, enabled = true) {
     return items.map((s) => ({ ...s, addonId: a.manifest.id, addonName: a.manifest.name }));
   }, enabled, streamOpts);
   // Status rows (scrape summaries, errors, donation banners) are kept apart for the "Infos" section.
-  const streams = useMemo(() => r.items.filter((s) => !isInfoStream(s)), [r.items]);
+  // Another work under the same title (One Piece's live action, One Pace): never offered.
+  const year = getSeries(seriesId)?.year;
+  const streams = useMemo(
+    () => r.items.filter((s) => !isInfoStream(s) && !(year && otherWork(s, { startYear: year, episode }))),
+    [r.items, year, episode],
+  );
   const infos = useMemo(() => r.items.filter(isInfoStream), [r.items]);
   return { streams, infos, pending: r.pending, failed: r.failed, asked: r.asked, fromCache: r.fromCache, refreshed: r.refreshed, refresh: r.refresh };
 }
