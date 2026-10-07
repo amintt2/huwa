@@ -332,8 +332,17 @@ export function pickUpgrade(current: UpgradeSide, candidates: UpgradeCandidate[]
   });
 }
 
-/** Seamless swap only between two sources played by the native engine. */
-export const canSwapEngines = (from: EngineKind, to: EngineKind) => from === 'native' && to === 'native';
+/**
+ * Seamless swap: AVPlayer → AVPlayer (a hidden expo-video player), or from mpv to anything (a
+ * second hidden mpv view: mpv plays whatever AVPlayer plays). AVPlayer → an mpv-only source would
+ * change the engine on screen: not seamless.
+ */
+export const canSwapEngines = (from: EngineKind, to: EngineKind) => (from === 'native' && to === 'native') || (from === 'mpv' && to !== 'web');
+
+/** Two releases whose lengths differ more than this are other cuts: swapping would jump. */
+export const SWAP_TIMELINE_TOLERANCE_S = 3;
+/** Same timeline (or a length still unknown on either side). */
+export const sameTimeline = (a: number, b: number) => !(a > 0 && b > 0 && isFinite(a) && isFinite(b)) || Math.abs(a - b) <= SWAP_TIMELINE_TOLERANCE_S;
 
 /** No swap during the first seconds of a source. */
 export const SWAP_MIN_PLAYED_MS = 10_000;

@@ -2,9 +2,11 @@
 // Auto mode runs a "course des sources" (./race.ts, ./race-runner.ts): the best candidates (direct
 // links, debrid-cached torrents once resolved) are measured with one small ranged GET each; dead
 // links are dropped before the player sees them, and playback starts with the best quality that
-// is fast enough, language fit first. Once a source plays it stays put ("locked"); a strictly
-// better quality that proved fast is offered as `upgrade`, which the player swaps in without
-// stopping (components/player/seamless-upgrade.ts) or keeps for the next episode.
+// is fast enough, language fit first. Once a source plays it is "locked"; from then on the source
+// controller (./source-controller.ts, wired by ./use-source-controller.ts) reads `controllerView`
+// and moves it: `warmTarget` for a seamless swap (components/player/seamless-upgrade.ts),
+// `switchTo` for a switch at the current position, `markBad(…, final)` for another work,
+// `reprobe` for background measurements of the alternatives.
 // A source that fails is skipped; the last good one is the fallback.
 // Manual mode: the user picked a source in the menu; a failure drops back to auto.
 // Hosted player pages ("lecteurs web", see web-player.ts) are used by auto mode only when no
@@ -23,11 +25,13 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 
 import { useSettings } from '@/settings/settings';
-import { useRaceBudget, useTorrentProbeBudget, useUnmetered } from '@/settings/network';
+import { usePrewarm, useRaceBudget, useTorrentProbeBudget } from '@/settings/network';
 import { resolveTorrent, resolveTorrentViaDebrid, useCachedHashes, useTorrentResolver } from '@/debrid/resolve';
 import { canProbeTorrents, dropTorrent, holdTorrent, prewarmTorrent, useTorrentSettings } from '@/torrent';
 import { engineHashOf } from '@/torrent/stream-input';
+import { checkSwarms, swarmCheck, useSwarmChecks } from '@/torrent/swarm-checks';
 import {
+  afterExhausted,
   decidePeerRace,
   packKeys,
   peerLabel,
@@ -44,8 +48,9 @@ import { peerClock, usePeerRace, type PeerTarget } from '@/torrent/use-peer-race
 
 import { langScore } from './audio';
 import { isExternal, isPlayable, isTorrent, isYouTube, type AddonStream } from './protocol';
-import { decideStart, estimateBitrateMbps, pickUpgrade, speedLabel, speedVerdict, type RaceCandidate, type Speed, type UpgradeSide } from './race';
-import { raceClock, useRace, type RaceEntry } from './race-runner';
+import { decideStart, estimateBitrateMbps, speedLabel, speedVerdict, type RaceCandidate, type Speed } from './race';
+import { raceClock, remeasure, useRace, type RaceEntry } from './race-runner';
+import { EXEMPT_NAME, episodesInName, type CtlCandidate, type CurrentSource } from './source-controller';
 import { detectQuality, rankStreams, streamKey, type Quality } from './quality';
 import { classifyNoSource } from './no-source';
 import { BUILTIN_ID, useAddonPrefs, useAddons, useStreams } from './registry';
@@ -105,7 +110,10 @@ export function useSource(seriesId: string, episode: number, { enabled = true, p
   const probed = useProbedUrls(streams, enabled);
   const budget = useRaceBudget();
   const torrentBudget = useTorrentProbeBudget();
-  const unmetered = useUnmetered();
+  // Wi-Fi, or cellular without Low Data Mode ("équilibré"): the pre-search may pre-warm.
+  const prewarmOk = usePrewarm();
+  // Background swarm checks (source controller) re-render the candidates when they end.
+  useSwarmChecks();
   // Re-render when the engine is switched on/off or "Wi-Fi only" changes (`canProbeTorrents`).
   useTorrentSettings();
   const peerScope = `${seriesId}:${episode}`;
@@ -127,8 +135,11 @@ export function useSource(seriesId: string, episode: number, { enabled = true, p
   const [resolved, setResolved] = useState<Record<string, Resolution>>({});
   /** Auto source handed to the player: kept until it fails or is upgraded. */
   const [locked, setLocked] = useState<string | undefined>();
-  /** Upgrades tried and abandoned (stalled, other engine…): not offered again. */
-  const [skipUpgrade, setSkipUpgrade] = useState<string[]>([]);
+  /**
+   * Switch decided by the source controller (`switchTo`): the source left and the URL it played,
+   * kept on screen until the new one has its URL (a torrent is resolved first), then dropped.
+   */
+  const [switchFrom, setSwitchFrom] = useState<{ key: string; to: string; url: string } | null>(null);
   /** Cached links that failed, waiting for the addons' fresh answer (refresh generation). */
   const [suspended, setSuspended] = useState<{ keys: string[]; gen: number }>({ keys: [], gen: -1 });
   /** Torrents the probes showed not to contain this episode (never started), per episode. */
@@ -283,7 +294,7 @@ export function useSource(seriesId: string, episode: number, { enabled = true, p
   // ---- torrent race (on-device engine): uncached torrents probed in parallel ----
   const engineTorrent = (s: AddonStream) => isTorrent(s) && cachedOf(s) !== true;
   // Pre-search: probes (no piece) only on an unmetered network, where the winner is pre-warmed.
-  const presearchProbes = preview && unmetered;
+  const presearchProbes = preview && prewarmOk;
   const peerWanted =
     enabled && (!preview || presearchProbes) && !manual && !lockedStream && torrentBudget.base > 0 && canProbeTorrents() && pool.some(engineTorrent) && !pool.some(safe);
   const peerPool = peerWanted ? pool.filter(engineTorrent) : [];
@@ -320,11 +331,17 @@ export function useSource(seriesId: string, episode: number, { enabled = true, p
     peerPool.map((s) => ({ key: streamKey(s), lang: langOf(s), probe: probes[streamKey(s)] }));
   const decidePeers = (probes: Record<string, PeerProbe>, startedAt: number | null) =>
     decidePeerRace(peerCands(probes), startedAt != null ? peerClock() - startedAt : 0);
+  /** Every probe ended, none playable: widen, take the best answering swarm, or the plain ranking. */
+  const exhaustedNext = (probes: Record<string, PeerProbe>) => afterExhausted(peerCands(probes), widened === raceScope, torrentBudget.max);
   const peer = usePeerRace(raceScope, peerTargets, peerOn, (probes, at) => {
     const d = decidePeers(probes, at);
-    return d.key !== null || 'exhausted' in d;
+    if (d.key !== null) return true;
+    return 'exhausted' in d && exhaustedNext(probes) !== 'widen';
   });
   const peerDecision = peerOn ? decidePeers(peer.probes, peer.startedAt) : null;
+  const exhausted = peerDecision && peerDecision.key === null && 'exhausted' in peerDecision ? exhaustedNext(peer.probes) : null;
+  // Never a blind start while unprobed candidates remain within the budget (adjusted during render).
+  if (peerOn && exhausted === 'widen' && widened !== raceScope) setWidened(raceScope);
   // Obscure title (only weak swarms so far): probe more candidates — packs, other qualities —
   // within the budget, still committing by the race deadlines. Adjusted during render.
   if (
@@ -348,19 +365,27 @@ export function useSource(seriesId: string, episode: number, { enabled = true, p
   if (newlyWrong.length) setWrong({ scope: peerScope, keys: [...wrongKeys, ...newlyWrong] });
 
   // No verdict from the probes (none playable): the plain ranking, as before.
-  const peerPick = presearched ?? (peerDecision?.key ? pool.find((s) => streamKey(s) === peerDecision.key) : undefined);
+  const exhaustedKey = exhausted && exhausted !== 'widen' ? exhausted.key : undefined;
+  const peerPick =
+    presearched ??
+    (peerDecision?.key ? pool.find((s) => streamKey(s) === peerDecision.key) : exhaustedKey ? pool.find((s) => streamKey(s) === exhaustedKey) : undefined);
   const peerPickKey = peerPick ? streamKey(peerPick) : undefined;
   useEffect(() => {
     if (peerPickKey && peerOn) peerWins.set(peerScope, { key: peerPickKey, at: Date.now(), fileIdx: peer.probes[peerPickKey]?.fileIdx });
     // Recorded when the race decides (the probes of that moment).
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [peerPickKey, peerOn, peerScope]);
-  const auto = peerPick ?? (peerWaitMs ? undefined : decision?.key ? pool.find((s) => streamKey(s) === decision.key) : undefined);
+  const auto = peerPick ?? (peerWaitMs || (peerOn && exhausted === 'widen') ? undefined : decision?.key ? pool.find((s) => streamKey(s) === decision.key) : undefined);
 
   const current = (manual ? ranked.find((s) => streamKey(s) === manual) : undefined) ?? lockedStream ?? auto;
   const currentKey = current ? streamKey(current) : undefined;
   const webUrl = current ? webOf(current) : null;
-  const url = current && !webUrl ? playUrlOf(current) : undefined;
+  const ownUrl = current && !webUrl ? playUrlOf(current) : undefined;
+  // Controller switch to a source still being resolved (torrent): the player keeps the old URL
+  // until the new one is ready, then the new one loads at the same position.
+  const switching = !!switchFrom && switchFrom.to === currentKey && !ownUrl;
+  if (switchFrom && !switching) setSwitchFrom(null);
+  const url = ownUrl ?? (switching ? switchFrom!.url : undefined);
   useEffect(() => {
     const group = current?.behaviorHints?.bingeGroup;
     if (enabled && !preview && (url || webUrl) && group) lastBinge.set(seriesId, group);
@@ -370,10 +395,21 @@ export function useSource(seriesId: string, episode: number, { enabled = true, p
   // later still replaces them. Adjusted during render ("state from previous render" pattern).
   if (enabled && !manual && !lockedStream && currentKey && url && locked !== currentKey) setLocked(currentKey);
 
-  const markBad = (k: string, error?: string) => {
+  /**
+   * `final`: the source is wrong whatever its link (another work, see the source controller): no
+   * second chance with fresh addon answers.
+   */
+  const markBad = (k: string, error?: string, final = false) => {
     const s = ranked.find((x) => streamKey(x) === k) ?? (lastLocked && streamKey(lastLocked) === k ? lastLocked : undefined);
+    // The target of a controller switch failed before playing: back to the source it left.
+    if (switchFrom && switchFrom.to === k) {
+      setBad((b) => (b.includes(k) ? b : [...b, k]));
+      setLocked(switchFrom.key);
+      setSwitchFrom(null);
+      return;
+    }
     // Link from the disk cache: maybe just expired. Ask the addons again, then retry once.
-    if (s?.cachedAt != null && !retried.current.has(k)) {
+    if (!final && s?.cachedAt != null && !retried.current.has(k)) {
       retried.current.add(k);
       setSuspended((p) => ({ keys: p.keys.includes(k) ? p.keys : [...(p.gen >= 0 && refreshed > p.gen ? [] : p.keys), k], gen: refreshed }));
       setResolved((r) => dropKey(r, k));
@@ -396,7 +432,8 @@ export function useSource(seriesId: string, episode: number, { enabled = true, p
     if (!enabled || !current || !currentKey || !isTorrent(current) || !resolverLabel || done?.url || done?.error) return;
     const ctrl = new AbortController();
     // A season pack without `fileIdx`: the file the probe found for this episode.
-    const fileIdx = current.fileIdx ?? peer.probes[currentKey]?.fileIdx ?? (recentWin?.key === currentKey ? recentWin.fileIdx : undefined) ?? undefined;
+    const fileIdx =
+      current.fileIdx ?? peer.probes[currentKey]?.fileIdx ?? (recentWin?.key === currentKey ? recentWin.fileIdx : undefined) ?? swarmCheck(current.infoHash!)?.fileIdx ?? undefined;
     const ref = { infoHash: current.infoHash!, fileIdx, filename: current.behaviorHints?.filename, sources: current.sources, episode };
     // Pre-search: debrid only (an on-device torrent would start downloading).
     (preview ? resolveTorrentViaDebrid(ref, ctrl.signal) : resolveTorrent(ref, ctrl.signal, { notCached: cachedOf(current) === false }))
@@ -433,40 +470,96 @@ export function useSource(seriesId: string, episode: number, { enabled = true, p
     return () => dropTorrent(heldHash);
   }, [heldHash]);
 
-  // ---- upgrade: strictly better quality, same language fit, proved fast ----
-  const sideOf = (s: AddonStream): UpgradeSide => ({
-    key: streamKey(s),
-    lang: langOf(s),
-    resolution: detectQuality(s) ?? 0,
-    quality: qualityOf(s),
-    bingeGroup: s.behaviorHints?.bingeGroup,
-    web: !!webOf(s),
+  // ---- source controller view (addons/source-controller.ts, wired by use-source-controller.ts) ----
+  // Every alive candidate (not only the start pool: a probed healthy swarm may relieve a stalling
+  // link), with its latest HTTP probe or swarm probe.
+  const swarmOf = (s: AddonStream, now: number, clock: number): CtlCandidate['swarm'] => {
+    const check = swarmCheck(s.infoHash!);
+    const p = peer.probes[streamKey(s)];
+    const pAt = p?.doneAtMs != null && peer.startedAt != null ? now - (clock - (peer.startedAt + p.doneAtMs)) : undefined;
+    if (p && pAt != null && p.state !== 'cancelled' && (!check || pAt > check.at)) {
+      return { connected: p.connected, healthy: p.state === 'healthy', local: p.local, failed: p.state === 'failed' || p.state === 'noFile', at: pAt };
+    }
+    return check ? { connected: check.connected, healthy: check.healthy, local: check.local, failed: check.failed, at: check.at } : undefined;
+  };
+  const ctlOf = (s: AddonStream, now: number, clock: number): CtlCandidate => {
+    const tor = engineTorrent(s);
+    const u = raceUrlOf(s);
+    const r = u ? race.results[u] : undefined;
+    return {
+      key: streamKey(s),
+      kind: tor ? 'torrent' : 'http',
+      lang: langOf(s),
+      resolution: detectQuality(s) ?? 0,
+      quality: qualityOf(s),
+      bitrateMbps: bitrateOf(s),
+      bingeGroup: s.behaviorHints?.bingeGroup,
+      http: !tor && r ? { speed: speedVerdict(r, bitrateOf(s)), mbps: r.mbps, ttfbMs: r.ttfbMs, at: r.at } : undefined,
+      swarm: tor ? swarmOf(s, now, clock) : undefined,
+      probeable: tor ? canProbeTorrents() : !!u,
+      web: !!webOf(s),
+    };
+  };
+  const controllable = enabled && !preview && !manual && !!current && !!ownUrl && !webUrl;
+  /** Read by the controller on its own timer (not during render: probe ages use the clock). */
+  const controllerView = (now: number, clock: number) => ({
+    /** The playing source as the controller sees it (null: nothing to control). */
+    current: controllable && current
+      ? ({
+          key: streamKey(current),
+          kind: engineHashOf(ownUrl) ? 'torrent' : 'http',
+          lang: langOf(current),
+          resolution: detectQuality(current) ?? 0,
+          quality: qualityOf(current),
+          bitrateMbps: bitrateOf(current),
+          bingeGroup: current.behaviorHints?.bingeGroup,
+        } satisfies CurrentSource)
+      : null,
+    /** Name of the playing release says recap / special / compilation (no length check). */
+    exempt: !!current && EXEMPT_NAME.test(`${current.name ?? ''} ${current.title ?? ''} ${current.behaviorHints?.filename ?? ''}`),
+    /** Episodes in the playing file ("E01-02"). */
+    episodes: current ? episodesInName(`${current.title ?? ''} ${current.behaviorHints?.filename ?? ''}`) : 1,
+    candidates: controllable
+      ? candidates.filter((s) => streamKey(s) !== currentKey && !deadKeys.has(streamKey(s)) && !wrongKeys.includes(streamKey(s))).map((s) => ctlOf(s, now, clock))
+      : [],
   });
-  const upgradeStream = (() => {
-    if (!enabled || manual || !current || !url || webUrl || currentKey !== locked) return undefined;
-    const cands = pool
-      .filter((s) => !skipUpgrade.includes(streamKey(s)) && !!raceUrlOf(s))
-      .map((s) => ({ ...sideOf(s), speed: speedOf(s), mbps: resultOf(s)?.mbps }));
-    const best = pickUpgrade(sideOf(current), cands, !!manual);
-    return best ? pool.find((s) => streamKey(s) === best.key) : undefined;
-  })();
-  const upgradeUri = upgradeStream ? raceUrlOf(upgradeStream) : undefined;
-  const upgrade = useMemo<SourceUpgrade | null>(
-    () => (upgradeStream && upgradeUri
-      ? { key: streamKey(upgradeStream), uri: upgradeUri, headers: headersOf(upgradeStream), quality: detectQuality(upgradeStream) }
-      : null),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [upgradeUri],
-  );
+  /** Link to warm for a seamless switch (direct / debrid-resolved links only). */
+  const warmTarget = (key: string): SourceUpgrade | null => {
+    const s = ranked.find((x) => streamKey(x) === key);
+    const u = s ? raceUrlOf(s) : undefined;
+    return s && u ? { key, uri: u, headers: headersOf(s), quality: detectQuality(s) } : null;
+  };
+  /** Measure these candidates again (HTTP ranged GET / engine swarm probe). */
+  const reprobe = (keys: string[]) => {
+    const http: RaceEntry[] = [];
+    const swarms: Parameters<typeof checkSwarms>[0] = [];
+    for (const k of keys) {
+      const s = ranked.find((x) => streamKey(x) === k);
+      if (!s) continue;
+      if (engineTorrent(s)) {
+        swarms.push({ infoHash: s.infoHash!, sources: s.sources, name: s.behaviorHints?.filename ?? s.title?.split('\n')[0], fileIdx: s.fileIdx, filename: s.behaviorHints?.filename, episode });
+      } else {
+        const u = raceUrlOf(s);
+        if (u) http.push({ url: u, headers: headersOf(s) });
+      }
+    }
+    if (http.length) void remeasure(http, budget).catch(() => {});
+    if (swarms.length && canProbeTorrents()) checkSwarms(swarms);
+  };
+  /** Controller switch at the current position (a short reload; a torrent is resolved first). */
+  const switchTo = (key: string) => {
+    if (manual || !currentKey || key === currentKey) return;
+    if (ownUrl) setSwitchFrom({ key: currentKey, to: key, url: ownUrl });
+    setLocked(key);
+  };
 
   /** The player now plays `key` (seamless swap done). */
   const adoptUpgrade = (key: string) => setLocked(key);
   /**
-   * The swap could not happen without interrupting (other engine, stalled…): keep playing, and
+   * An upgrade could not happen without interrupting (other engine, stalled…): keep playing, and
    * prefer that release for the next episode.
    */
   const deferUpgrade = (key: string) => {
-    setSkipUpgrade((l) => (l.includes(key) ? l : [...l, key]));
     const group = ranked.find((s) => streamKey(s) === key)?.behaviorHints?.bingeGroup;
     if (group) lastBinge.set(seriesId, group);
   };
@@ -563,7 +656,12 @@ export function useSource(seriesId: string, episode: number, { enabled = true, p
     errorOf: (s: AddonStream) => resolved[streamKey(s)]?.error,
     stateOf,
     speedInfo,
-    upgrade,
+    controllerView,
+    /** The playing URL is served by the built-in torrent engine. */
+    playingTorrent: !!engineHashOf(ownUrl),
+    warmTarget,
+    reprobe,
+    switchTo,
     adoptUpgrade,
     deferUpgrade,
     pick,

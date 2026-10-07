@@ -4,7 +4,7 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useSyncExternalStore } from 'react';
 
-import { pushRing, type AddonStat, type PlaybackEvent } from './model';
+import { pushRing, type AddonStat, type PlaybackEvent, type SwitchEvent } from './model';
 import { registerRehydrate } from '@/settings/rehydrate';
 
 const KEY = 'huwa/stats/v1';
@@ -14,6 +14,8 @@ const MAX_ADDONS = 60;
 
 export type StatsState = {
   events: PlaybackEvent[];
+  /** Automatic source switches (source controller), oldest first. */
+  switches: SwitchEvent[];
   addons: Record<string, AddonStat>;
   /** "Comparer avec la communauté" (opt-in). */
   community: boolean;
@@ -21,7 +23,8 @@ export type StatsState = {
   lastShared: number;
 };
 
-const initial: StatsState = { events: [], addons: {}, community: false, lastShared: 0 };
+const initial: StatsState = { events: [], switches: [], addons: {}, community: false, lastShared: 0 };
+export const MAX_SWITCHES = 200;
 let state: StatsState = initial;
 const listeners = new Set<() => void>();
 let timer: ReturnType<typeof setTimeout> | undefined;
@@ -36,6 +39,7 @@ export const statsReady: Promise<void> = AsyncStorage.getItem(KEY)
       ...initial,
       ...saved,
       events: [...(Array.isArray(saved.events) ? saved.events : []), ...state.events].slice(-MAX_EVENTS),
+      switches: [...(Array.isArray(saved.switches) ? saved.switches : []), ...state.switches].slice(-MAX_SWITCHES),
       addons: { ...(saved.addons ?? {}), ...state.addons },
     };
   })
@@ -50,7 +54,7 @@ registerRehydrate(async () => {
   const raw = await AsyncStorage.getItem(KEY).catch(() => null);
   try {
     const saved = raw ? (JSON.parse(raw) as Partial<StatsState>) : {};
-    state = { ...initial, ...saved, events: Array.isArray(saved.events) ? saved.events : [], addons: saved.addons ?? {} };
+    state = { ...initial, ...saved, events: Array.isArray(saved.events) ? saved.events : [], switches: Array.isArray(saved.switches) ? saved.switches : [], addons: saved.addons ?? {} };
   } catch {
     state = initial;
   }
@@ -92,8 +96,13 @@ export function recordAddon(id: string, name: string, ms: number, ok: boolean) {
   set({ ...state, addons });
 }
 
+/** One automatic source switch (numbers only, see `SwitchEvent`). */
+export function recordSwitch(e: SwitchEvent) {
+  set({ ...state, switches: pushRing(state.switches, e, MAX_SWITCHES) });
+}
+
 export function resetStats() {
-  set({ ...state, events: [], addons: {} });
+  set({ ...state, events: [], switches: [], addons: {} });
 }
 
 export function setCommunity(on: boolean) {

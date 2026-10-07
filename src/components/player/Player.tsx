@@ -35,7 +35,9 @@ import { useMpvSubtitles } from './engines/use-mpv-subtitles';
 import { GestureLayer, type Hud } from './GestureLayer';
 import { AUTO_NEXT_SECONDS, NextCard, Pill } from './overlays';
 import { PlayerSettings, type Option } from './PlayerSettings';
+import type { PlaybackMonitor } from './playback-monitor';
 import { useSeamlessUpgrade, type UpgradeRequest } from './seamless-upgrade';
+import { usePlaybackMonitor } from './use-playback-monitor';
 import { getPrefs, setPrefs, usePrefs } from './prefs';
 import { formatTime, SeekBar } from './SeekBar';
 import { SubtitleOverlay, SubtitleSheet, useSubtitleController, type ExternalSubtitle } from './subtitles';
@@ -106,13 +108,18 @@ export type PlayerProps = {
   /** Time-anchored comments shown over the video when their moment comes. */
   timedComments?: TimedComment[];
   /**
-   * Better source to switch to without stopping (warmed in a hidden player, swapped when ready).
-   * `onUpgraded` then expects the parent to pass it as `source` (it is not reloaded).
+   * Source to switch to without stopping (warmed in a hidden player, swapped when ready), from
+   * the source controller. `onUpgraded` then expects the parent to pass it as `source` (it is not
+   * reloaded).
    */
   upgrade?: UpgradeRequest | null;
   onUpgraded?: (key: string) => void;
-  /** The upgrade could not be seamless (other engine, stalled…): playback was not touched. */
+  /** The switch could not be seamless (other engine, stalled, other cut…): playback was not touched. */
   onUpgradeDeferred?: (key: string, reason: string) => void;
+  /** Observes the playing source for the source controller (stalls, buffer, peers). */
+  monitor?: PlaybackMonitor;
+  /** "Lecture" sheet: what plays ("AIOStreams · 1080p · HTTP") and the last automatic change. */
+  sourceInfo?: { label: string; detail?: string };
 };
 
 const NEXT_WINDOW = 90;
@@ -187,6 +194,8 @@ export function Player({
   upgrade,
   onUpgraded,
   onUpgradeDeferred,
+  monitor,
+  sourceInfo,
 }: PlayerProps) {
   const insets = useSafeAreaInsets();
   const window = useWindowDimensions();
@@ -288,6 +297,7 @@ export function Player({
     }
     adopted.current = null;
     setStartedAt(null);
+    monitor?.reset(source.uri);
     let alive = true;
     // Switching source mid-episode (quality upgrade, fallback, manual pick) keeps the position.
     const keep = loadedOnce.current ? player.currentTime : undefined;
@@ -329,12 +339,14 @@ export function Player({
 
   // ---------- seamless quality upgrade ----------
   const [pip, setPip] = useState(false);
+  usePlaybackMonitor(player, monitor, source?.uri, pip);
   useSeamlessUpgrade(player, source?.uri ? upgrade : null, {
     external: pip,
     startedAt,
     onSwapped: (key, uri) => {
       adopted.current = uri;
       setStartedAt(Date.now());
+      monitor?.adopt(uri);
       onUpgraded?.(key);
     },
     onDeferred: (key, reason) => onUpgradeDeferred?.(key, reason),
@@ -474,6 +486,7 @@ export function Player({
 
   // ---------- actions ----------
   const seekTo = (t: number) => {
+    monitor?.noteSeek();
     const d = player.duration;
     setProp(player, 'currentTime', Math.max(0, isFinite(d) && d > 0 ? Math.min(t, d - 0.5) : t));
     setTime((s) => ({ ...s, t: player.currentTime }));
@@ -488,13 +501,14 @@ export function Player({
     () => ({
       getTime: () => player.currentTime,
       seekTo: (t) => {
+        monitor?.noteSeek();
         setProp(player, 'currentTime', Math.max(0, t));
         player.play();
       },
       play: () => player.play(),
       pause: () => player.pause(),
     }),
-    [player],
+    [player, monitor],
   );
 
   const onTap = () => {
@@ -567,7 +581,10 @@ export function Player({
         contentFit={zoomed ? 'cover' : 'contain'}
         allowsPictureInPicture
         startsPictureInPictureAutomatically
-        onFirstFrameRender={() => mediaKey && traceMark(mediaKey, 'first-frame')}
+        onFirstFrameRender={() => {
+          if (mediaKey) traceMark(mediaKey, 'first-frame');
+          monitor?.firstFrame();
+        }}
         onPictureInPictureStart={() => setPip(true)}
         onPictureInPictureStop={() => setPip(false)}
       />
@@ -805,6 +822,7 @@ export function Player({
         onCommentsSide={(commentsSide) => setPrefs({ commentsSide })}
         liveComments={prefs.liveComments}
         onLiveComments={(liveComments) => setPrefs({ liveComments })}
+        sourceInfo={sourceInfo}
       />
       <SubtitleSheet visible={subSheet} onClose={() => { setSubSheet(false); wake(); }} ctl={subs} />
     </View>

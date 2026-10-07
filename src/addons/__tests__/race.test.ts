@@ -6,6 +6,7 @@ import type { AddonStream } from '../protocol';
 import {
   bingeAffinity,
   canSwapEngines,
+  sameTimeline,
   decideStart,
   durationFromText,
   estimateBitrateMbps,
@@ -212,11 +213,15 @@ test('upgrade: same release family (bingeGroup) preferred, then quality, then sp
   assert.equal(bingeAffinity(undefined, 'a'), 0);
 });
 
-test('seamless swap only between two native-engine sources', () => {
+test('seamless swap: AVPlayer → AVPlayer, mpv → anything (second mpv view), never AVPlayer → mpv', () => {
   assert.equal(canSwapEngines('native', 'native'), true);
   assert.equal(canSwapEngines('native', 'mpv'), false);
-  assert.equal(canSwapEngines('mpv', 'native'), false);
-  assert.equal(canSwapEngines('mpv', 'mpv'), false);
+  assert.equal(canSwapEngines('mpv', 'native'), true);
+  assert.equal(canSwapEngines('mpv', 'mpv'), true);
+  assert.equal(canSwapEngines('mpv', 'web'), false);
+  assert.equal(sameTimeline(1420, 1421.5), true);
+  assert.equal(sameTimeline(1420, 1440), false, 'another cut of the episode');
+  assert.equal(sameTimeline(0, 1440), true, 'unknown yet');
   assert.equal(canSwapEngines('web', 'native'), false);
 });
 

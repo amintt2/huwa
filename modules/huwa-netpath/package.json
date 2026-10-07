@@ -1,0 +1,7 @@
+{
+  "name": "huwa-netpath",
+  "version": "0.1.0",
+  "private": true,
+  "description": "What the current network path costs (NWPath isExpensive / isConstrained = Low Data Mode)",
+  "main": "index.ts"
+}

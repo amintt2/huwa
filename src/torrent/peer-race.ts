@@ -158,6 +158,24 @@ export function decidePeerRace(
 }
 
 /**
+ * Every probe ended and none is playable (`exhausted`). Before falling back to the plain ranking
+ * — which starts a torrent blind: on 5G the race did that with 3 probes, the engine then fetched
+ * the metadata from the magnet (17 s) and served its first byte at 35 s —:
+ *   - `widen` while unprobed candidates remain within the budget,
+ *   - else the probed torrent with the most answering peers (never one without metadata if one
+ *     with peers exists),
+ *   - else null (plain ranking: nothing better is known).
+ */
+export function afterExhausted(cands: PeerCandidate[], widened: boolean, maxWidth: number): 'widen' | { key: string } | null {
+  const probed = cands.filter((c) => c.probe && c.probe.state !== 'cancelled');
+  const unprobed = cands.filter((c) => !c.probe);
+  if (!widened && unprobed.length && probed.length < maxWidth) return 'widen';
+  const answering = probed.filter((c) => c.probe!.connected > 0 && c.probe!.state !== 'noFile');
+  if (answering.length) return { key: bestSlow(answering).key };
+  return null;
+}
+
+/**
  * Obscure titles: every candidate looks weak (no healthy swarm, fewer than `MIN_CONNECTED`
  * answering peers each) after `WIDEN_AFTER_MS`, or every probe already ended without a healthy
  * one. The race then probes more candidates (`TorrentProbeBudget.max`: packs, other qualities),

@@ -101,6 +101,57 @@ type MpvState = {
   subtitleTrack: SubtitleTrack | null;
   videoTrack: VideoTrack | null;
 };
+/**
+ * What the seamless switch (seamless-upgrade.ts) needs from a hidden warm player: expo-video's
+ * VideoPlayer has it, and so does the hidden mpv view (`MpvStage.facade`).
+ */
+export type StagedPlayer = {
+  readonly status: VideoPlayerStatus;
+  /** Setting it parks the warm player there (mpv: a precise seek). */
+  currentTime: number;
+  /** -1 when the engine cannot tell (a paused mpv reports nothing). */
+  readonly bufferedPosition: number;
+  readonly duration: number;
+};
+
+/** A second, hidden libmpv view warming the next source while mpv plays (seamless switch). */
+type MpvStage = {
+  slot: number;
+  src: Src;
+  view: MpvViewHandle | null;
+  viewReady: boolean;
+  started: boolean;
+  loaded: boolean;
+  firstFrame: boolean;
+  seeking: boolean;
+  error: boolean;
+  /** Opened there (s): the playhead of the visible player plus a lead. */
+  start: number;
+  time: number;
+  duration: number;
+  buffered: number;
+  tracks: MpvTrack[];
+  videoCodec: string;
+  hwdec: string;
+  size: { width: number; height: number } | null;
+  facade: StagedPlayer;
+};
+
+/** Event handlers + ref of one mpv surface (EngineView renders one per slot). */
+export type MpvSlotProps = {
+  ref: (h: MpvViewHandle | null) => void;
+  onReady: () => void;
+  onLoaded: (e: { nativeEvent: MpvLoadedEvent }) => void;
+  onProgress: (e: { nativeEvent: MpvProgressEvent }) => void;
+  onStateChange: (e: { nativeEvent: MpvStateEvent }) => void;
+  onTracks: (e: { nativeEvent: { tracks: string } }) => void;
+  onEnd: () => void;
+  onMpvError: (e: { nativeEvent: { message: string } }) => void;
+};
+
+/** Two releases of one episode whose lengths differ more than this are not the same cut. */
+const TIMELINE_TOLERANCE_S = 3;
+
 const freshMpv = (): MpvState => ({
   status: 'loading', time: 0, duration: 0, buffered: 0, paused: true, buffering: false,
   audio: [], subs: [], audioTrack: null, subtitleTrack: null, videoTrack: null,
@@ -144,6 +195,13 @@ export class HybridPlayer implements EventEmitter<VideoPlayerEvents> {
   private staged: { player: VideoPlayer; src: Src } | null = null;
   /** Native players to render, bottom to top (the staged one sits under the visible one). */
   private views: VideoPlayer[];
+  /** Hidden mpv view warming a better source (seamless switch while mpv plays). */
+  private mpvStage: MpvStage | null = null;
+  /** mpv surfaces to render (slot ids); `mainSlot` is the visible one, on top. */
+  private slots: number[] = [1];
+  private mainSlot = 1;
+  private nextSlot = 2;
+  private slotProps = new Map<number, MpvSlotProps>();
 
   constructor(native: VideoPlayer) {
     this.native = native;
@@ -194,6 +252,82 @@ export class HybridPlayer implements EventEmitter<VideoPlayerEvents> {
   };
   /** Native players to render (EngineView), stable between changes. */
   getViews = () => this.views;
+  /** mpv surfaces to render (EngineView), stable between changes. */
+  getMpvSlots = () => this.slots;
+  isMainSlot = (slot: number) => slot === this.mainSlot;
+
+  /** Handlers of one mpv surface, routed to the visible player or to the hidden warm one. */
+  mpvSlot(slot: number): MpvSlotProps {
+    const known = this.slotProps.get(slot);
+    if (known) return known;
+    const route =
+      <A extends unknown[]>(main: (...a: A) => void, stage: (st: MpvStage, ...a: A) => void) =>
+      (...a: A) => {
+        if (slot === this.mainSlot) return main(...a);
+        const st = this.mpvStage;
+        if (st && st.slot === slot) stage(st, ...a);
+      };
+    const p: MpvSlotProps = {
+      ref: route(
+        (h: MpvViewHandle | null) => this.attachView(h),
+        (st, h: MpvViewHandle | null) => {
+          st.view = h;
+          if (!h) st.viewReady = false;
+          this.startStage(st);
+        },
+      ),
+      onReady: route(
+        () => this.viewDidMount(),
+        (st) => {
+          st.viewReady = true;
+          this.startStage(st);
+        },
+      ),
+      onLoaded: route(
+        (e: { nativeEvent: MpvLoadedEvent }) => this.mpv.onLoaded(e),
+        (st, e: { nativeEvent: MpvLoadedEvent }) => this.stageLoaded(st, e.nativeEvent),
+      ),
+      onProgress: route(
+        (e: { nativeEvent: MpvProgressEvent }) => this.mpv.onProgress(e),
+        (st, e: { nativeEvent: MpvProgressEvent }) => {
+          st.time = e.nativeEvent.time;
+          if (e.nativeEvent.duration > 0) st.duration = e.nativeEvent.duration;
+          st.buffered = e.nativeEvent.buffered;
+        },
+      ),
+      onStateChange: route(
+        (e: { nativeEvent: MpvStateEvent }) => this.mpv.onStateChange(e),
+        (st, e: { nativeEvent: MpvStateEvent }) => {
+          const n = e.nativeEvent;
+          if (n.firstFrame) st.firstFrame = true;
+          if (n.seeking != null) st.seeking = n.seeking;
+          if (n.hwdec != null) {
+            st.hwdec = n.hwdec;
+            st.videoCodec = n.videoCodec ?? st.videoCodec;
+          }
+          if (n.width && n.height) st.size = { width: n.width, height: n.height };
+        },
+      ),
+      onTracks: route(
+        (e: { nativeEvent: { tracks: string } }) => this.mpv.onTracks(e),
+        (st, e: { nativeEvent: { tracks: string } }) => {
+          st.tracks = parseTracks(e.nativeEvent.tracks);
+        },
+      ),
+      onEnd: route(
+        () => this.mpv.onEnd(),
+        () => {},
+      ),
+      onMpvError: route(
+        (e: { nativeEvent: { message: string } }) => this.mpv.onMpvError(e),
+        (st) => {
+          st.error = true;
+        },
+      ),
+    };
+    this.slotProps.set(slot, p);
+    return p;
+  }
 
   private notifyViews() {
     this.engineListeners.forEach((l) => l());
@@ -510,7 +644,8 @@ export class HybridPlayer implements EventEmitter<VideoPlayerEvents> {
    * when the current engine is not the native one. The caller parks it at the right position and
    * calls `commitStage` once it is ready (see seamless-upgrade.ts).
    */
-  stage(src: Src): VideoPlayer | null {
+  stage(src: Src, leadS = 8): StagedPlayer | null {
+    if (this.engine === 'mpv') return this.stageMpv(src, leadS);
     if (this.engine !== 'native') return null;
     this.abortStage();
     const p = createVideoPlayer({ uri: src.uri, headers: src.headers, metadata: src.metadata as never });
@@ -524,11 +659,17 @@ export class HybridPlayer implements EventEmitter<VideoPlayerEvents> {
     return p;
   }
 
-  get stagedPlayer(): VideoPlayer | null {
-    return this.staged?.player ?? null;
+  get stagedPlayer(): StagedPlayer | null {
+    return this.staged?.player ?? this.mpvStage?.facade ?? null;
+  }
+
+  /** Whether a source can be warmed for a seamless switch with the engine in use. */
+  canStage(): boolean {
+    return this.engine === 'native' || (this.engine === 'mpv' && deviceCaps().mpvAvailable);
   }
 
   abortStage() {
+    this.abortMpvStage();
     const st = this.staged;
     if (!st) return;
     this.staged = null;
@@ -548,6 +689,7 @@ export class HybridPlayer implements EventEmitter<VideoPlayerEvents> {
    * a source load (tracks, duration) without any reload.
    */
   commitStage(): boolean {
+    if (this.engine === 'mpv') return this.commitMpvStage();
     const st = this.staged;
     if (!st || this.engine !== 'native') return false;
     const next = st.player;
@@ -606,6 +748,180 @@ export class HybridPlayer implements EventEmitter<VideoPlayerEvents> {
     // The old view unmounts on the next render: free the old player after that.
     if (oldOwned) releaseLater(old);
     else setTimeout(() => old.replaceAsync(null).catch(() => {}), RELEASE_DELAY_MS);
+    return true;
+  }
+
+  // ---------- seamless source switch (mpv: a second, hidden mpv view) ----------
+
+  /**
+   * Opens `src` in a second libmpv view rendered under the visible one: muted, paused, opened a
+   * little ahead of the playhead. The caller parks it precisely (`facade.currentTime = t`) and
+   * calls `commitStage` when the visible player reaches that point.
+   */
+  private stageMpv(src: Src, leadS: number): StagedPlayer | null {
+    if (!deviceCaps().mpvAvailable) return null;
+    this.abortMpvStage();
+    const slot = this.nextSlot++;
+    const st: MpvStage = {
+      slot,
+      src,
+      view: null,
+      viewReady: false,
+      started: false,
+      loaded: false,
+      firstFrame: false,
+      seeking: false,
+      error: false,
+      start: Math.max(0, this.m.time + leadS * Math.max(1, this.rate)),
+      time: 0,
+      duration: 0,
+      buffered: -1,
+      tracks: [],
+      videoCodec: '',
+      hwdec: '',
+      size: null,
+      facade: null as unknown as StagedPlayer,
+    };
+    st.facade = {
+      get status(): VideoPlayerStatus {
+        if (st.error) return 'error';
+        return st.loaded && st.firstFrame && !st.seeking ? 'readyToPlay' : 'loading';
+      },
+      get currentTime() {
+        return st.time;
+      },
+      set currentTime(t: number) {
+        // Precise seek (mpv is back to `hr-seek=default` after the first frame): the frame shown
+        // when it takes over is the one the visible player is about to reach.
+        if (!st.view || !st.firstFrame) return;
+        st.seeking = true;
+        st.time = t;
+        st.view.seek(t).catch(() => {});
+      },
+      // A paused mpv reports no progress: the caller waits a settle time instead.
+      get bufferedPosition() {
+        return -1;
+      },
+      get duration() {
+        return st.duration;
+      },
+    };
+    this.mpvStage = st;
+    this.slots = [...this.slots, slot];
+    this.notifyViews();
+    return st.facade;
+  }
+
+  private startStage(st: MpvStage) {
+    if (st.started || !st.view || !st.viewReady || this.mpvStage !== st) return;
+    st.started = true;
+    const view = st.view;
+    view.setVolume(0).catch(() => {});
+    view.setSpeed(this.rate).catch(() => {});
+    if (this.fill) view.setFill(true).catch(() => {});
+    view
+      .load(st.src.uri, st.src.headers ?? {}, st.start, false)
+      .then(() => {
+        for (const [k, v] of Object.entries(this.subOpts)) quiet(view.setSubtitleOption?.(k, v));
+      })
+      .catch(() => {
+        st.error = true;
+      });
+  }
+
+  private stageLoaded(st: MpvStage, e: MpvLoadedEvent) {
+    st.loaded = true;
+    st.duration = e.duration;
+    st.tracks = parseTracks(e.tracks);
+    st.videoCodec = e.videoCodec;
+    st.hwdec = e.hwdec;
+    // Another cut of the episode (other length): the swap would jump. Not seamless.
+    const main = this.m.duration;
+    if (main > 0 && e.duration > 0 && Math.abs(main - e.duration) > TIMELINE_TOLERANCE_S) st.error = true;
+    // The styled subtitle file drawn by libass follows the file (mpv drops it at each load).
+    if (this.extSub && st.view) quiet(st.view.addSubtitleFile?.(this.extSub.path, EXT_SUB_TITLE, this.extSub.lang));
+  }
+
+  private abortMpvStage() {
+    const st = this.mpvStage;
+    if (!st) return;
+    this.mpvStage = null;
+    this.slotProps.delete(st.slot);
+    this.slots = this.slots.filter((x) => x !== st.slot);
+    st.view?.stop().catch(() => {});
+    this.notifyViews();
+  }
+
+  /**
+   * The hidden mpv view becomes the visible one: the user's volume, speed and zoom, same audio
+   * and subtitle languages, playing if the old one was. The old view is paused, then unmounted
+   * (EngineView stops its libmpv). Player.tsx gets the events of a source load, without a reload.
+   */
+  private commitMpvStage(): boolean {
+    const st = this.mpvStage;
+    if (!st || !st.view || !st.loaded || !st.firstFrame || st.error || st.seeking) return false;
+    const view = st.view;
+    const old = this.m;
+    const oldView = this.view;
+    const oldSlot = this.mainSlot;
+    const wasPlaying = !old.paused;
+    view.setVolume(this.vol).catch(() => {});
+    view.setSpeed(this.rate).catch(() => {});
+    view.setFill(this.fill).catch(() => {});
+    const audio = st.tracks.filter((t) => t.type === 'audio');
+    const subs = st.tracks.filter((t) => t.type === 'sub' && !(t.external && t.title === EXT_SUB_TITLE));
+    const wantAudio = old.audioTrack?.language;
+    const pickAudio = (wantAudio ? audio.find((t) => normLang(t.lang) === wantAudio) : undefined) ?? audio.find((t) => t.selected) ?? null;
+    if (pickAudio && !pickAudio.selected) view.setAudioTrack(pickAudio.id).catch(() => {});
+    const wantSub = !this.extSub ? old.subtitleTrack?.language : undefined;
+    const pickSub = wantSub ? (subs.find((t) => normLang(t.lang) === wantSub) ?? null) : null;
+    if (pickSub) view.setSubtitleTrack(pickSub.id).catch(() => {});
+    if (wasPlaying) view.setPaused(false).catch(() => {});
+    if (oldView) {
+      oldView.setPaused(true).catch(() => {});
+      oldView.setVolume(0).catch(() => {});
+    }
+
+    this.mpvStage = null;
+    this.clearWatchdog();
+    this.view = view;
+    this.viewReady = true;
+    this.mainSlot = st.slot;
+    this.slotProps.delete(oldSlot);
+    this.slots = [st.slot];
+    this.src = st.src;
+    this.fallbackTried = null;
+    this.mpvStart = 0;
+    this.mpvLoaded = true;
+    const m = freshMpv();
+    m.status = 'readyToPlay';
+    m.time = st.time;
+    m.duration = st.duration;
+    m.buffered = Math.max(st.time, st.buffered);
+    m.paused = !wasPlaying;
+    m.audio = old.audio;
+    m.subs = old.subs;
+    m.videoTrack = st.size
+      ? { id: 'mpv:video', url: null, size: st.size, mimeType: null, isSupported: true, bitrate: null, averageBitrate: null, peakBitrate: null, frameRate: null, videoRange: 'sdr' }
+      : old.videoTrack;
+    this.m = m;
+    this.applyTracks(st.tracks);
+    if (pickAudio) this.m.audioTrack = toTrack(pickAudio);
+    if (pickSub) this.m.subtitleTrack = toTrack(pickSub);
+    this.notifyViews();
+    this.setDetail(st.videoCodec, st.hwdec);
+
+    this.emit('sourceLoad', {
+      videoSource: st.src as VideoSource,
+      duration: st.duration,
+      availableVideoTracks: [],
+      availableSubtitleTracks: this.m.subs,
+      availableAudioTracks: this.m.audio,
+    });
+    this.emit('statusChange', { status: 'readyToPlay', oldStatus: old.status });
+    this.emit('playingChange', { isPlaying: wasPlaying, oldIsPlaying: wasPlaying });
+    this.emit('audioTrackChange', { audioTrack: this.m.audioTrack, oldAudioTrack: old.audioTrack } as never);
+    if (this.m.videoTrack) this.emit('videoTrackChange', { videoTrack: this.m.videoTrack, oldVideoTrack: old.videoTrack });
     return true;
   }
 

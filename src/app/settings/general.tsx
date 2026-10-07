@@ -13,6 +13,7 @@ import { useT } from '@/i18n';
 import { enableNotifications, notificationsSupported } from '@/notifications/episodes';
 import { importAniList, loginWithAniList, oauthAvailable } from '@/settings/anilist-sync';
 import { clearCache, exportData, personalAddonsInExport, pickBackup, restoreBackup } from '@/settings/backup';
+import { CELLULAR_DATA } from '@/settings/network-budget';
 import { setSetting, useSettings, type Quality } from '@/settings/settings';
 import { C, S } from '@/theme/tokens';
 
@@ -151,6 +152,32 @@ export default function Settings() {
             hint={t('settings.wifiOnlyHint')}
             right={<Switch value={s.wifiOnly} onValueChange={(v) => setSetting('wifiOnly', v)} accessibilityLabel={t('settings.wifiOnly')} {...switchProps} />}
           />
+          {!s.wifiOnly && (
+            <View style={styles.block}>
+              <Txt v="label">{t('settings.cellularData')}</Txt>
+              <Segmented
+                accessibilityLabel={t('settings.cellularData')}
+                value={s.cellularData}
+                onChange={(v) => setSetting('cellularData', v)}
+                options={CELLULAR_DATA.map((v) => ({ value: v, label: t(`settings.cellularData.${v}`) }))}
+              />
+              <Txt v="small">{t(`settings.cellularDataHint.${s.cellularData}`)}</Txt>
+            </View>
+          )}
+          <Row
+            icon="swap-horizontal-outline"
+            label={t('settings.autoSwitch')}
+            hint={t('settings.autoSwitchHint')}
+            right={<Switch value={s.autoSwitchSource} onValueChange={(v) => setSetting('autoSwitchSource', v)} accessibilityLabel={t('settings.autoSwitch')} {...switchProps} />}
+          />
+          {s.autoSwitchSource && (
+            <Row
+              icon="chatbox-ellipses-outline"
+              label={t('settings.switchToast')}
+              hint={t('settings.switchToastHint')}
+              right={<Switch value={s.switchToast} onValueChange={(v) => setSetting('switchToast', v)} accessibilityLabel={t('settings.switchToast')} {...switchProps} />}
+            />
+          )}
           <EngineSetting />
           <View style={styles.block}>
             <Txt v="label">{t('settings.quality')}</Txt>

@@ -4,7 +4,7 @@ import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { after, before, test } from 'node:test';
 
-import { cachedRace, clearRaceCache, fetchTransport, measureUrl, runPool, type Transport } from '../race-runner';
+import { cachedRace, clearRaceCache, fetchTransport, measureUrl, remeasure, runPool, type Transport } from '../race-runner';
 
 const opts = { bytes: 262144, timeoutMs: 2000 };
 
@@ -22,6 +22,28 @@ test('measureUrl caches per URL and deduplicates concurrent probes', async () =>
   assert.equal((await measureUrl('https://x/1', undefined, opts, t))?.alive, true);
   assert.equal(calls, 1, 'served from the cache');
   assert.equal(cachedRace('https://x/1')?.alive, true);
+});
+
+test('background re-probes bypass the cache, within the budget', async () => {
+  clearRaceCache();
+  let calls = 0;
+  let speed = 50_000;
+  const t: Transport = async () => {
+    calls++;
+    return { status: 206, bytes: 262144, contentType: 'video/mp4', ttfbMs: 100, totalMs: 100 + speed / 1000 };
+  };
+  await measureUrl('https://x/r1', undefined, opts, t);
+  const before = cachedRace('https://x/r1')!.mbps!;
+  speed = 500_000; // the link got 10× slower
+  await remeasure(
+    [{ url: 'https://x/r1' }, { url: 'https://x/r2' }, { url: 'https://x/r3' }],
+    { max: 2, concurrency: 2, bytes: 1000, timeoutMs: 1000 },
+    undefined,
+    t,
+  );
+  assert.equal(calls, 3, 'r1 again + r2; r3 is over the budget');
+  assert.ok(cachedRace('https://x/r1')!.mbps! < before / 5);
+  assert.equal(cachedRace('https://x/r3'), undefined);
 });
 
 test('a cancelled probe caches nothing', async () => {

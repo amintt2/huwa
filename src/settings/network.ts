@@ -1,12 +1,15 @@
-// Network awareness: offline banner, and the "Wi-Fi only" streaming rule.
+// Network awareness: offline banner, the "Wi-Fi only" streaming rule, and the budgets of the
+// network class (./network-budget.ts: Wi-Fi, cellular, Low Data Mode / "économie"; read from
+// expo-network + iOS NWPath in ./net-path.ts).
 import { NetworkStateType, useNetworkState } from 'expo-network';
 
 import type { RaceBudget } from '@/addons/race-runner';
 
-import { torrentProbeBudget, type TorrentProbeBudget } from './network-budget';
-import { useSettings } from './settings';
+import { allowsPrewarm, raceBudget, torrentProbeBudgetFor, type NetClass, type TorrentProbeBudget } from './network-budget';
+import { useNetClass } from './net-path';
 
-export type { TorrentProbeBudget } from './network-budget';
+export type { TorrentProbeBudget, NetClass } from './network-budget';
+export { useNetClass, currentNetClass } from './net-path';
 
 /** `false` only when we know for sure there is no connection (unknown ⇒ assume online). */
 export function useOnline(): boolean {
@@ -17,65 +20,43 @@ export function useOnline(): boolean {
   return true;
 }
 
-const UNMETERED = new Set([NetworkStateType.WIFI, NetworkStateType.ETHERNET]);
-
 export type StreamPolicy = { allowed: boolean; reason?: 'offline' | 'wifi-only' };
+
+const policyOf = (c: NetClass): StreamPolicy =>
+  c === 'offline' ? { allowed: false, reason: 'offline' } : c === 'blocked' ? { allowed: false, reason: 'wifi-only' } : { allowed: true };
 
 /**
  * Should a stream start right now? Players call this before loading a remote source.
  * Downloads already on the device are not concerned.
  */
 export function useStreamPolicy(): StreamPolicy {
-  const { wifiOnly } = useSettings();
-  const net = useNetworkState();
-  if (net.type === NetworkStateType.NONE || net.isConnected === false) return { allowed: false, reason: 'offline' };
-  // Web and unknown types cannot tell Wi-Fi from cellular: don't block there.
-  if (wifiOnly && net.type && net.type !== NetworkStateType.UNKNOWN && !UNMETERED.has(net.type)) {
-    return { allowed: false, reason: 'wifi-only' };
-  }
-  return { allowed: true };
+  return policyOf(useNetClass());
 }
 
-/**
- * Wi-Fi / Ethernet (or a platform that cannot tell): pre-buffering a video before the user
- * presses Play is allowed only there.
- */
+/** Wi-Fi / Ethernet, or cellular in "illimité" (the class `unmetered`). */
 export function useUnmetered(): boolean {
-  const policy = useStreamPolicy();
-  const net = useNetworkState();
-  if (!policy.allowed) return false;
-  return net.type !== NetworkStateType.CELLULAR;
+  return useNetClass() === 'unmetered';
 }
 
-const NO_RACE: RaceBudget = { max: 0, concurrency: 0, bytes: 0, timeoutMs: 0 };
 /**
- * Wi-Fi / Ethernet: every candidate at once (up to 10, ≈1.6 MB per episode). Testing in small
- * batches let dead links (often 5–8 s to fail) hold the slots, so good ones waited their turn.
+ * Pre-buffering before the user presses Play (pre-search warm player, torrent pre-warm): on an
+ * unmetered network and on cellular without Low Data Mode ("équilibré"), where a fast start is
+ * worth a few MB.
  */
-const RACE_UNMETERED: RaceBudget = { max: 10, concurrency: 10, bytes: 160 * 1024, timeoutMs: 5000 };
-/** Cellular: 4 links, all at once, smaller probes. */
-const RACE_METERED: RaceBudget = { max: 4, concurrency: 4, bytes: 96 * 1024, timeoutMs: 5000 };
+export function usePrewarm(): boolean {
+  return allowsPrewarm(useNetClass());
+}
 
-/**
- * How much the source race may measure on this connection: nothing when streaming is not
- * allowed (offline, "Wi-Fi seulement" on cellular), less on cellular.
- */
+/** How much the source race may measure on this connection (nothing when streaming is not allowed). */
 export function useRaceBudget(): RaceBudget {
-  const policy = useStreamPolicy();
-  const net = useNetworkState();
-  if (!policy.allowed) return NO_RACE;
-  if (net.type === NetworkStateType.CELLULAR) return RACE_METERED;
-  return RACE_UNMETERED;
+  return raceBudget(useNetClass());
 }
 
 /**
  * Torrents the on-device engine may probe before one is streamed ("course des torrents",
  * src/torrent/peer-race.ts): metadata and peers only, never a piece. None when streaming is not
- * allowed (offline, "Wi-Fi seulement" on cellular); the torrent engine's own "Wi-Fi only" setting
- * is checked by `canProbeTorrents`. `max` applies when every candidate looks weak.
+ * allowed; the torrent engine's own "Wi-Fi only" setting is checked by `canProbeTorrents`.
  */
 export function useTorrentProbeBudget(): TorrentProbeBudget {
-  const policy = useStreamPolicy();
-  const net = useNetworkState();
-  return torrentProbeBudget(policy.allowed, net.type === NetworkStateType.CELLULAR);
+  return torrentProbeBudgetFor(useNetClass());
 }

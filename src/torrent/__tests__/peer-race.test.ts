@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
 import {
+  afterExhausted,
   decidePeerRace,
   packKeys,
   unpackKeys,
@@ -137,5 +138,18 @@ test('stream keys with line breaks survive packing (Torrentio names are "Torrent
   assert.deepEqual(unpackKeys(packed), keys);
   assert.equal(packKeys([]), '');
   assert.deepEqual(unpackKeys(''), []);
+});
+
+test('exhausted race (5G device data): widen first, never a blind start when a probed swarm answers', () => {
+  // 3 probes failed (no metadata in time), more candidates unprobed: probe them before starting one blind.
+  const cands = [c('a', 0, p('failed')), c('b', 0, p('failed')), c('c', 0, p('weak')), c('d', 0), c('e', 0)];
+  assert.equal(afterExhausted(cands, false, 8), 'widen');
+  // Widened already: the probed one with an answering peer, not the plain ranking's first.
+  const after = [c('a', 0, p('failed')), c('b', 0, p('weak', { connected: 1, peers: 9 })), c('c', 0)];
+  assert.deepEqual(afterExhausted(after, true, 8), { key: 'b' });
+  // Budget used up: same.
+  assert.deepEqual(afterExhausted([c('a', 0, p('weak', { connected: 2 })), c('z', 0)], false, 1), { key: 'a' });
+  // Nobody answered anywhere: plain ranking (null).
+  assert.equal(afterExhausted([c('a', 0, p('failed')), c('b', 0, p('noFile', { connected: 4 }))], true, 8), null);
 });
 
