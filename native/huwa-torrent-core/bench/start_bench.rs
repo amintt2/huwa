@@ -244,6 +244,10 @@ fn profile(name: &str) -> Profile {
         "mid" => (6, (5e5, 5e5), (40.0, 100.0)),
         "obscure" => (1, (3e5, 3e5), (150.0, 150.0)),
         "obscure2" => (2, (3e5, 3e5), (150.0, 150.0)),
+        // Device traces (Wi-Fi): 4 peers at first byte, 2 MiB pieces.
+        "few4" => (4, (3e5, 3e5), (60.0, 120.0)),
+        // Same, peers of very different speeds (slow ones may hold the urgent blocks).
+        "mixed4" => (4, (1e5, 1.2e6), (40.0, 150.0)),
         // Network out of the way (engine + mpv floor).
         "lan" => (3, (50e6, 50e6), (1.0, 1.0)),
         other => panic!("unknown profile {other}"),
