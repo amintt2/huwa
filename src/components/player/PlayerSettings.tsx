@@ -59,6 +59,7 @@ export function PlayerSettings({
   onCommentsSide,
   liveComments,
   onLiveComments,
+  onClosed,
 }: {
   visible: boolean;
   onClose: () => void;
@@ -82,9 +83,11 @@ export function PlayerSettings({
   onCommentsSide: (side: 'left' | 'right') => void;
   liveComments: boolean;
   onLiveComments: (v: boolean) => void;
+  /** The sheet finished closing (see Sheet). */
+  onClosed?: () => void;
 }) {
   return (
-    <Sheet visible={visible} onClose={onClose} title="Réglages de lecture" detents="fit">
+    <Sheet visible={visible} onClose={onClose} onClosed={onClosed} title="Réglages de lecture" detents="fit">
       <Row title="Vitesse" value={String(rate)} onPick={(k) => onRate(Number(k))}
         options={SPEEDS.map((s) => ({ key: String(s), label: s === 1 ? 'Normale' : `${String(s).replace('.', ',')}×` }))} />
       {onOpenSubtitles && (

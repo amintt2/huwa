@@ -19,6 +19,9 @@ private final class WakeupBox {
 }
 
 /// One libmpv client. All mpv calls run on `queue`; delegate callbacks are delivered on main.
+/// Writes (properties, commands) use libmpv's async API: they are queued in order in the core and
+/// never block `queue` while the core is busy (opening a slow stream, a VO reconfigure), so a burst
+/// of taps never piles up behind a stuck call and `destroy` is never delayed by one.
 final class MpvCore {
   weak var delegate: MpvCoreDelegate?
 
@@ -184,23 +187,23 @@ final class MpvCore {
       var fields: [String] = []
       for (k, v) in headers {
         if k.caseInsensitiveCompare("User-Agent") == .orderedSame {
-          mpv_set_property_string(ctx, "user-agent", v)
+          setAsync(ctx, "user-agent", v)
         } else {
           fields.append("\(k): \(v)")
         }
       }
       runCommand(ctx, ["change-list", "http-header-fields", "clr", ""])
       for f in fields { runCommand(ctx, ["change-list", "http-header-fields", "append", f]) }
-      mpv_set_property_string(ctx, "start", start > 1 ? String(format: "%.3f", start) : "none")
+      setAsync(ctx, "start", start > 1 ? String(format: "%.3f", start) : "none")
       // Resume: open on the keyframe before the saved position instead of decoding up to it
       // (a precise seek needs every frame since that keyframe: up to a GOP, several MiB more to
       // download first — measured with native/huwa-torrent-core/bench). Back to precise seeks
       // after the first frame (see MPV_EVENT_PLAYBACK_RESTART).
-      mpv_set_property_string(ctx, "hr-seek", start > 1 ? "no" : "default")
-      mpv_set_property_string(ctx, "pause", autoplay ? "no" : "yes")
-      mpv_set_property_string(ctx, "sid", "no")
+      setAsync(ctx, "hr-seek", start > 1 ? "no" : "default")
+      setAsync(ctx, "pause", autoplay ? "no" : "yes")
+      setAsync(ctx, "sid", "no")
       // The rotation nudge (refreshOutputSize) leaves an aspect override: never carry it to the next file.
-      mpv_set_property_string(ctx, "video-aspect-override", "no")
+      setAsync(ctx, "video-aspect-override", "no")
       // Built-in torrent engine (loopback URL): a read may legitimately wait for a piece (swarm
       // hiccup, automatic re-announce after ~12–20 s without peers). 20 s would turn that wait
       // into a stream error. Remote URLs (debrid, addon links): 8 s. A range request the server
@@ -208,7 +211,7 @@ final class MpvCore {
       // long before mpv asks again: 20 s each time measured (47 s opens on the device fit two of
       // them), 8 s with this value (native/huwa-torrent-core/bench, `hang-tail`).
       let loopback = url.hasPrefix("http://127.0.0.1:")
-      mpv_set_property_string(ctx, "network-timeout", loopback ? "120" : "8")
+      setAsync(ctx, "network-timeout", loopback ? "120" : "8")
       runCommand(ctx, ["loadfile", url, "replace"])
     }
   }
@@ -216,8 +219,7 @@ final class MpvCore {
   func setString(_ name: String, _ value: String) {
     queue.async { [self] in
       guard let ctx = mpv else { return }
-      let rc = mpv_set_property_string(ctx, name, value)
-      if rc < 0 { NSLog("[HuwaMpv] set %@=%@: %@", name, value, String(cString: mpv_error_string(rc))) }
+      setAsync(ctx, name, value)
     }
   }
 
@@ -231,7 +233,7 @@ final class MpvCore {
       guard let ctx = mpv, let w = getDouble(ctx, "video-params/dw"), let h = getDouble(ctx, "video-params/dh"), w > 0, h > 0 else { return }
       aspectNudge.toggle()
       let aspect = (w / h) * (aspectNudge ? 1.00001 : 0.99999)
-      mpv_set_property_string(ctx, "video-aspect-override", String(format: "%.6f", aspect))
+      setAsync(ctx, "video-aspect-override", String(format: "%.6f", aspect))
     }
   }
 
@@ -242,12 +244,26 @@ final class MpvCore {
     }
   }
 
+  /// Queued in the core, in order with the other writes; libmpv copies the arguments.
   @discardableResult
   private func runCommand(_ ctx: OpaquePointer, _ args: [String]) -> Int32 {
     var cargs: [UnsafePointer<CChar>?] = args.map { UnsafePointer(strdup($0)) }
     cargs.append(nil)
     defer { for p in cargs where p != nil { free(UnsafeMutablePointer(mutating: p)) } }
-    return mpv_command(ctx, &cargs)
+    let rc = mpv_command_async(ctx, 0, &cargs)
+    if rc < 0 { NSLog("[HuwaMpv] command %@: %@", args.first ?? "", String(cString: mpv_error_string(rc))) }
+    return rc
+  }
+
+  /// Property write queued in the core (string form, as mpv_set_property_string); libmpv copies it.
+  @discardableResult
+  private func setAsync(_ ctx: OpaquePointer, _ name: String, _ value: String) -> Int32 {
+    let rc = value.withCString { cstr -> Int32 in
+      var p: UnsafePointer<CChar>? = cstr
+      return withUnsafeMutablePointer(to: &p) { mpv_set_property_async(ctx, 0, name, MPV_FORMAT_STRING, $0) }
+    }
+    if rc < 0 { NSLog("[HuwaMpv] set %@=%@: %@", name, value, String(cString: mpv_error_string(rc))) }
+    return rc
   }
 
   // MARK: events
@@ -275,7 +291,7 @@ final class MpvCore {
         // the first frame on screen (a `start` position included). Reported once per file.
         if loaded && !firstFrameSent {
           firstFrameSent = true
-          mpv_set_property_string(ctx, "hr-seek", "default")
+          setAsync(ctx, "hr-seek", "default")
           main { $0.mpvState(["firstFrame": true]) }
         }
       case MPV_EVENT_VIDEO_RECONFIG:
@@ -304,6 +320,9 @@ final class MpvCore {
         guard let data = ev.data else { break }
         let prop = data.assumingMemoryBound(to: mpv_event_property.self).pointee
         handleProperty(ctx, String(cString: prop.name), prop)
+      case MPV_EVENT_SET_PROPERTY_REPLY, MPV_EVENT_COMMAND_REPLY:
+        // Replies of the async writes: only failures matter (logged like the sync calls were).
+        if ev.error < 0 { NSLog("[HuwaMpv] async request: %@", String(cString: mpv_error_string(ev.error))) }
       case MPV_EVENT_SHUTDOWN:
         return
       default:

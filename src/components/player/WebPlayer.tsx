@@ -194,6 +194,8 @@ export function WebPlayer({
       seekTo: (t) => seek(t),
       play: () => live.current.frame && web.current?.injectJavaScript(commandScript('play', 0, live.current.frame)),
       pause: () => live.current.frame && web.current?.injectJavaScript(commandScript('pause', 0, live.current.frame)),
+      // The page goes away with the screen: pausing it is enough to silence it until then.
+      stop: () => live.current.frame && web.current?.injectJavaScript(commandScript('pause', 0, live.current.frame)),
     }),
     [],
   );

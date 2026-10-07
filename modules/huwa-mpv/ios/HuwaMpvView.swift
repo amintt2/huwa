@@ -143,6 +143,11 @@ public final class HuwaMpvView: ExpoView {
 
   func destroy() {
     #if HUWA_MPV
+    resizeWork?.cancel()
+    resizeWork = nil
+    // Events the dying core still posts to main (progress, loaded, end…) are dropped: they
+    // belong to a file JS has already left.
+    core?.delegate = nil
     core?.destroy()
     core = nil
     #endif

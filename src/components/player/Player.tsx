@@ -50,6 +50,8 @@ export type PlayerHandle = {
   seekTo: (seconds: number) => void;
   play: () => void;
   pause: () => void;
+  /** Stops what plays now (audio and picture), e.g. right before leaving for the next episode. */
+  stop: () => void;
 };
 
 /** `timestamp`: start; `end`: end of a range (shown while the playhead is inside it). Text is plain. */
@@ -216,6 +218,7 @@ export function Player({
   const [controls, setControls] = useState(true);
   const [touch, setTouch] = useState(0);
   const [settings, setSettings] = useState(false);
+  const subsAfterSettings = useRef(false);
   const [locked, setLocked] = useState(false);
   const [unlockHint, setUnlockHint] = useState(false);
   const [commentsOpen, setCommentsOpen] = useState(false);
@@ -280,8 +283,17 @@ export function Player({
   // URI already playing after a seamless upgrade: the parent passes it next, nothing to reload.
   const adopted = useRef<string | null>(null);
   const headersKey = JSON.stringify(source?.headers ?? {});
+  const hadSource = useRef(false);
   useEffect(() => {
-    if (!source?.uri) return;
+    if (!source?.uri) {
+      // The source went away (another one is being resolved, none left): the old one stops now
+      // instead of playing on under the next one.
+      if (hadSource.current) player.stop();
+      hadSource.current = false;
+      adopted.current = null;
+      return;
+    }
+    hadSource.current = true;
     if (adopted.current === source.uri) {
       adopted.current = null;
       return;
@@ -411,10 +423,25 @@ export function Player({
   );
 
   // ---------- auto next ----------
+  // Pill, countdown card and the end of the countdown can all fire, taps can repeat: one call per
+  // second at most. This episode stops right away, before the navigation, so it is never heard
+  // under the next one.
+  const lastNext = useRef(0);
+  const playNext = () => {
+    if (!cb.current.next || Date.now() - lastNext.current < 1000) return;
+    lastNext.current = Date.now();
+    setCountdown(null);
+    player.stop();
+    cb.current.next.onPlay();
+  };
+  const playNextRef = useRef(playNext);
+  useEffect(() => {
+    playNextRef.current = playNext;
+  });
   useEffect(() => {
     if (countdown === null) return;
     if (countdown <= 0) {
-      cb.current.next?.onPlay();
+      playNextRef.current();
       return;
     }
     const t = setTimeout(() => setCountdown((c) => (c === null ? null : c - 1)), 1000);
@@ -493,6 +520,7 @@ export function Player({
       },
       play: () => player.play(),
       pause: () => player.pause(),
+      stop: () => player.stop(),
     }),
     [player],
   );
@@ -739,9 +767,9 @@ export function Player({
                 <VideoAirPlayButton tint={C.white} activeTint={C.accentText} prioritizeVideoDevices style={{ width: 26, height: 26 }} />
               </View>
             )}
-            <Ctl icon="text" label="Sous-titres" active={subs.selectedKey !== 'off'} onPress={() => { setSubSheet(true); wake(); }} size={20} />
+            <Ctl icon="text" label="Sous-titres" active={subs.selectedKey !== 'off'} onPress={() => { if (!settings) setSubSheet(true); wake(); }} size={20} />
             {pipOk && <Ctl icon="albums-outline" label="Image dans l’image" onPress={() => view.current?.startPictureInPicture().catch(() => {})} />}
-            <Ctl icon="settings-outline" label="Réglages de lecture" onPress={() => { setSettings(true); wake(); }} />
+            <Ctl icon="settings-outline" label="Réglages de lecture" onPress={() => { if (!subSheet) { subsAfterSettings.current = false; setSettings(true); } wake(); }} />
           </View>
 
           {/* Hidden while sources are searched and when nothing can play: the explanation and its
@@ -776,12 +804,12 @@ export function Player({
             <Pill icon="play-skip-forward" label={skipBtn.label}
               onPress={() => { seekTo(skipBtn.to); setSkipped((s) => [...s, skipBtn.key]); }} />
           )}
-          {showNext && <Pill primary icon="play-skip-forward" label="Épisode suivant" onPress={() => next!.onPlay()} />}
+          {showNext && <Pill primary icon="play-skip-forward" label="Épisode suivant" onPress={playNext} />}
         </View>
       )}
 
       {next && countdown !== null && (
-        <NextCard label={next.label} countdown={countdown} onCancel={() => setCountdown(null)} onPlay={() => next.onPlay()}
+        <NextCard label={next.label} countdown={countdown} onCancel={() => setCountdown(null)} onPlay={playNext}
           style={{ right: sideInset, bottom: full ? Math.max(insets.bottom, S.lg) + 8 : S.md }} />
       )}
 
@@ -816,7 +844,15 @@ export function Player({
           const tr = audioTracks[Number(k)];
           if (tr) setProp(player, 'audioTrack', tr);
         }}
-        onOpenSubtitles={() => { setSettings(false); setSubSheet(true); }}
+        // One modal at a time: iOS does not present a modal while another one is still on screen
+        // (the subtitle sheet would never show and could not be closed), so it opens once the
+        // settings sheet is gone.
+        onOpenSubtitles={() => { subsAfterSettings.current = true; setSettings(false); }}
+        onClosed={() => {
+          if (!subsAfterSettings.current) return;
+          subsAfterSettings.current = false;
+          setSubSheet(true);
+        }}
         autoNext={prefs.autoNext}
         onAutoNext={(autoNext) => setPrefs({ autoNext })}
         commentsSide={prefs.commentsSide}

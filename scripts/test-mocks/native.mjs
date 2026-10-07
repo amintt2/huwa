@@ -20,7 +20,7 @@ export const SecureStore = {
 
 export const Crypto = { getRandomBytes: (n) => new Uint8Array(randomBytes(n)) };
 export const Device = { deviceName: 'iPhone de test', modelName: 'iPhone' };
-export const ReactNative = { Platform: { OS: 'ios' } };
+export const ReactNative = { Platform: { OS: 'ios' }, Settings: { get: () => undefined } };
 
 export function resetNative() {
   mem.clear();

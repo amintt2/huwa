@@ -49,6 +49,7 @@ export function Sheet({
   children,
   contentGap = S.lg,
   padded = true,
+  onClosed,
 }: {
   visible: boolean;
   onClose: () => void;
@@ -64,6 +65,8 @@ export function Sheet({
   children: ReactNode;
   contentGap?: number;
   padded?: boolean;
+  /** The sheet is gone (exit animation over, modal unmounted): another modal can be presented. */
+  onClosed?: () => void;
 }) {
   const [mounted, setMounted] = useState(visible);
   if (visible && !mounted) setMounted(true);
@@ -74,7 +77,10 @@ export function Sheet({
       supportedOrientations={['portrait', 'landscape-left', 'landscape-right']}>
       <SafeAreaProvider initialMetrics={initialWindowMetrics}>
         <GestureHandlerRootView style={{ flex: 1 }}>
-          <SheetHost visible={visible} onClosed={() => setMounted(false)} onClose={onClose} title={title} subtitle={subtitle}
+          <SheetHost visible={visible} onClosed={() => {
+            setMounted(false);
+            onClosed?.();
+          }} onClose={onClose} title={title} subtitle={subtitle}
             headerLeft={headerLeft} headerRight={headerRight} detents={detents} footer={footer} side={side} contentGap={contentGap} padded={padded}>
             {children}
           </SheetHost>

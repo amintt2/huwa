@@ -55,6 +55,8 @@ function MpvSurface({ player, style }: { player: HybridPlayer; style: VideoViewP
   useLayoutEffect(() => {
     const h = handle.current;
     return () => {
+      // Silent first (cheap), then libmpv is torn down off the main thread.
+      h?.setPaused(true).catch(() => {});
       h?.stop().catch(() => {});
     };
   }, []);

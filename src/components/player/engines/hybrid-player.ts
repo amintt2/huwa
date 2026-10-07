@@ -72,7 +72,23 @@ const NATIVE_LOAD_TIMEOUT = 15_000;
 /** A player is released only after its VideoView had time to unmount. */
 const RELEASE_DELAY_MS = 1500;
 
+/** Pauses a native player now (its audio stops at once); a released one is skipped silently. */
+function hush(p: VideoPlayer) {
+  try {
+    p.pause();
+  } catch {
+    // already released
+  }
+}
+
 function releaseLater(p: VideoPlayer) {
+  // Silent right away: only the release itself waits for the VideoView to unmount.
+  hush(p);
+  try {
+    p.muted = true;
+  } catch {
+    // already released
+  }
   setTimeout(() => {
     try {
       p.release();
@@ -105,6 +121,16 @@ const freshMpv = (): MpvState => ({
   status: 'loading', time: 0, duration: 0, buffered: 0, paused: true, buffering: false,
   audio: [], subs: [], audioTrack: null, subtitleTrack: null, videoTrack: null,
 });
+
+/**
+ * The one player allowed to be heard. A watch screen can stay mounted under another one (a pushed
+ * episode, a replaced screen still animating out): whichever player starts playing pauses the
+ * previous one, so two episodes are never heard at once.
+ */
+let audible: HybridPlayer | null = null;
+
+/** The player currently allowed to be heard (tests, diagnostics). */
+export const audiblePlayer = () => audible;
 
 export class HybridPlayer implements EventEmitter<VideoPlayerEvents> {
   /** Type-only marker read by `useEvent` / `useEventListener` to infer the events map. */
@@ -144,6 +170,10 @@ export class HybridPlayer implements EventEmitter<VideoPlayerEvents> {
   private staged: { player: VideoPlayer; src: Src } | null = null;
   /** Native players to render, bottom to top (the staged one sits under the visible one). */
   private views: VideoPlayer[];
+  /** Released (screen left): every later call is a no-op, nothing can start playing again. */
+  private released = false;
+  /** mpv calls in flight per kind (seek, pause): the latest waits, older pending ones are dropped. */
+  private inflight = new Map<string, { next?: () => Promise<void> | undefined }>();
 
   constructor(native: VideoPlayer) {
     this.native = native;
@@ -213,17 +243,24 @@ export class HybridPlayer implements EventEmitter<VideoPlayerEvents> {
   }
 
   private viewReady = false;
+  /**
+   * The handle whose native view sent `onReady`. `onReady` comes once per native view: a ref
+   * detached and attached again to the same view (re-render) must stay ready, or every later
+   * mpv load would wait for it forever.
+   */
+  private readyHandle: MpvViewHandle | null = null;
 
   /** Callback ref of the mpv native view. */
   attachView = (v: MpvViewHandle | null) => {
     this.view = v;
-    if (!v) this.viewReady = false;
+    this.viewReady = !!v && v === this.readyHandle;
     this.flushWaiters();
   };
 
   /** `onReady` of the native view: mounted (Fabric mounts after the ref is attached). */
   viewDidMount = () => {
-    this.viewReady = true;
+    this.readyHandle = this.view;
+    this.viewReady = !!this.view;
     if (this.fill) this.view?.setFill(true).catch(() => {});
     this.flushWaiters();
   };
@@ -257,7 +294,7 @@ export class HybridPlayer implements EventEmitter<VideoPlayerEvents> {
     if (opened > 0 && Math.abs(t - opened) < 1) return;
     if (Math.abs(t - this.m.time) < 0.25) return;
     this.m.time = t;
-    this.view?.seek(t).catch(() => {});
+    this.mpvCall('seek', () => this.view?.seek(t));
   }
   get duration(): number {
     return this.engine === 'mpv' ? this.m.duration : this.native.duration;
@@ -369,12 +406,93 @@ export class HybridPlayer implements EventEmitter<VideoPlayerEvents> {
   }
 
   play() {
-    if (this.engine === 'mpv') this.view?.setPaused(false).catch(() => {});
+    if (this.released) return;
+    this.claimAudio();
+    if (this.engine === 'mpv') this.mpvCall('pause', () => this.view?.setPaused(false));
     else this.native.play();
   }
   pause() {
-    if (this.engine === 'mpv') this.view?.setPaused(true).catch(() => {});
-    else this.native.pause();
+    if (this.released) return;
+    if (this.engine === 'mpv') this.mpvCall('pause', () => this.view?.setPaused(true));
+    else hush(this.native);
+  }
+
+  /** This player is about to be heard: the one heard until now (another screen) is paused. */
+  private claimAudio() {
+    const prev = audible;
+    audible = this;
+    if (prev && prev !== this) prev.silence();
+  }
+
+  /** Paused now, whatever the engine (another player took the audio, or this one stops). */
+  private silence() {
+    hush(this.native);
+    if (this.view) {
+      this.dropMpvCalls();
+      this.view.setPaused(true).catch(() => {});
+    }
+  }
+
+  /**
+   * mpv calls of one kind, serialized: while one is in flight only the latest of the next ones is
+   * kept (a burst of seeks / play-pause taps ends on the last one, never on a backlog).
+   */
+  private mpvCall(kind: string, run: () => Promise<void> | undefined) {
+    const slot = this.inflight.get(kind);
+    if (slot) {
+      slot.next = run;
+      return;
+    }
+    const own: { next?: () => Promise<void> | undefined } = {};
+    this.inflight.set(kind, own);
+    const go = (fn: () => Promise<void> | undefined) => {
+      let p: Promise<void> | undefined;
+      try {
+        p = fn();
+      } catch {
+        p = undefined;
+      }
+      Promise.resolve(p)
+        .catch(() => {})
+        .then(() => {
+          if (this.inflight.get(kind) !== own) return;
+          const n = own.next;
+          own.next = undefined;
+          if (n) go(n);
+          else this.inflight.delete(kind);
+        });
+    };
+    go(run);
+  }
+
+  /** Pending seeks / play-pause aimed at a file being replaced or stopped are dropped. */
+  private dropMpvCalls() {
+    for (const s of this.inflight.values()) s.next = undefined;
+    this.inflight.clear();
+  }
+
+  /**
+   * Stops what plays (both engines, the staged player) without releasing the player: the source
+   * went away (source change, leaving for the next episode). Pending loads are superseded.
+   */
+  stop() {
+    if (this.released) return;
+    this.token++;
+    this.clearWatchdog();
+    this.settlePending();
+    this.abortStage();
+    this.src = null;
+    this.fallbackTried = null;
+    this.silence();
+    if (audible === this) audible = null;
+    this.native.replaceAsync(null).catch(() => {});
+    if (this.engine === 'mpv') {
+      // Back to the native engine: the mpv surface unmounts and frees libmpv (EngineView).
+      const old = this.m.status;
+      this.m = freshMpv();
+      this.setEngine('native', '');
+      this.emit('statusChange', { status: 'idle', oldStatus: old });
+    }
   }
 
   /**
@@ -383,13 +501,16 @@ export class HybridPlayer implements EventEmitter<VideoPlayerEvents> {
    * on a torrent); the native engine is still positioned by the caller after the load.
    */
   async replaceAsync(source: VideoSource, opts?: { startAt?: number }): Promise<void> {
+    if (this.released) return;
     const token = ++this.token;
+    this.clearWatchdog();
     this.abortStage();
     this.settlePending();
     const src = typeof source === 'string' ? { uri: source } : source && typeof source === 'object' && source.uri ? (source as Src) : null;
     this.src = src;
     this.fallbackTried = null;
     if (!src) {
+      this.stopMpv();
       this.setEngine('native', '');
       return this.native.replaceAsync(source);
     }
@@ -397,25 +518,43 @@ export class HybridPlayer implements EventEmitter<VideoPlayerEvents> {
     const pref = getEnginePref();
     const c = deviceCaps();
     const probe = pref === 'auto' && c.mpvAvailable ? await probeSource(src.uri, src.headers) : null;
+    // Each await may have been overtaken by a newer load, a stop or the release: drop stale work.
     if (token !== this.token) return;
     const d = decideEngine(pref, c, probe);
 
     if (d.engine === 'mpv') {
-      if (this.engine === 'native') await this.native.replaceAsync(null).catch(() => {});
+      if (this.engine === 'native') {
+        hush(this.native);
+        await this.native.replaceAsync(null).catch(() => {});
+        // A newer load may already play on the native engine: switching to mpv now would hide it
+        // (black mpv surface, controls sent to mpv) while its audio goes on.
+        if (token !== this.token) return;
+      }
       const at = opts?.startAt;
       return this.loadMpv(src, d.reason, at && at > 1 ? at : 0, token);
     }
+    this.stopMpv();
     this.setEngine('native', d.reason);
     this.armWatchdog(token);
     try {
       await this.native.replaceAsync(source);
     } catch (e) {
-      if (token === this.token && this.canFallback()) return this.fallback(token);
+      if (token !== this.token) return;
+      if (this.canFallback()) return this.fallback(token);
       throw e;
     }
   }
 
+  /** Leaving mpv for the native engine: mpv goes quiet now (its surface unmounts and frees it). */
+  private stopMpv() {
+    if (this.engine !== 'mpv') return;
+    this.dropMpvCalls();
+    this.view?.setPaused(true).catch(() => {});
+  }
+
   release() {
+    if (this.released) return;
+    this.released = true;
     this.token++;
     const waiters = this.viewWaiters;
     this.viewWaiters = [];
@@ -423,11 +562,19 @@ export class HybridPlayer implements EventEmitter<VideoPlayerEvents> {
     this.clearWatchdog();
     this.settlePending();
     this.abortStage();
+    // Quiet at once, whatever happens to the native objects next (the screen may stay visible
+    // during its exit transition, a native player is released a little later).
+    this.silence();
+    if (audible === this) audible = null;
     this.nativeSubs.forEach((s) => s.remove());
     this.nativeSubs = [];
     if (this.ownsNative) releaseLater(this.native);
     this.view?.stop().catch(() => {});
     setActiveEngine(this, null);
+  }
+
+  get isReleased() {
+    return this.released;
   }
 
   // ---------- warm player handover (pre-search / next-episode prefetch) ----------
@@ -444,7 +591,7 @@ export class HybridPlayer implements EventEmitter<VideoPlayerEvents> {
     // Unknown container with mpv around: let replaceAsync probe it.
     if (pref === 'auto' && c.mpvAvailable && !probe) return false;
     const d = decideEngine(pref, c, probe);
-    if (d.engine !== 'native' || next.status === 'error') return false;
+    if (this.released || d.engine !== 'native' || next.status === 'error') return false;
     const token = ++this.token;
     this.abortStage();
     this.settlePending();
@@ -471,7 +618,11 @@ export class HybridPlayer implements EventEmitter<VideoPlayerEvents> {
     } catch {
       // released
     }
-    if (wasMpv) this.view?.stop().catch(() => {});
+    if (wasMpv) {
+      this.dropMpvCalls();
+      this.view?.setPaused(true).catch(() => {});
+      this.view?.stop().catch(() => {});
+    }
     this.native = next;
     this.ownsNative = true;
     this.src = src;
@@ -511,7 +662,7 @@ export class HybridPlayer implements EventEmitter<VideoPlayerEvents> {
    * calls `commitStage` once it is ready (see seamless-upgrade.ts).
    */
   stage(src: Src): VideoPlayer | null {
-    if (this.engine !== 'native') return null;
+    if (this.released || this.engine !== 'native') return null;
     this.abortStage();
     const p = createVideoPlayer({ uri: src.uri, headers: src.headers, metadata: src.metadata as never });
     p.muted = true;
@@ -534,11 +685,6 @@ export class HybridPlayer implements EventEmitter<VideoPlayerEvents> {
     this.staged = null;
     this.views = [this.native];
     this.notifyViews();
-    try {
-      st.player.pause();
-    } catch {
-      // already released
-    }
     releaseLater(st.player);
   }
 
@@ -549,7 +695,7 @@ export class HybridPlayer implements EventEmitter<VideoPlayerEvents> {
    */
   commitStage(): boolean {
     const st = this.staged;
-    if (!st || this.engine !== 'native') return false;
+    if (this.released || !st || this.engine !== 'native') return false;
     const next = st.player;
     const old = this.native;
     const oldOwned = this.ownsNative;
@@ -570,7 +716,10 @@ export class HybridPlayer implements EventEmitter<VideoPlayerEvents> {
       next.muted = old.muted;
       next.allowsExternalPlayback = true;
       next.showNowPlayingNotification = true;
-      if (wasPlaying) next.play();
+      if (wasPlaying) {
+        this.claimAudio();
+        next.play();
+      }
     } catch {
       // keep going: the swap itself matters more than a property
     }
@@ -656,7 +805,7 @@ export class HybridPlayer implements EventEmitter<VideoPlayerEvents> {
     const src = this.src!;
     this.fallbackTried = src.uri;
     const at = this.native.currentTime;
-    this.native.pause();
+    hush(this.native);
     await this.native.replaceAsync(null).catch(() => {});
     if (token !== this.token) return;
     return this.loadMpv(src, 'échec du lecteur natif', at > 1 ? at : 0, token);
@@ -664,6 +813,8 @@ export class HybridPlayer implements EventEmitter<VideoPlayerEvents> {
 
   // ---------- mpv engine ----------
   private async loadMpv(src: Src, reason: string, start: number, token: number): Promise<void> {
+    if (token !== this.token) return;
+    this.dropMpvCalls();
     const old = this.m;
     this.m = freshMpv();
     this.m.time = start;
@@ -682,11 +833,14 @@ export class HybridPlayer implements EventEmitter<VideoPlayerEvents> {
     });
     view.setSpeed(this.rate).catch(() => {});
     view.setVolume(this.vol).catch(() => {});
+    // mpv starts playing on load (autoplay): it takes the audio now.
+    this.claimAudio();
     try {
       await view.load(src.uri, src.headers ?? {}, start, true);
+      if (token !== this.token) return loaded;
       for (const [k, v] of Object.entries(this.subOpts)) quiet(view.setSubtitleOption?.(k, v));
     } catch (e) {
-      this.mpv.onMpvError({ nativeEvent: { message: e instanceof Error ? e.message : 'mpv indisponible' } });
+      if (token === this.token) this.mpv.onMpvError({ nativeEvent: { message: e instanceof Error ? e.message : 'mpv indisponible' } });
     }
     return loaded;
   }
@@ -730,9 +884,15 @@ export class HybridPlayer implements EventEmitter<VideoPlayerEvents> {
     if (key(oldSubs) !== key(this.m.subs)) this.emit('availableSubtitleTracksChange', { availableSubtitleTracks: this.m.subs, oldAvailableSubtitleTracks: oldSubs });
   }
 
+  /** Events of a libmpv the player no longer uses (stopped, released, back to native) are stale. */
+  private mpvLive() {
+    return this.engine === 'mpv' && !this.released;
+  }
+
   /** Event handlers for the mpv native view (EngineView). */
   readonly mpv = {
     onLoaded: (e: { nativeEvent: MpvLoadedEvent }) => {
+      if (!this.mpvLive()) return;
       const { duration, videoCodec, hwdec } = e.nativeEvent;
       const tracks = parseTracks(e.nativeEvent.tracks);
       this.m.duration = duration;
@@ -755,6 +915,7 @@ export class HybridPlayer implements EventEmitter<VideoPlayerEvents> {
       p?.resolve();
     },
     onProgress: (e: { nativeEvent: MpvProgressEvent }) => {
+      if (!this.mpvLive()) return;
       const { time, duration, buffered, paused } = e.nativeEvent;
       this.m.time = time;
       if (duration > 0) this.m.duration = duration;
@@ -763,6 +924,7 @@ export class HybridPlayer implements EventEmitter<VideoPlayerEvents> {
       this.emit('timeUpdate', { currentTime: time, currentLiveTimestamp: null, currentOffsetFromLive: null, bufferedPosition: buffered });
     },
     onStateChange: (e: { nativeEvent: MpvStateEvent }) => {
+      if (!this.mpvLive()) return;
       const s = e.nativeEvent;
       if (s.firstFrame) this.firstFrameListeners.forEach((l) => l());
       if (s.paused != null) this.setPaused(s.paused);
@@ -780,12 +942,16 @@ export class HybridPlayer implements EventEmitter<VideoPlayerEvents> {
         this.emit('videoTrackChange', { videoTrack: this.m.videoTrack, oldVideoTrack: old });
       }
     },
-    onTracks: (e: { nativeEvent: { tracks: string } }) => this.applyTracks(parseTracks(e.nativeEvent.tracks)),
+    onTracks: (e: { nativeEvent: { tracks: string } }) => {
+      if (this.mpvLive()) this.applyTracks(parseTracks(e.nativeEvent.tracks));
+    },
     onEnd: () => {
+      if (!this.mpvLive()) return;
       this.setPaused(true);
       this.emit('playToEnd');
     },
     onMpvError: (e: { nativeEvent: { message: string } }) => {
+      if (!this.mpvLive()) return;
       const message = e.nativeEvent.message || 'Lecture impossible (mpv)';
       const p = this.pending;
       this.pending = null;

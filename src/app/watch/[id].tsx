@@ -1,5 +1,5 @@
 import Ionicons from '@expo/vector-icons/Ionicons';
-import { router, Stack, useLocalSearchParams } from 'expo-router';
+import { router, Stack, useLocalSearchParams, useNavigation } from 'expo-router';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { StyleSheet, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -174,6 +174,10 @@ function WatchScreen({ id, at }: { id: string; at?: number }) {
   // Leaving the episode: the player saves its last position in its own cleanup; write it to disk
   // right after (next tick, once every cleanup ran) instead of waiting for the debounce.
   useEffect(() => () => void setTimeout(() => flushPendingWrites().catch(() => {}), 0), []);
+  // The screen is being removed (back, replaced by another episode): silent from that moment, not
+  // only once the native screen is gone after its exit transition.
+  const navigation = useNavigation();
+  useEffect(() => navigation.addListener('beforeRemove', () => playerRef.current?.stop()), [navigation]);
 
   // A finished episode starts over; a rewatch in progress (position saved again, not at the end)
   // resumes. `done` stays true for the "vu" badge, so it can't decide this alone.
@@ -203,7 +207,15 @@ function WatchScreen({ id, at }: { id: string; at?: number }) {
     else if (kind === 'enable-engine') void enableTorrentEngine();
     else src.retryAll();
   };
-  const nextProp = next ? { label: episodeLabel(next), onPlay: () => router.replace(`/watch/${next.id}`) } : null;
+  // Next episode (player pill / countdown, "À suivre" card): this episode stops before the
+  // navigation, and repeated taps within a second navigate once.
+  const lastNext = useRef(0);
+  const goNext = () => {
+    if (!next || tappedRecently(lastNext)) return;
+    playerRef.current?.stop();
+    router.replace(`/watch/${next.id}`);
+  };
+  const nextProp = next ? { label: episodeLabel(next), onPlay: goNext } : null;
   const sourceLabel = (() => {
     if (!src.current) return 'Sources';
     // Addon names often already carry the quality ("HLS 720p"): don't repeat it.
@@ -285,7 +297,7 @@ function WatchScreen({ id, at }: { id: string; at?: number }) {
       )}
 
       {next && (
-        <Press onPress={() => router.replace(`/watch/${next.id}`)} style={styles.next} accessibilityLabel={`Suivant : ${episodeLabel(next)}`}>
+        <Press onPress={goNext} style={styles.next} accessibilityLabel={`Suivant : ${episodeLabel(next)}`}>
           <Cover palette={series.palette} image={series.image} width={104} height={60} radius={8} />
           <View style={{ flex: 1, gap: 3 }}>
             <Txt v="caption" color={C.accentText}>À suivre</Txt>
@@ -415,6 +427,14 @@ function WatchScreen({ id, at }: { id: string; at?: number }) {
       </View>
     </View>
   );
+}
+
+/** True when the last accepted tap was less than a second ago; otherwise records this one. */
+function tappedRecently(last: { current: number }) {
+  const now = Date.now();
+  if (now - last.current < 1000) return true;
+  last.current = now;
+  return false;
 }
 
 /** App Store flavor: no extension / debrid / torrent screens to send the user to. */
