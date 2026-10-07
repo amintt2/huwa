@@ -34,6 +34,11 @@ export type Settings = {
   subLangs: LangList;
   /** Dub languages, primary first (used when watchMode is 'dub'). */
   dubLangs: LangList;
+  /**
+   * Dub mode, no dub for an episode: play the best other version (VOSTFR…) without asking, with a
+   * message saying so (otherwise a popup asks, see addons/dub.ts).
+   */
+  dubAutoFallback: boolean;
   /** No subtitle in the primary language but one in another: translate it on the device. */
   autoTranslateSubs: boolean;
   /** Reads manhwa at all (bridge prompts and manhwa suggestions). */
@@ -64,6 +69,7 @@ export const DEFAULT_SETTINGS: Settings = {
   watchMode: 'sub',
   subLangs: ['fr', 'en'],
   dubLangs: ['fr'],
+  dubAutoFallback: false,
   autoTranslateSubs: true,
   readsManhwa: true,
   mangaLangs: ['fr', 'en'],
@@ -105,6 +111,7 @@ function sanitize(raw: unknown): Settings {
     watchMode: pick('watchMode', (x) => x === 'sub' || x === 'dub'),
     subLangs: pick('subLangs', langs),
     dubLangs: pick('dubLangs', langs),
+    dubAutoFallback: pick('dubAutoFallback', bool),
     autoTranslateSubs: pick('autoTranslateSubs', bool),
     readsManhwa: pick('readsManhwa', bool),
     mangaLangs: pick('mangaLangs', langs),

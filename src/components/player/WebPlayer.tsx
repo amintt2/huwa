@@ -22,7 +22,7 @@ import { Txt, type IconName } from '@/components/ui';
 import { C, F, R, S } from '@/theme/tokens';
 
 import { useSkipTimes } from './aniskip';
-import { AUTO_NEXT_SECONDS, NextCard, Pill } from './overlays';
+import { AUTO_NEXT_SECONDS, NextCard, Pill, type NextInfo } from './overlays';
 import type { PlayerHandle } from './Player';
 import { getPrefs, setPrefs, usePrefs } from './prefs';
 import { BRIDGE_SCRIPT, commandScript, parseBridgeMessage } from './web-bridge';
@@ -40,7 +40,7 @@ export type WebPlayerProps = {
   onEnd?: () => void;
   /** The page could not be loaded (the parent can try another source). */
   onError?: (message: string) => void;
-  next?: { label: string; onPlay: () => void } | null;
+  next?: NextInfo | null;
   malId?: number | null;
   episodeNumber?: number;
   notice?: string;
@@ -251,7 +251,8 @@ export function WebPlayer({
 
   // ---------- auto next ----------
   useEffect(() => {
-    if (countdown === null) return;
+    // A warning card (next episode not in the user's language) waits for an answer.
+    if (countdown === null || cb.current.next?.warning) return;
     if (countdown <= 0) {
       cb.current.next?.onPlay();
       return;
@@ -371,7 +372,7 @@ export function WebPlayer({
         )}
 
         {next && countdown !== null && (
-          <NextCard label={next.label} countdown={countdown} onCancel={() => setCountdown(null)} onPlay={() => next.onPlay()}
+          <NextCard label={next.label} countdown={countdown} onCancel={() => setCountdown(null)} onPlay={() => next.onPlay()} warning={next.warning}
             style={{ right: sideInset, bottom: full ? Math.max(insets.bottom, S.lg) + 8 : S.md }} />
         )}
 

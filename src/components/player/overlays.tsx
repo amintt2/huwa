@@ -8,6 +8,14 @@ import { C, F, R, S } from '@/theme/tokens';
 
 export const AUTO_NEXT_SECONDS = 10;
 
+/**
+ * The next episode lacks what the user watches (dub mode: no VF for it). The card asks instead of
+ * counting down: never a silent switch of language.
+ */
+export type NextWarning = { title: string; accept: string; onAccept: () => void };
+/** "Épisode suivant" of both players. */
+export type NextInfo = { label: string; onPlay: () => void; warning?: NextWarning | null };
+
 export function Pill({ icon, label, onPress, primary }: { icon: IconName; label: string; onPress: () => void; primary?: boolean }) {
   return (
     <Pressable
@@ -22,14 +30,38 @@ export function Pill({ icon, label, onPress, primary }: { icon: IconName; label:
   );
 }
 
-/** "Épisode suivant dans N s" card with Annuler / Lire maintenant. */
-export function NextCard({ label, countdown, onCancel, onPlay, style }: {
+/**
+ * "Épisode suivant dans N s" card with Annuler / Lire maintenant; with a `warning` ("Ép. 13 non
+ * disponible en VF"), no countdown: Annuler / the other version ("Regarder en VOSTFR").
+ */
+export function NextCard({ label, countdown, onCancel, onPlay, style, warning }: {
   label: string;
   countdown: number;
   onCancel: () => void;
   onPlay: () => void;
   style?: StyleProp<ViewStyle>;
+  warning?: NextWarning | null;
 }) {
+  if (warning) {
+    return (
+      <View style={[overlay.nextCard, style]} accessibilityLiveRegion="polite">
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+          <Ionicons name="language-outline" size={14} color={C.star} />
+          <Txt v="caption" color={C.star} numberOfLines={1} style={{ flex: 1 }}>{warning.title}</Txt>
+        </View>
+        <Txt v="label" numberOfLines={1}>{label}</Txt>
+        <View style={{ flexDirection: 'row', gap: S.sm }}>
+          <Pressable style={({ pressed }) => [overlay.cardBtn, { backgroundColor: 'rgba(255,255,255,0.12)' }, pressed && { opacity: 0.7 }]} onPress={onCancel} accessibilityRole="button">
+            <Text style={overlay.pillText}>Annuler</Text>
+          </Pressable>
+          <Pressable style={({ pressed }) => [overlay.cardBtn, { backgroundColor: C.accent, flex: 1 }, pressed && { opacity: 0.85 }]} onPress={warning.onAccept} accessibilityRole="button">
+            <Ionicons name="play" size={14} color={C.white} />
+            <Text style={overlay.pillText} numberOfLines={1}>{warning.accept}</Text>
+          </Pressable>
+        </View>
+      </View>
+    );
+  }
   return (
     <View style={[overlay.nextCard, style]}>
       <Txt v="caption" color={C.accentText} tabular>Épisode suivant dans {countdown} s</Txt>

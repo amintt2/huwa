@@ -34,14 +34,14 @@ export function cachedProbe(url: string): Probe | undefined {
   return cache.get(url);
 }
 
-type Head = { status: number; contentType: string | null; bytes: Uint8Array | null };
+export type Head = { status: number; contentType: string | null; bytes: Uint8Array | null };
 
 /**
  * XMLHttpRequest rather than fetch: RN's fetch only resolves once the whole body is read, so a
  * server that ignores `Range` would make us download the entire video. Here the request is
  * aborted as soon as the headers show a non-206 answer.
  */
-function readHead(url: string, headers: Record<string, string> | undefined, start = 0, end = PROBE_BYTES - 1, timeoutMs = TIMEOUT_MS): Promise<Head> {
+export function readHead(url: string, headers: Record<string, string> | undefined, start = 0, end = PROBE_BYTES - 1, timeoutMs = TIMEOUT_MS): Promise<Head> {
   return new Promise((resolve) => {
     const xhr = new XMLHttpRequest();
     let done = false;

@@ -15,7 +15,7 @@ import { Button, Txt } from '@/components/ui';
 import { isDemo } from '@/demo/flags';
 import { communityView, K_MIN, WEEK_MS } from '@/stats/community';
 import { DEMO_ADDONS, DEMO_COMMUNITY, DEMO_EVENTS } from '@/stats/demo';
-import { addonTable, describeStart, formatMs, formatPct, PATH_LABEL, PATHS, summarize, summarizeSwitches, SWITCH_REASON_LABEL, type Group as StatGroup, type SwitchReasonStat } from '@/stats/model';
+import { addonTable, describeStart, DUB_OUTCOME_LABEL, DUB_OUTCOMES, formatMs, formatPct, PATH_LABEL, PATHS, summarize, summarizeDubs, summarizeSwitches, SWITCH_REASON_LABEL, type Group as StatGroup, type SwitchReasonStat } from '@/stats/model';
 import { useCommunityStats } from '@/stats/share';
 import { resetStats, setCommunity, useStats } from '@/stats/store';
 import { C, S } from '@/theme/tokens';
@@ -55,6 +55,9 @@ export default function PlaybackStats() {
   const switches = useStats((s) => s.switches);
   const switchSum = useMemo(() => summarizeSwitches(switches ?? []), [switches]);
   const switchReasons = Object.entries(switchSum.byReason).sort((a, b) => b[1] - a[1]) as [SwitchReasonStat, number][];
+  const dubs = useStats((s) => s.dubs);
+  const dubSum = useMemo(() => summarizeDubs(dubs ?? []), [dubs]);
+  const dubRows = DUB_OUTCOMES.filter((o) => dubSum.counts[o]);
   const net = useCommunityStats();
   const network = communityView(demo && community ? DEMO_COMMUNITY : net.data);
   const [consent, setConsent] = useState(false);
@@ -157,6 +160,20 @@ export default function PlaybackStats() {
                     last
                   />
                 )}
+              </StatCard>
+            )}
+
+            {dubSum.starts + (dubSum.counts['track-miss'] ?? 0) > 0 && (
+              <StatCard
+                title="Version doublée"
+                footer="Mode « Doublés » : épisodes lancés avec une version doublée, ou sans (autre version, retour, source choisie à la main).">
+                <View style={styles.figures}>
+                  <Figure small value={formatPct(dubSum.hitRate)} label={`en version doublée · ${dubSum.starts} épisode${dubSum.starts > 1 ? 's' : ''}`} tone={C.success} />
+                  <Figure small value={formatMs(dubSum.hitMs)} label="pour trouver la VF (médiane)" />
+                </View>
+                {dubRows.map((o, i) => (
+                  <MetricRow key={o} label={DUB_OUTCOME_LABEL[o]} value={String(dubSum.counts[o])} last={i === dubRows.length - 1} />
+                ))}
               </StatCard>
             )}
 

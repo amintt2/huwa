@@ -257,6 +257,60 @@ export const SWITCH_REASON_LABEL: Record<SwitchReasonStat, string> = {
   'wrong-duration': 'mauvaise vidéo (durée)',
 };
 
+// ---------- dub mode (addons/dub.ts) ----------
+
+/**
+ * How an episode start went in dub mode:
+ *   hit            a dubbed source played
+ *   fallback       no dub, the user chose the other version (popup / next-episode card)
+ *   auto-fallback  no dub, the other version started by itself (setting)
+ *   refused        no dub, the user went back
+ *   manual         no dub, the user opened the sources menu
+ *   track-miss     a source said dubbed but its file had no track in the language (skipped)
+ */
+export type DubOutcome = 'hit' | 'fallback' | 'auto-fallback' | 'refused' | 'manual' | 'track-miss';
+export const DUB_OUTCOMES: DubOutcome[] = ['hit', 'fallback', 'auto-fallback', 'refused', 'manual', 'track-miss'];
+export const DUB_OUTCOME_LABEL: Record<DubOutcome, string> = {
+  hit: 'Version doublée trouvée',
+  fallback: 'Autre version choisie',
+  'auto-fallback': 'Autre version automatique',
+  refused: 'Retour sans regarder',
+  manual: 'Source choisie à la main',
+  'track-miss': 'Source sans la piste annoncée',
+};
+
+/** One dub-mode outcome. Numbers only: no title, no episode, no language. */
+export type DubEvent = {
+  at: number;
+  outcome: DubOutcome;
+  /** `hit`: the dub was confirmed by the file's tracks (header sniff or the player). */
+  verified?: boolean;
+  /** ms from the screen opening to the outcome. */
+  ms?: number;
+};
+
+export type DubSummary = {
+  /** Starts with an outcome (track misses are not starts). */
+  starts: number;
+  /** Share of starts that played a dub. */
+  hitRate?: number;
+  counts: Partial<Record<DubOutcome, number>>;
+  /** Median time to a dubbed source (hits). */
+  hitMs?: number;
+};
+
+export function summarizeDubs(list: DubEvent[]): DubSummary {
+  const counts: Partial<Record<DubOutcome, number>> = {};
+  for (const e of list) counts[e.outcome] = (counts[e.outcome] ?? 0) + 1;
+  const starts = list.filter((e) => e.outcome !== 'track-miss');
+  return {
+    starts: starts.length,
+    hitRate: starts.length ? (counts.hit ?? 0) / starts.length : undefined,
+    counts,
+    hitMs: median(list.filter((e) => e.outcome === 'hit' && e.ms != null).map((e) => e.ms!)),
+  };
+}
+
 /** Per-addon response of the stream search (keyed by manifest id, never by URL). */
 export type AddonStat = { name: string; ok: number; fail: number; /** last response times (ms) of successful answers */ ms: number[] };
 

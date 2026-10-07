@@ -1,10 +1,18 @@
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { router, Stack, useLocalSearchParams, useNavigation } from 'expo-router';
+import type { AudioTrack } from 'expo-video';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { StyleSheet, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { languageMismatch } from '@/addons/audio';
+import { dubName, languageMismatch, noDubTitle } from '@/addons/audio';
+import { nextDubState, recordSeriesDub, setDubChoice, showDubPrompt, useDubChoice, useKnownNoDub } from '@/addons/dub';
+import { releaseFamily, setTracks, verifiedAudio } from '@/addons/track-info';
+import { DubSheet } from '@/components/dub-sheet';
+import { audioVerdict, langCode, pickAudioTrack } from '@/components/player/engines/tracks';
+import type { NextDubReport } from '@/components/player/prefetch-next';
+import type { DubOutcome } from '@/stats/model';
+import { recordDub } from '@/stats/store';
 import { useAnimeIds } from '@/addons/ids';
 import type { NoSourceAction } from '@/addons/no-source';
 import { useSubtitles } from '@/addons/registry';
@@ -153,16 +161,82 @@ function WatchScreen({ id, at }: { id: string; at?: number }) {
   // Next episode buffered ahead: Wi-Fi and cellular "équilibré", not in Low Data Mode / "économie".
   const prewarmNext = usePrewarm();
   const [notice, setNotice] = useState('');
+  // ---- dub mode (addons/dub.ts): the search only plays dubbed sources while any exists ----
+  const dub = src.dub;
+  const dubLangs = langPrefs.dubLangs;
+  const [openedAt] = useState(() => Date.now());
+  /**
+   * The episode's dub outcome for the statistics, recorded when the screen closes (the last one
+   * wins: a "dubbed" source whose file had no dub track is not a hit). Track misses are recorded
+   * as they happen.
+   */
+  const dubStat = useRef<{ outcome: DubOutcome; verified?: boolean; ms: number } | null>(null);
+  const dubPhaseSeen = useRef(dub.phase);
+  useEffect(() => {
+    dubPhaseSeen.current = dub.phase;
+  }, [dub.phase]);
+  useEffect(
+    () => () => {
+      const o = dubStat.current ?? (dubPhaseSeen.current === 'missing' ? { outcome: 'refused' as const, ms: Date.now() - openedAt } : null);
+      if (o) recordDub({ at: Date.now(), ...o });
+    },
+    [openedAt],
+  );
+  const noteDubStat = (outcome: DubOutcome, verified?: boolean) => {
+    if (outcome === 'track-miss') return recordDub({ at: Date.now(), outcome, ms: Date.now() - openedAt });
+    if (dubStat.current?.outcome !== outcome) dubStat.current = { outcome, verified, ms: Date.now() - openedAt };
+  };
+  const verifiedNow = dub.mode && src.current ? verifiedAudio(src.trackKeysOf(src.current), releaseFamily(src.current)) : null;
+  const playingUrl = !!(src.url || src.web);
+  const dubOutcome: DubOutcome | null = !dub.mode || offline || !playingUrl
+    ? null
+    : !src.auto
+      ? dub.choice === 'menu' ? 'manual' : null
+      : dub.playing
+        ? 'hit'
+        : dub.phase === 'fallback'
+          ? dub.choice === 'fallback' ? 'fallback' : 'auto-fallback'
+          : null;
+  const dubVerified = !!verifiedNow?.langs.some((l) => dubLangs.includes(l));
+  useEffect(() => {
+    if (!dubOutcome) return;
+    noteDubStat(dubOutcome, dubOutcome === 'hit' ? dubVerified : undefined);
+    if (dubOutcome === 'hit') recordSeriesDub(series.id, episode.number, true);
+    // Once per outcome (the verification may arrive later: kept as first seen).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dubOutcome]);
+  // No dub once every addon answered: remembered for the series (the next episode asks sooner).
+  const noDubFound = dub.mode && !offline && (dub.phase === 'missing' || (dub.phase === 'fallback' && !dub.playing)) && src.pending === 0;
+  useEffect(() => {
+    if (noDubFound) recordSeriesDub(series.id, episode.number, false);
+  }, [noDubFound, series.id, episode.number]);
+  const knownNoDub = useKnownNoDub(series.id, episode.number);
+  const promptVisible = !offline && showDubPrompt(dub.phase, dub.choice);
+  /** Runs once the popup is gone (iOS presents one modal at a time: the sources menu waits). */
+  const afterPrompt = useRef<(() => void) | null>(null);
+  const chooseFallback = () => setDubChoice(series.id, episode.number, 'fallback');
+  const chooseSources = () => {
+    afterPrompt.current = () => setMenuOpen(true);
+    setDubChoice(series.id, episode.number, 'menu');
+  };
+  const chooseBack = () => {
+    noteDubStat('refused');
+    setDubChoice(series.id, episode.number, 'back');
+    router.back();
+  };
+  const noDubLine = `${noDubTitle(dub.lang)} pour cet épisode`;
   // The chosen source doesn't match the user's languages (e.g. no VOSTFR: Spanish audio, English
   // subtitles only): say it instead of letting them find out. Once per source, then a banner.
   // Full tracks the player knows of (embedded in the file once loaded, translation): per source.
   const [playerSubs, setPlayerSubs] = useState<{ key?: string; langs: string[] }>({ langs: [] });
   const knownSubLangs = [...subtitles.map((x) => x.lang), ...(playerSubs.key === src.currentKey ? playerSubs.langs : [])];
-  const mismatch = src.current && (src.url || src.web) ? languageMismatch(src.current, langPrefs, knownSubLangs) : null;
+  const mismatch = src.current && (src.url || src.web) ? languageMismatch(src.current, langPrefs, knownSubLangs, verifiedNow) : null;
   const [mismatchShown, setMismatchShown] = useState<string | undefined>();
   if (mismatch && src.currentKey && mismatchShown !== src.currentKey) {
     setMismatchShown(src.currentKey);
-    setNotice(mismatch);
+    // Dub mode: the user chose this version (popup, menu); the setting's automatic switch says so.
+    if (!dub.mode) setNotice(mismatch);
+    else if (src.auto && dub.phase === 'fallback' && dub.choice !== 'fallback') setNotice(`${noDubTitle(dub.lang)} : lecture en ${dub.fallback ?? 'VO'}`);
   }
   useEffect(() => {
     if (!notice) return;
@@ -212,6 +286,30 @@ function WatchScreen({ id, at }: { id: string; at?: number }) {
     // Preload the next episode from mid-episode (or the last 5 minutes of a long one).
     if (!prefetchArmed && duration > 0 && (position / duration > 0.5 || duration - position < 300)) setPrefetchArmed(true);
   };
+  // The loaded file's audio tracks are the final check: a "dubbed" source without a track in the
+  // dub language is skipped like a broken one (before playback starts: the load has not played
+  // yet), and what the file holds is remembered for its release (next episode).
+  const [offlineDub, setOfflineDub] = useState(false);
+  const onAudioTracks = (uri: string, tracks: AudioTrack[]) => {
+    if (langPrefs.watchMode !== 'dub') return;
+    if (offline) {
+      setOfflineDub(pickAudioTrack(tracks, dubLangs) >= 0);
+      return;
+    }
+    const cur = src.current;
+    const key = src.currentKey;
+    if (!cur || !key || uri !== src.url) return;
+    const keys = src.trackKeysOf(cur);
+    const audio = tracks.map((t) => ({ lang: langCode(t.language), name: t.label || t.name || undefined }));
+    if (keys[0]) setTracks(keys[0], { audio, subs: [], complete: true, via: 'player', at: Date.now() }, releaseFamily(cur));
+    if (!src.auto || !dub.playing) return;
+    const v = audioVerdict(tracks);
+    if (v.conclusive && !dubLangs.some((l) => v.langs.includes(l))) {
+      noteDubStat('track-miss');
+      ctl.onFailed(key);
+      src.markBad(key, `Pas de piste audio en ${dubName(dub.lang)}`, true);
+    }
+  };
   const onPlayerError = (message: string) => {
     if (!currentRef.current) return;
     ctl.onFailed(currentRef.current);
@@ -227,13 +325,41 @@ function WatchScreen({ id, at }: { id: string; at?: number }) {
   };
   // Next episode (player pill / countdown, "À suivre" card): this episode stops before the
   // navigation, and repeated taps within a second navigate once.
+  // Dub mode: the next episode's search (prefetch) or what the series taught says whether it has a
+  // dub; without one the card / countdown asks ("Ép. 13 non disponible en VF") — never a silent
+  // switch of language.
+  const [nextDub, setNextDub] = useState<NextDubReport | null>(null);
+  const nextChoice = useDubChoice(series.id, next?.number ?? -1);
+  const nextKnownNoDub = useKnownNoDub(series.id, next?.number ?? -1);
+  const nextState = !next || langPrefs.watchMode !== 'dub'
+    ? 'unknown'
+    : nextDub
+      ? nextDubState(nextDub.phase, nextChoice)
+      : nextKnownNoDub && nextChoice !== 'fallback' ? 'missing' : 'unknown';
+  const nextFallback = nextDub?.fallback ?? (langPrefs.subLangs[0] === 'fr' ? 'VOSTFR' : 'VO');
+  const [nextAsk, setNextAsk] = useState(false);
   const lastNext = useRef(0);
-  const goNext = () => {
-    if (!next || tappedRecently(lastNext)) return;
+  const leaveForNext = () => {
+    if (!next) return;
     playerRef.current?.stop();
     router.replace(`/watch/${next.id}`);
   };
-  const nextProp = next ? { label: episodeLabel(next), onPlay: goNext } : null;
+  const acceptNext = () => {
+    if (!next) return;
+    setDubChoice(series.id, next.number, 'fallback');
+    setNextAsk(false);
+    leaveForNext();
+  };
+  /** "Ép. 13 non disponible en VF": the next episode has no dub (asked before leaving). */
+  const nextWarnTitle = next && nextState === 'missing' && !langPrefs.dubAutoFallback ? `Ép. ${next.number} non disponible en ${dubName(dub.lang)}` : null;
+  const goNext = () => {
+    if (!next || tappedRecently(lastNext)) return;
+    if (nextWarnTitle) return setNextAsk(true);
+    leaveForNext();
+  };
+  const nextProp = next
+    ? { label: episodeLabel(next), onPlay: goNext, warning: nextWarnTitle ? { title: nextWarnTitle, accept: `Regarder en ${nextFallback}`, onAccept: acceptNext } : null }
+    : null;
   const sourceLabel = (() => {
     if (!src.current) return 'Sources';
     // Addon names often already carry the quality ("HLS 720p"): don't repeat it.
@@ -333,6 +459,12 @@ function WatchScreen({ id, at }: { id: string; at?: number }) {
           <View style={{ flex: 1, gap: 3 }}>
             <Txt v="caption" color={C.accentText}>À suivre</Txt>
             <Txt v="label" numberOfLines={2}>{episodeLabel(next)}</Txt>
+            {!!nextWarnTitle && (
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 5 }}>
+                <Ionicons name="language-outline" size={13} color={C.star} />
+                <Txt v="small" color={C.star} numberOfLines={1} style={{ flex: 1 }}>{nextWarnTitle}</Txt>
+              </View>
+            )}
           </View>
           <View style={styles.nextPlay} accessibilityElementsHidden importantForAccessibility="no-hide-descendants">
             <Ionicons name="play" size={18} color={C.white} style={{ marginLeft: 2 }} />
@@ -398,10 +530,16 @@ function WatchScreen({ id, at }: { id: string; at?: number }) {
             episodeNumber={episode.number}
             notice={notice}
             sourceSearch={sourceSearch}
-            emptyTitle={noSource?.title}
+            emptyTitle={dub.phase === 'missing' ? noDubLine : noSource?.title}
             emptyText={
-              noSource
+              dub.phase === 'missing'
+                ? dub.fallback ? `Il existe une version ${dub.fallback}. Tu peux aussi choisir une source.` : 'Choisis une source dans le menu.'
+                : noSource
                 ? noSource.message
+                : dub.checking
+                  ? 'Vérification de la piste audio…'
+                  : dub.phase === 'searching'
+                    ? `Recherche de la ${dubName(dub.lang)}…`
                 : src.racing
                   ? 'Test de la vitesse des sources…'
                   : src.peerRacing
@@ -413,7 +551,9 @@ function WatchScreen({ id, at }: { id: string; at?: number }) {
                       : 'Aucune source lisible. Ouvre le menu des sources.'
             }
             emptyAction={
-              noSource?.action && !(isStoreBuild && STORE_HIDDEN_ACTIONS.has(noSource.action.kind))
+              dub.phase === 'missing'
+                ? dub.fallback ? { label: `Regarder en ${dub.fallback}`, onPress: chooseFallback } : { label: 'Choisir une source', onPress: () => setMenuOpen(true) }
+                : noSource?.action && !(isStoreBuild && STORE_HIDDEN_ACTIONS.has(noSource.action.kind))
                 ? { label: noSource.action.label, onPress: () => onNoSourceAction(noSource.action!.kind) }
                 : null
             }
@@ -433,10 +573,40 @@ function WatchScreen({ id, at }: { id: string; at?: number }) {
             onUpgradeDeferred={ctl.onDeferred}
             monitor={monitor}
             sourceInfo={sourceInfo}
+            audioLangs={offline ? (offlineDub ? dubLangs : null) : dub.playing ? dubLangs : null}
+            onAudioTracks={onAudioTracks}
           />
         )}
       </View>
       <SourcesMenu src={src} visible={menuOpen} onClose={() => setMenuOpen(false)} />
+      <DubSheet
+        visible={promptVisible}
+        title={noDubLine}
+        message={`Aucune source en ${dubName(dub.lang)} n’a été trouvée${knownNoDub ? ' (comme pour l’épisode précédent)' : ''}.${dub.fallback ? ` Tu peux le regarder en ${dub.fallback}.` : ''}`}
+        fallback={dub.fallback}
+        onFallback={chooseFallback}
+        onSources={chooseSources}
+        onBack={chooseBack}
+        // Swiped away: decided later (the player offers the same choices).
+        onClose={() => setDubChoice(series.id, episode.number, 'menu')}
+        onClosed={() => {
+          const run = afterPrompt.current;
+          afterPrompt.current = null;
+          run?.();
+        }}
+      />
+      {next && (
+        <DubSheet
+          visible={nextAsk && !!nextWarnTitle}
+          title={nextWarnTitle ?? ''}
+          message={`Cet épisode n’existe pas en ${dubName(dub.lang)} dans tes sources.`}
+          fallback={nextFallback}
+          onFallback={acceptNext}
+          onBack={() => setNextAsk(false)}
+          backLabel="Annuler"
+          onClose={() => setNextAsk(false)}
+        />
+      )}
       {dlOpen && (
         <DownloadSheet
           series={series}
@@ -447,7 +617,7 @@ function WatchScreen({ id, at }: { id: string; at?: number }) {
           subtitles={subtitlesForDownload}
         />
       )}
-      {next && <PrefetchNext seriesId={series.id} episode={next.number} armed={prefetchArmed} buffer={prewarmNext} />}
+      {next && <PrefetchNext seriesId={series.id} episode={next.number} armed={prefetchArmed} buffer={prewarmNext} onDub={setNextDub} />}
       {/* Hidden, not unmounted, in fullscreen: keeps the comment draft and scroll position. */}
       <View style={{ flex: 1, display: full ? 'none' : 'flex' }}>
         <CommentsPanel

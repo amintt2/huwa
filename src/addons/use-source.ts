@@ -22,6 +22,13 @@
 // a debrid service, no direct link), the best few (language first) are probed in parallel by the
 // engine — metadata + answering peers, no piece — and the first healthy swarm is started; the
 // others are cancelled at once (src/torrent/peer-race.ts, use-peer-race.ts).
+// Dub mode ("Doublés", see ./dub.ts): while a dubbed candidate (named VF / MULTI / untagged, or
+// with a French track once its tracks are known: ./track-info.ts) is alive, the race and the
+// torrent probes only spend their budget on those. A candidate only probably dubbed (MULTI,
+// untagged) has its tracks checked before it starts (the race's own probe bytes for a link, a
+// header sniff through the engine for a torrent). With no dub left, the other versions are
+// probed but nothing starts until the user chose (popup on the watch screen) — never a silent
+// switch of language.
 import { useEffect, useMemo, useRef, useState } from 'react';
 
 import { useSettings } from '@/settings/settings';
@@ -46,10 +53,13 @@ import {
 } from '@/torrent/peer-race';
 import { peerClock, usePeerRace, type PeerTarget } from '@/torrent/use-peer-race';
 
-import { langScore } from './audio';
+import { classifyDub, detectLangs, DUB_MAYBE, fallbackName, langScore, NOT_DUBBED } from './audio';
+import { DUB_WAIT_MS, dubPhase, dubWaitLeft, holdsStart, KNOWN_NO_DUB_WAIT_MS, raceCandidates, splitDub, useDubChoice, useKnownNoDub } from './dub';
+import { httpKey, linkFamily, releaseFamily, sniffFailed, torrentKey, trackEntry, useTrackInfo, verifiedAudio } from './track-info';
+import { inspectRaceBody, setTorrentOpener, sniffHttp, sniffTorrent } from './track-sniff';
 import { isExternal, isPlayable, isTorrent, isYouTube, type AddonStream } from './protocol';
 import { decideStart, estimateBitrateMbps, speedLabel, speedVerdict, type RaceCandidate, type Speed } from './race';
-import { raceClock, remeasure, useRace, type RaceEntry } from './race-runner';
+import { cachedRace, raceClock, remeasure, setBodyInspector, useRace, type RaceEntry } from './race-runner';
 import { EXEMPT_NAME, episodesInName, type CtlCandidate, type CurrentSource } from './source-controller';
 import { detectQuality, rankStreams, streamKey, type Quality } from './quality';
 import { classifyNoSource } from './no-source';
@@ -71,6 +81,18 @@ const NO_SUBS: NonNullable<AddonStream['subtitles']> = [];
 const RACE_TORRENTS = 2;
 
 const isLoopback = (u: string) => /^https?:\/\/(127\.|localhost[:/]|\[::1\])/i.test(u);
+
+// The race's probe bytes tell a link's audio tracks; the engine's pre-warm opens a torrent file
+// for a header sniff (./track-sniff.ts).
+setBodyInspector((url, headers, body) => inspectRaceBody(url, headers, body));
+setTorrentOpener(async (t) => (await prewarmTorrent({ infoHash: t.infoHash, fileIdx: t.fileIdx, sources: t.sources, name: t.name }))?.url ?? null);
+
+/** Probably-dubbed candidates (MULTI, untagged) whose tracks said "no dub": after this many, the untagged ones are not tried. */
+const MAX_MAYBE_REJECTS = 3;
+/** Probably-dubbed torrents sniffed ahead, in parallel (besides the pick itself). */
+const SNIFF_AHEAD = 2;
+/** Epoch ms (kept out of the render body for the React Compiler). */
+const wallClock = () => Date.now();
 
 /**
  * Torrent race winners by episode (`seriesId:episode`), from the pre-search or an earlier watch:
@@ -99,11 +121,16 @@ function dropKey<T>(rec: Record<string, T>, k: string): Record<string, T> {
 export function useSource(seriesId: string, episode: number, { enabled = true, preview = false, engineAvailable = false }: SourceOptions = {}) {
   const { streams, infos, pending, failed, asked, refreshed, refresh } = useStreams(seriesId, episode, enabled);
   const prefs = useAddonPrefs();
-  const { watchMode, subLangs, dubLangs, autoTranslateSubs } = useSettings();
+  const { watchMode, subLangs, dubLangs, autoTranslateSubs, dubAutoFallback } = useSettings();
   const langPrefs = useMemo(
     () => ({ watchMode, subLangs, dubLangs, translateSubs: autoTranslateSubs }),
     [watchMode, subLangs, dubLangs, autoTranslateSubs],
   );
+  const dubMode = watchMode === 'dub';
+  // Track lists learned (header sniffs, the player): re-rank with them.
+  const trackVer = useTrackInfo();
+  const dubChoice = useDubChoice(seriesId, episode);
+  const noDubKnown = useKnownNoDub(seriesId, episode);
   const addonList = useAddons();
   const resolverLabel = useTorrentResolver();
   const cached = useCachedHashes(streams.filter(isTorrent).map((s) => s.infoHash!));
@@ -117,6 +144,22 @@ export function useSource(seriesId: string, episode: number, { enabled = true, p
   // Re-render when the engine is switched on/off or "Wi-Fi only" changes (`canProbeTorrents`).
   useTorrentSettings();
   const peerScope = `${seriesId}:${episode}`;
+  const [resolved, setResolved] = useState<Record<string, Resolution>>({});
+
+  /** Keys under which a stream's file tracks are known (./track-info.ts). */
+  const trackKeysOf = (s: AddonStream): string[] => {
+    if (isTorrent(s)) {
+      const keys = [torrentKey(s.infoHash!, s.fileIdx, episode)];
+      const u = resolved[streamKey(s)]?.url;
+      if (u && !isLoopback(u)) keys.push(httpKey(u));
+      return keys;
+    }
+    return s.url ? [httpKey(s.url)] : [];
+  };
+  /** Audio languages of the file, when known (dub mode only: they override the release name). */
+  const verifiedOf = (s: AddonStream) => (dubMode ? verifiedAudio(trackKeysOf(s), releaseFamily(s)) : null);
+  // Language fit (VF / VOSTFR… per the user's preferences), lower is better.
+  const langOf = (s: AddonStream) => langScore(s, langPrefs, verifiedOf(s));
 
   const ranked = useMemo(
     () => rankStreams(streams, {
@@ -124,15 +167,15 @@ export function useSource(seriesId: string, episode: number, { enabled = true, p
       addonOrder: addonList.map((a) => a.manifest.id),
       canResolveTorrents: !!resolverLabel,
       cached,
-      lang: (s) => langScore(s, langPrefs),
+      lang: langOf,
       probed,
     }),
-    [streams, prefs.preferredQuality, addonList, resolverLabel, cached, probed, langPrefs],
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [streams, prefs.preferredQuality, addonList, resolverLabel, cached, probed, langPrefs, trackVer],
   );
 
   const [manual, setManual] = useState<string | undefined>();
   const [bad, setBad] = useState<string[]>([]);
-  const [resolved, setResolved] = useState<Record<string, Resolution>>({});
   /** Auto source handed to the player: kept until it fails or is upgraded. */
   const [locked, setLocked] = useState<string | undefined>();
   /**
@@ -168,8 +211,6 @@ export function useSource(seriesId: string, episode: number, { enabled = true, p
   };
   const headersOf = (s: AddonStream) => s.behaviorHints?.proxyHeaders?.request;
 
-  // Language fit (VF / VOSTFR… per the user's preferences), lower is better.
-  const langOf = (s: AddonStream) => langScore(s, langPrefs);
   // Quality score, higher is better.
   const qualityOf = (s: AddonStream) => {
     const pref = prefs.preferredQuality;
@@ -190,17 +231,67 @@ export function useSource(seriesId: string, episode: number, { enabled = true, p
     // Language, then quality, then the ranking (stable sort).
     return list.sort((a, b) => langOf(a) - langOf(b) || qualityOf(b) - qualityOf(a));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [ranked, bad, suspendedKeys, resolverLabel, cached, probed, prefs.preferredQuality, langPrefs]);
+  }, [ranked, bad, suspendedKeys, resolverLabel, cached, probed, prefs.preferredQuality, langPrefs, trackVer]);
+
+  // ---- dub mode: dubbed candidates first, the others only once there is none ----
+  // Torrents whose probe found nothing (no metadata, no peer) count as dead for the dub decision.
+  const [deadSwarms, setDeadSwarms] = useState<{ scope: string; keys: string[] }>({ scope: peerScope, keys: [] });
+  const deadSwarmKeys = deadSwarms.scope === peerScope ? deadSwarms.keys : [];
+  /** Probably-dubbed candidates (by name) whose tracks showed no dub. */
+  const rejectedMaybes = dubMode
+    ? candidates.filter((s) => classifyDub(s, dubLangs).tier === 'maybe' && verifiedOf(s) && langOf(s) >= NOT_DUBBED).length
+    : 0;
+  const isDubbed = (s: AddonStream) => {
+    const score = langOf(s);
+    if (score >= NOT_DUBBED) return false;
+    // Several untagged releases checked without a dub: the remaining untagged ones are not tried.
+    return !(score === DUB_MAYBE && rejectedMaybes >= MAX_MAYBE_REJECTS && !verifiedOf(s) && !detectLangs(s).implied.length);
+  };
+  const aliveNow = (s: AddonStream) => {
+    const k = streamKey(s);
+    const u = raceUrlOf(s);
+    return !(u && cachedRace(u)?.alive === false) && !wrongKeys.includes(k) && !deadSwarmKeys.includes(k);
+  };
+  const { dub: dubLive, other: otherLive } = dubMode ? splitDub(candidates, isDubbed, aliveNow) : { dub: [], other: [] };
+  const [mountedAt] = useState(() => Date.now());
+  /** Clock of the dub decision: moved by the timer below when the wait for slow addons ends. */
+  const [phaseNow, setPhaseNow] = useState(mountedAt);
+  const phaseInput = {
+    dubMode,
+    choice: dubChoice,
+    autoFallback: dubAutoFallback,
+    dubAlive: dubLive.length,
+    verifying: false,
+    addonsPending: pending,
+    elapsedMs: phaseNow - mountedAt,
+    knownNoDub: noDubKnown,
+    fallbacks: otherLive.length,
+  };
+  const phase = dubPhase(phaseInput);
+  // Waiting for slow addons before saying there is no dub: re-evaluate when the wait ends.
+  const phaseWaits = dubWaitLeft(phaseInput) > 0;
+  useEffect(() => {
+    if (!phaseWaits) return;
+    // From the screen's opening (the wait may start once the first other versions arrived).
+    const left = mountedAt + (noDubKnown ? KNOWN_NO_DUB_WAIT_MS : DUB_WAIT_MS) - wallClock();
+    const t = setTimeout(() => setPhaseNow(wallClock()), Math.max(0, left) + 20);
+    return () => clearTimeout(t);
+  }, [phaseWaits, noDubKnown, mountedAt]);
+  /** Only dubbed candidates compete (race, torrent probes, start). */
+  const restrictDub = phase === 'dub';
+  /** No dub (yet): the other versions may be measured, but none starts before the user chose. */
+  const holdOthers = dubMode && holdsStart(phase);
+  const raceSet = raceCandidates(candidates, phase, isDubbed);
 
   // ---- cached torrents at the top: resolved ahead (debrid only) to be measured too ----
   const torrentKeys = enabled
-    ? packKeys(candidates.filter((s) => isTorrent(s) && cachedOf(s) === true).slice(0, RACE_TORRENTS).map(streamKey))
+    ? packKeys(raceSet.filter((s) => isTorrent(s) && cachedOf(s) === true).slice(0, RACE_TORRENTS).map(streamKey))
     : '';
   useEffect(() => {
     if (!torrentKeys || budget.max === 0) return;
     const ctrl = new AbortController();
     for (const k of unpackKeys(torrentKeys)) {
-      const s = candidates.find((x) => streamKey(x) === k);
+      const s = raceSet.find((x) => streamKey(x) === k);
       if (!s || resolved[k]) continue;
       resolveTorrentViaDebrid(
         { infoHash: s.infoHash!, fileIdx: s.fileIdx, filename: s.behaviorHints?.filename, sources: s.sources, episode },
@@ -214,7 +305,7 @@ export function useSource(seriesId: string, episode: number, { enabled = true, p
   }, [torrentKeys, budget.max]);
 
   // ---- the race ----
-  const entries: RaceEntry[] = candidates.flatMap((s) => {
+  const entries: RaceEntry[] = raceSet.flatMap((s) => {
     const u = raceUrlOf(s);
     return u ? [{ url: u, headers: headersOf(s) }] : [];
   });
@@ -246,12 +337,12 @@ export function useSource(seriesId: string, episode: number, { enabled = true, p
 
   // ---- pool: safe sources first (direct link, cached torrent), dead links out ----
   const pool = useMemo(() => {
-    const alive = candidates.filter((s) => !deadKeys.has(streamKey(s)) && !wrongKeys.includes(streamKey(s)));
+    const alive = raceSet.filter((s) => !deadKeys.has(streamKey(s)) && !wrongKeys.includes(streamKey(s)));
     // Only hosted players: the best of them (quality, then addon priority).
-    const web = alive.length ? [] : ranked.filter((s) => !!autoWebPlayerUrl(s, probed) && !bad.includes(streamKey(s)) && !probing(s));
+    const web = alive.length || restrictDub ? [] : ranked.filter((s) => !!autoWebPlayerUrl(s, probed) && !bad.includes(streamKey(s)) && !probing(s));
     return alive.some(safe) ? alive.filter(safe) : alive.length ? alive : web;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [candidates, deadKeys, ranked, probed, bad, wrongKeys]);
+  }, [candidates, deadKeys, ranked, probed, bad, wrongKeys, restrictDub, trackVer]);
 
   const binge = lastBinge.get(seriesId);
   const [tick, setTick] = useState(0);
@@ -300,8 +391,8 @@ export function useSource(seriesId: string, episode: number, { enabled = true, p
   const peerPool = peerWanted ? pool.filter(engineTorrent) : [];
   // Decided a moment ago for this episode (pre-search, previous visit): no new race.
   const recentWin = peerWins.get(peerScope);
-  // When this screen opened (the tap): a race decided before it is reused, one decided after is ours.
-  const [mountedAt] = useState(() => Date.now());
+  // `mountedAt` (when this screen opened, the tap): a race decided before it is reused, one
+  // decided after is ours.
   const reuse = peerWanted && !preview ? reusableWin(recentWin, mountedAt, peerPool.map(streamKey), bad.length) : undefined;
   const presearched = reuse ? peerPool.find((s) => streamKey(s) === reuse.key) : undefined;
   // A new round whenever a source failed (e.g. the winner would not start): the next best
@@ -363,6 +454,9 @@ export function useSource(seriesId: string, episode: number, { enabled = true, p
   // Wrong torrent (episode not inside): out of the pool, the next candidate gets probed.
   const newlyWrong = wrongTorrents(peer.probes).filter((k) => !wrongKeys.includes(k));
   if (newlyWrong.length) setWrong({ scope: peerScope, keys: [...wrongKeys, ...newlyWrong] });
+  // Dub mode: a dubbed torrent whose probe failed (no metadata / no peer) is not waited for.
+  const newlyDead = dubMode ? Object.keys(peer.probes).filter((k) => peer.probes[k]?.state === 'failed' && !deadSwarmKeys.includes(k)) : [];
+  if (newlyDead.length) setDeadSwarms({ scope: peerScope, keys: [...deadSwarmKeys, ...newlyDead] });
 
   // No verdict from the probes (none playable): the plain ranking, as before.
   const exhaustedKey = exhausted && exhausted !== 'widen' ? exhausted.key : undefined;
@@ -371,11 +465,54 @@ export function useSource(seriesId: string, episode: number, { enabled = true, p
     (peerDecision?.key ? pool.find((s) => streamKey(s) === peerDecision.key) : exhaustedKey ? pool.find((s) => streamKey(s) === exhaustedKey) : undefined);
   const peerPickKey = peerPick ? streamKey(peerPick) : undefined;
   useEffect(() => {
-    if (peerPickKey && peerOn) peerWins.set(peerScope, { key: peerPickKey, at: Date.now(), fileIdx: peer.probes[peerPickKey]?.fileIdx });
+    if (peerPickKey && peerOn) peerWins.set(peerScope, { key: peerPickKey, at: wallClock(), fileIdx: peer.probes[peerPickKey]?.fileIdx });
     // Recorded when the race decides (the probes of that moment).
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [peerPickKey, peerOn, peerScope]);
-  const auto = peerPick ?? (peerWaitMs || (peerOn && exhausted === 'widen') ? undefined : decision?.key ? pool.find((s) => streamKey(s) === decision.key) : undefined);
+  const autoPick = peerPick ?? (peerWaitMs || (peerOn && exhausted === 'widen') ? undefined : decision?.key ? pool.find((s) => streamKey(s) === decision.key) : undefined);
+
+  // ---- dub mode: check the tracks of a probably-dubbed pick before it starts ----
+  const engineFileOf = (s: AddonStream) => s.fileIdx ?? peer.probes[streamKey(s)]?.fileIdx ?? swarmCheck(s.infoHash!)?.fileIdx ?? undefined;
+  /** How the tracks of `s` can be read before it starts: 'http', 'engine', or null. */
+  const sniffWay = (s: AddonStream): 'http' | 'engine' | null => {
+    if (raceUrlOf(s)) return 'http';
+    if (engineTorrent(s) && canProbeTorrents() && prewarmOk) return 'engine';
+    return null;
+  };
+  const unverifiedMaybe = (s: AddonStream) => langOf(s) === DUB_MAYBE && !verifiedOf(s) && !!sniffWay(s) && !sniffFailed(trackKeysOf(s));
+  const pickNeedsCheck = !!autoPick && restrictDub && !manual && !lockedStream && unverifiedMaybe(autoPick);
+  // The pick, plus the next probably-dubbed torrents that answered their probe (checked in parallel).
+  const answered = (s: AddonStream) => ['healthy', 'weak'].includes(peer.probes[streamKey(s)]?.state ?? '');
+  const sniffList = enabled && restrictDub && !manual && !lockedStream
+    ? [
+        ...(pickNeedsCheck ? [autoPick!] : []),
+        ...peerPool.filter((s) => s !== autoPick && unverifiedMaybe(s) && sniffWay(s) === 'engine' && answered(s)).slice(0, SNIFF_AHEAD),
+      ]
+    : [];
+  const sniffKeys = packKeys(sniffList.map(streamKey));
+  useEffect(() => {
+    for (const s of sniffList) {
+      const family = releaseFamily(s);
+      const way = sniffWay(s);
+      if (way === 'http') void sniffHttp(raceUrlOf(s)!, headersOf(s), family);
+      else if (way === 'engine') {
+        const name = s.behaviorHints?.filename ?? s.title?.split('\n')[0];
+        void sniffTorrent(trackKeysOf(s)[0], { infoHash: s.infoHash!, fileIdx: engineFileOf(s), sources: s.sources, name }, family);
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sniffKeys]);
+  // What the race's own probe bytes taught about a link: shared with its release family (the next
+  // episode of the same release is known at once).
+  const learnedKeys = dubMode ? packKeys(raceSet.filter((s) => trackEntry(trackKeysOf(s)[0] ?? '')?.state === 'done').map(streamKey)) : '';
+  useEffect(() => {
+    for (const k of unpackKeys(learnedKeys)) {
+      const s = raceSet.find((x) => streamKey(x) === k);
+      if (s) linkFamily(trackKeysOf(s), releaseFamily(s));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [learnedKeys]);
+  const auto = holdOthers || pickNeedsCheck ? undefined : autoPick;
 
   const current = (manual ? ranked.find((s) => streamKey(s) === manual) : undefined) ?? lockedStream ?? auto;
   const currentKey = current ? streamKey(current) : undefined;
@@ -449,7 +586,7 @@ export function useSource(seriesId: string, episode: number, { enabled = true, p
   // Pre-search on an unmetered network: the race winner is pre-warmed (first pieces + container
   // index on disk), held while this pre-search lives, released when it goes (another target, the
   // tap: the watch screen then holds it).
-  const prewarm = presearchProbes && peerPick && engineTorrent(peerPick) ? peerPick : undefined;
+  const prewarm = presearchProbes && peerPick && auto === peerPick && engineTorrent(peerPick) ? peerPick : undefined;
   const prewarmKey = prewarm ? streamKey(prewarm) : undefined;
   useEffect(() => {
     if (!prewarm || !prewarmKey) return;
@@ -642,11 +779,28 @@ export function useSource(seriesId: string, episode: number, { enabled = true, p
     pending,
     failed,
     /** Links are being measured before the first one starts. */
-    racing: !current && race.probing.size > 0,
+    racing: !current && race.probing.size > 0 && phase !== 'missing',
     /** Torrent race: the engine is looking for peers before one torrent is started. */
-    peerRacing: !current && peerWaitMs > 0,
+    peerRacing: !current && peerWaitMs > 0 && phase !== 'missing',
     /** Playable candidates exist and one is about to be picked (race grace window, deadline). */
-    deciding: !current && pool.length > 0,
+    deciding: !current && pool.length > 0 && phase !== 'missing',
+    /**
+     * Dub mode (./dub.ts): where the search for a dubbed source stands, and what to offer when
+     * there is none (`fallback`: the name of the best other version, "VOSTFR"…).
+     */
+    dub: {
+      mode: dubMode,
+      phase,
+      choice: dubChoice,
+      lang: dubLangs[0] ?? 'fr',
+      fallback: otherLive[0] ? fallbackName(otherLive[0], subLangs, autoTranslateSubs) : null,
+      /** What plays is a dubbed (or probably dubbed) source. */
+      playing: !!current && dubMode && isDubbed(current),
+      /** A probably-dubbed source's tracks are being checked before it starts. */
+      checking: pickNeedsCheck,
+    },
+    /** Keys of what we know of a stream's file tracks (the player's list is recorded under them). */
+    trackKeysOf,
     /** Links measured / dead so far (sources menu summary). */
     raceStats: { measured: Object.keys(race.results).length, dead: deadKeys.size, enabled: budget.max > 0 },
     /** Addon status rows (not videos), see `infoKind`. */

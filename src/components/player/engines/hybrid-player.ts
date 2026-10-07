@@ -14,6 +14,7 @@ import './local-probe';
 import { decideEngine, type DeviceCaps, type Engine } from './policy';
 import { getEnginePref, setActiveEngine } from './prefs';
 import { cachedProbe, probeSource } from './probe';
+import { pickAudioTrack } from './tracks';
 
 type Listener = (...args: any[]) => void;
 type Subscription = { remove(): void };
@@ -1280,20 +1281,18 @@ export class HybridPlayer implements EventEmitter<VideoPlayerEvents> {
 
   /**
    * Default audio track from the language settings (Réglages → Langues): in "VF" mode the first
-   * dub language found, otherwise the file's default track (usually the original version).
-   * Subtitles are chosen by the subtitle controller of the Player, as for the native engine.
+   * dub language found (track language, else its title: "VF", "Français"), otherwise the file's
+   * default track (usually the original version). Right at load, before the first frame; the
+   * Player then confirms it for the source (`audioLangs`), for both engines. Subtitles are chosen
+   * by the subtitle controller of the Player, as for the native engine.
    */
   private pickDefaultAudio(tracks: MpvTrack[]) {
     const audio = tracks.filter((t) => t.type === 'audio');
     if (audio.length < 2) return;
     const { watchMode, dubLangs } = getSettings();
     if (watchMode !== 'dub') return;
-    for (const lang of dubLangs) {
-      const t = audio.find((a) => normLang(a.lang) === lang);
-      if (!t) continue;
-      if (!t.selected) this.audioTrack = toTrack(t);
-      return;
-    }
+    const i = pickAudioTrack(audio.map((a) => ({ lang: a.lang, name: a.title })), dubLangs);
+    if (i >= 0 && !audio[i].selected) this.audioTrack = toTrack(audio[i]);
   }
 
   private setDetail(codec: string, hwdec: string) {

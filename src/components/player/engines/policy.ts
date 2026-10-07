@@ -71,7 +71,7 @@ export function containerFromMime(contentType: string | null | undefined): Conta
   return 'unknown';
 }
 
-const ascii = (b: Uint8Array, at: number, n: number) => String.fromCharCode(...b.subarray(at, Math.min(b.length, at + n)));
+export const ascii = (b: Uint8Array, at: number, n: number) => String.fromCharCode(...b.subarray(at, Math.min(b.length, at + n)));
 
 function indexOfAscii(b: Uint8Array, s: string, from = 0, to = b.length): number {
   const first = s.charCodeAt(0);
@@ -83,7 +83,7 @@ function indexOfAscii(b: Uint8Array, s: string, from = 0, to = b.length): number
   return -1;
 }
 
-const u32 = (b: Uint8Array, at: number) => ((b[at] << 24) >>> 0) + (b[at + 1] << 16) + (b[at + 2] << 8) + b[at + 3];
+export const u32 = (b: Uint8Array, at: number) => ((b[at] << 24) >>> 0) + (b[at + 1] << 16) + (b[at + 2] << 8) + b[at + 3];
 
 const push = (list: string[], c: string | null | undefined) => {
   if (c && !list.includes(c)) list.push(c);
@@ -91,10 +91,10 @@ const push = (list: string[], c: string | null | undefined) => {
 
 // ---------- ISO-BMFF (MP4 / MOV) ----------
 
-type Box = { type: string; start: number; body: number; end: number };
+export type Box = { type: string; start: number; body: number; end: number };
 
 /** Boxes in [from, to) (truncated boxes included: `end` may lie beyond the buffer). */
-function boxes(b: Uint8Array, from: number, to: number): Box[] {
+export function boxes(b: Uint8Array, from: number, to: number): Box[] {
   const out: Box[] = [];
   let at = from;
   while (at + 8 <= Math.min(to, b.length)) {
@@ -113,7 +113,7 @@ function boxes(b: Uint8Array, from: number, to: number): Box[] {
   return out;
 }
 
-const child = (b: Uint8Array, box: Box | undefined, type: string) =>
+export const child = (b: Uint8Array, box: Box | undefined, type: string) =>
   box ? boxes(b, box.body, box.end).find((x) => x.type === type) : undefined;
 
 /** Video sample entry → codec tags. */
@@ -172,7 +172,7 @@ function esdsObjectType(b: Uint8Array, e: Box): number {
 }
 
 /** Audio sample entry → codec tag. */
-function audioEntry(b: Uint8Array, e: Box): string {
+export function audioEntry(b: Uint8Array, e: Box): string {
   const t = e.type;
   if (t === 'mp4a') {
     const oti = esdsObjectType(b, e);

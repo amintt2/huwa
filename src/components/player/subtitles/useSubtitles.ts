@@ -92,6 +92,7 @@ export function useSubtitleController({
   embedded,
   mediaKey,
   time = 0,
+  dubLangs,
 }: {
   external: ExternalSubtitle[];
   embedded: EmbeddedInput[];
@@ -99,9 +100,18 @@ export function useSubtitleController({
   mediaKey?: string;
   /** Player time (s): drives the translation window. */
   time?: number;
+  /**
+   * What plays is dubbed in these languages: only forced subtitles (signs, songs) in them are
+   * picked automatically, no translation. Null: the subtitled original (full subtitles), even in
+   * dub mode (a VOSTFR played because no dub exists). Undefined: the watch mode decides.
+   */
+  dubLangs?: string[] | null;
 }) {
   const prefs = useSubtitlePrefs();
-  const { subLangs, watchMode, autoTranslateSubs } = useSettings();
+  const settings = useSettings();
+  const { subLangs, autoTranslateSubs } = settings;
+  const watchMode = dubLangs === undefined ? settings.watchMode : dubLangs ? 'dub' : 'sub';
+  const autoLangs = watchMode === 'dub' ? (dubLangs ?? settings.dubLangs) : subLangs;
   const [locals, setLocals] = useState<LocalTrack[]>([]);
   const [userKey, setUserKey] = useState<string | undefined>();
   const [picking, setPicking] = useState(false);
@@ -134,8 +144,8 @@ export function useSubtitleController({
   const autoTranslated = !!trTrack && autoTranslateSubs && (trStatus === 'installed' || (trStatus === 'supported' && prompted === false));
 
   const autoKey = useMemo(
-    () => chooseTrack(autoTranslated ? tracks : baseTracks, { enabled: prefs.enabled, languages: subLangs, forcedOnly: watchMode === 'dub' }),
-    [tracks, baseTracks, autoTranslated, prefs.enabled, subLangs, watchMode],
+    () => chooseTrack(autoTranslated ? tracks : baseTracks, { enabled: prefs.enabled, languages: autoLangs, forcedOnly: watchMode === 'dub' }),
+    [tracks, baseTracks, autoTranslated, prefs.enabled, autoLangs, watchMode],
   );
   const key = userKey && (userKey === 'off' || tracks.some((t) => t.key === userKey)) ? userKey : autoKey;
   const selected = tracks.find((t) => t.key === key);

@@ -27,6 +27,8 @@ export type RawMeasure = {
   contentRange?: string | null;
   /** First bytes of the body (HTML sniffing), when read. */
   head?: Uint8Array | null;
+  /** The whole body read (the file's first bytes: its audio tracks, see addons/track-sniff.ts). */
+  body?: Uint8Array | null;
   /** Body bytes received. */
   bytes: number;
   /** Request start → response headers. */

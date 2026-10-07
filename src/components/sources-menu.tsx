@@ -4,6 +4,7 @@ import { useState } from 'react';
 import { Linking, StyleSheet, View } from 'react-native';
 
 import { detectLangs } from '@/addons/audio';
+import { verifiedAudio } from '@/addons/track-info';
 import { isTorrent, type AddonStream } from '@/addons/protocol';
 import { detectQuality, QUALITIES, streamKey, type Quality } from '@/addons/quality';
 import { qualityLabel, type useSource } from '@/addons/use-source';
@@ -14,6 +15,7 @@ import { EngineBadge } from '@/components/player/engines';
 import { Sheet, SheetLabel } from '@/components/sheet';
 import { Button, Chip, InfoPill, Press, Txt } from '@/components/ui';
 import { YouTubePlayer } from '@/components/youtube-player';
+import { langName } from '@/subtitles/lang';
 import { C, R, S, SHADOW } from '@/theme/tokens';
 
 type Source = ReturnType<typeof useSource>;
@@ -141,6 +143,7 @@ export function SourcesMenu({ src, visible, onClose }: { src: Source; visible: b
 function SourceRow({ s, src, active, onPress }: { s: AddonStream; src: Source; active: boolean; onPress: () => void }) {
   const st = src.stateOf(s);
   const torrent = isTorrent(s);
+  const audio = verifiedAudio(src.trackKeysOf(s));
   const cached = src.cachedOf(s);
   const web = src.webOf(s);
   const detail = [
@@ -152,6 +155,8 @@ function SourceRow({ s, src, active, onPress }: { s: AddonStream; src: Source; a
     st === 'youtube' && 'YouTube',
     st === 'external' && 'ouvre le navigateur',
     st === 'failed' && `échec${src.errorOf(s) ? ` : ${src.errorOf(s)}` : ''}`,
+    // The file's real audio tracks, once read (header sniff, the player).
+    audio?.langs.length && `audio : ${audio.langs.map((l) => langName(l).toLowerCase()).join(', ')}`,
   ].filter(Boolean).join(' · ');
   const speed = src.speedInfo(s);
   const dim = st === 'failed' || st === 'unusable' || speed?.speed === 'dead' || (st === 'needs-debrid' && !torrentEngineAvailable());

@@ -1,6 +1,8 @@
 // Huwa video player: expo-video (or libmpv for what it cannot play, see ./engines) + custom controls.
 // - external subtitles (ASS/SSA, SRT, WebVTT) drawn by ./subtitles (expo-video has no sidecar subtitle API)
-// - embedded audio / subtitle tracks (player.audioTrack / player.subtitleTrack), speed
+// - embedded audio / subtitle tracks (player.audioTrack / player.subtitleTrack), speed; a dubbed
+//   source starts on the dub language's audio track (`audioLangs`, MULTI files often default to
+//   Japanese) with only forced subtitles (signs / songs) in that language
 // - AniSkip opening / ending / recap segments: skip buttons during the segment, markers on the bar,
 //   "Épisode suivant" during the ending + cancellable countdown (fallbacks: +85 s, last 90 s)
 // - landscape: rotating the phone (or the button) goes fullscreen; double-tap ±10 s, vertical drag
@@ -31,9 +33,10 @@ import { C, F, R, S } from '@/theme/tokens';
 import { useSkipTimes, type Segment } from './aniskip';
 import { SourceLoadingBar, type LoadPhase } from './SourceLoadingBar';
 import { EngineView, useEnginePlayer, type EnginePlayer as VideoPlayer } from './engines';
+import { pickAudioTrack } from './engines/tracks';
 import { useMpvSubtitles } from './engines/use-mpv-subtitles';
 import { GestureLayer, type Hud } from './GestureLayer';
-import { AUTO_NEXT_SECONDS, NextCard, Pill } from './overlays';
+import { AUTO_NEXT_SECONDS, NextCard, Pill, type NextInfo } from './overlays';
 import { PlayerSettings, type Option } from './PlayerSettings';
 import type { PlaybackMonitor } from './playback-monitor';
 import { useSeamlessUpgrade, type UpgradeRequest } from './seamless-upgrade';
@@ -81,7 +84,8 @@ export type PlayerProps = {
   onEnd?: () => void;
   /** Playback failed on the current source (the parent can try another one). */
   onError?: (message: string) => void;
-  next?: { label: string; onPlay: () => void } | null;
+  /** `warning`: the next episode lacks the user's dub, the card asks instead of counting down. */
+  next?: NextInfo | null;
   /** MyAnimeList id + episode number → AniSkip timestamps. */
   malId?: number | null;
   episodeNumber?: number;
@@ -122,6 +126,14 @@ export type PlayerProps = {
   monitor?: PlaybackMonitor;
   /** "Lecture" sheet: what plays ("AIOStreams · 1080p · HTTP") and the last automatic change. */
   sourceInfo?: { label: string; detail?: string };
+  /**
+   * The source is dubbed: its audio track in the first of these languages is selected when it
+   * loads (tag first, then the track title "VF" / "Français"), and only forced subtitles in these
+   * languages are shown by default. Null / empty: the file's default track, full subtitles.
+   */
+  audioLangs?: string[] | null;
+  /** Audio tracks of the loaded file (the source's real languages), per source URI. */
+  onAudioTracks?: (uri: string, tracks: AudioTrack[]) => void;
 };
 
 const NEXT_WINDOW = 90;
@@ -198,6 +210,8 @@ export function Player({
   onUpgradeDeferred,
   monitor,
   sourceInfo,
+  audioLangs,
+  onAudioTracks,
 }: PlayerProps) {
   const insets = useSafeAreaInsets();
   const window = useWindowDimensions();
@@ -205,11 +219,16 @@ export function Player({
   const view = useRef<VideoView>(null);
   const lastSave = useRef(0);
   const loadedOnce = useRef(false);
-  const cb = useRef({ startAt, onProgress, onEnd, onError, next, onFullscreenChange });
+  const cb = useRef({ startAt, onProgress, onEnd, onError, next, onFullscreenChange, audioLangs, onAudioTracks });
   const lastPos = useRef({ t: 0, d: 0 });
   useEffect(() => {
-    cb.current = { startAt, onProgress, onEnd, onError, next, onFullscreenChange };
+    cb.current = { startAt, onProgress, onEnd, onError, next, onFullscreenChange, audioLangs, onAudioTracks };
   });
+  /** URI of the current source, for the track handlers (events arrive after the render). */
+  const sourceUri = useRef<string | null>(null);
+  useEffect(() => {
+    sourceUri.current = source?.uri ?? null;
+  }, [source?.uri]);
 
   const player = useEnginePlayer(null, (p) => {
     p.timeUpdateEventInterval = 0.25;
@@ -364,9 +383,36 @@ export function Player({
     onDeferred: (key, reason) => onUpgradeDeferred?.(key, reason),
   });
 
+  // ---------- audio track of a dubbed source ----------
+  // Once per source: the track in the dub language (a manual pick in the settings sheet stays).
+  const audioPicked = useRef<string | null>(null);
+  const onTracks = (tracks: AudioTrack[]) => {
+    const uri = sourceUri.current;
+    if (!uri) return;
+    if (tracks.length) cb.current.onAudioTracks?.(uri, tracks);
+    const langs = cb.current.audioLangs;
+    if (!langs?.length || tracks.length < 1 || audioPicked.current === uri) return;
+    const i = pickAudioTrack(tracks, langs);
+    if (i < 0) return;
+    audioPicked.current = uri;
+    const want = tracks[i];
+    const cur = player.audioTrack;
+    if (!cur || cur.id !== want.id || cur.language !== want.language || cur.label !== want.label) setProp(player, 'audioTrack', want);
+  };
+  const onTracksRef = useRef(onTracks);
+  useEffect(() => {
+    onTracksRef.current = onTracks;
+  });
+  // The source became dubbed after it loaded (a track check, the user's choice): pick now.
+  const dubAudioKey = (audioLangs ?? []).join(',');
+  useEffect(() => {
+    if (dubAudioKey) onTracksRef.current(player.availableAudioTracks);
+  }, [dubAudioKey, player]);
+
   useEventListener(player, 'sourceLoad', (e) => {
     setDuration(e.duration);
     setAudioTracks(e.availableAudioTracks);
+    onTracks(e.availableAudioTracks);
     setEmbedded(e.availableSubtitleTracks);
     setAudioTrack(player.audioTrack);
     const size = (player.videoTrack ?? e.availableVideoTracks[0])?.size;
@@ -379,7 +425,10 @@ export function Player({
     if (s === 'readyToPlay' && isFinite(player.duration)) setDuration(player.duration);
     if (s === 'error') cb.current.onError?.(err?.message ?? 'Lecture impossible');
   });
-  useEventListener(player, 'availableAudioTracksChange', (e) => setAudioTracks(e.availableAudioTracks));
+  useEventListener(player, 'availableAudioTracksChange', (e) => {
+    setAudioTracks(e.availableAudioTracks);
+    onTracks(e.availableAudioTracks);
+  });
   useEventListener(player, 'availableSubtitleTracksChange', (e) => setEmbedded(e.availableSubtitleTracks));
   useEventListener(player, 'audioTrackChange', (e) => setAudioTrack(e.audioTrack));
 
@@ -441,6 +490,11 @@ export function Player({
   const lastNext = useRef(0);
   const playNext = () => {
     if (!cb.current.next || Date.now() - lastNext.current < 1000) return;
+    // Not in the user's language: the card asks first (no silent switch).
+    if (cb.current.next.warning) {
+      setCountdown(AUTO_NEXT_SECONDS);
+      return;
+    }
     lastNext.current = Date.now();
     setCountdown(null);
     player.stop();
@@ -450,15 +504,17 @@ export function Player({
   useEffect(() => {
     playNextRef.current = playNext;
   });
+  const nextWarned = !!next?.warning;
   useEffect(() => {
-    if (countdown === null) return;
+    // A warning card waits for the user's answer: no countdown.
+    if (countdown === null || nextWarned) return;
     if (countdown <= 0) {
       playNextRef.current();
       return;
     }
     const t = setTimeout(() => setCountdown((c) => (c === null ? null : c - 1)), 1000);
     return () => clearTimeout(t);
-  }, [countdown]);
+  }, [countdown, nextWarned]);
 
   // ---------- speed ----------
   useEffect(() => {
@@ -466,7 +522,7 @@ export function Player({
   }, [player, prefs.rate]);
 
   // ---------- subtitles ----------
-  const subs = useSubtitleController({ external: subtitles, embedded, mediaKey, time: time.t });
+  const subs = useSubtitleController({ external: subtitles, embedded, mediaKey, time: time.t, dubLangs: audioLangs?.length ? audioLangs : null });
   const subLangsKey = subs.fullLangs.join(',');
   const onSubLangsRef = useRef(onSubtitleLangs);
   useEffect(() => {
@@ -824,7 +880,7 @@ export function Player({
       )}
 
       {next && countdown !== null && (
-        <NextCard label={next.label} countdown={countdown} onCancel={() => setCountdown(null)} onPlay={playNext}
+        <NextCard label={next.label} countdown={countdown} onCancel={() => setCountdown(null)} onPlay={playNext} warning={next.warning}
           style={{ right: sideInset, bottom: full ? Math.max(insets.bottom, S.lg) + 8 : S.md }} />
       )}
 
@@ -857,7 +913,9 @@ export function Player({
         audioKey={audioKey}
         onAudio={(k) => {
           const tr = audioTracks[Number(k)];
-          if (tr) setProp(player, 'audioTrack', tr);
+          if (!tr) return;
+          audioPicked.current = source?.uri ?? null;
+          setProp(player, 'audioTrack', tr);
         }}
         // One modal at a time: iOS does not present a modal while another one is still on screen
         // (the subtitle sheet would never show and could not be closed), so it opens once the

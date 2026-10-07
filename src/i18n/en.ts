@@ -129,6 +129,8 @@ export const en: Record<Key, string> = {
   'settings.autoSwitchHint': 'While playing, moves to a better quality when the network allows it, or to a steadier source when it stalls. Never another language.',
   'settings.switchToast': 'Show source changes',
   'settings.switchToastHint': 'A small message over the video (“Quality improved · 1080p → 2160p”).',
+  'settings.dubAutoFallback': 'Play the original when no dub exists',
+  'settings.dubAutoFallbackHint': 'Without asking: the best other version (subtitled…) starts, a message says which language plays.',
   'settings.quality': 'Preferred quality',
   'settings.quality.auto': 'Auto',
   'settings.subtitleSize': 'Subtitle size',

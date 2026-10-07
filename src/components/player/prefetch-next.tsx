@@ -6,14 +6,34 @@
 //    pool (./warm-pool.ts): the next watch screen takes that very player over, buffer included.
 // Hosted player pages (web player) are never preloaded: only their sources are resolved
 // (`src.url` stays empty for them).
+// Dub mode: the same search as the watch screen (dubbed sources only while any exists), so the
+// buffered source is the dubbed one; when the next episode has no dub, nothing is buffered and
+// `onDub` tells the watch screen before the end (the "À suivre" card / countdown asks).
+import { useEffect } from 'react';
+
+import type { DubPhase } from '@/addons/dub';
 import { useSubtitles } from '@/addons/registry';
 import { useSource } from '@/addons/use-source';
 
 import { WarmPlayer } from './warm-player';
 
-export function PrefetchNext({ seriesId, episode, armed, buffer }: { seriesId: string; episode: number; armed: boolean; buffer: boolean }) {
+export type NextDubReport = { phase: DubPhase; fallback: string | null };
+
+export function PrefetchNext({ seriesId, episode, armed, buffer, onDub }: {
+  seriesId: string;
+  episode: number;
+  armed: boolean;
+  buffer: boolean;
+  onDub?: (r: NextDubReport) => void;
+}) {
   const src = useSource(seriesId, episode, { enabled: armed });
   useSubtitles(seriesId, episode, armed);
+  const { phase, fallback } = src.dub;
+  useEffect(() => {
+    if (armed) onDub?.({ phase, fallback });
+    // The callback identity changes every render of the parent.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [armed, phase, fallback]);
   if (!armed || !buffer || !src.url) return null;
   return <WarmPlayer key={src.url} uri={src.url} headers={src.headers} />;
 }

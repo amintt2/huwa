@@ -61,7 +61,7 @@ export const xhrTransport: Transport = (url, headers, { bytes, timeoutMs, signal
     xhr.onload = () => {
       const buf = xhr.response as ArrayBuffer | null;
       const body = buf ? new Uint8Array(buf) : null;
-      finish({ ...meta(), bytes: body?.length ?? 0, head: body?.subarray(0, HEAD_BYTES) ?? null, ttfbMs: ttfb ?? now() - t0, totalMs: now() - t0 });
+      finish({ ...meta(), bytes: body?.length ?? 0, head: body?.subarray(0, HEAD_BYTES) ?? null, body, ttfbMs: ttfb ?? now() - t0, totalMs: now() - t0 });
     };
     xhr.onerror = () => finish({ status: 0, bytes: 0 });
     xhr.send();
@@ -82,6 +82,17 @@ export const fetchTransport: Transport = async (url, headers, { bytes, timeoutMs
   let meta: { status: number; contentType: string | null; contentRange: string | null } | undefined;
   let n = 0;
   let head: Uint8Array | null = null;
+  const chunks: Uint8Array[] = [];
+  const joined = () => {
+    const out = new Uint8Array(Math.min(n, bytes));
+    let at = 0;
+    for (const c of chunks) {
+      if (at >= out.length) break;
+      out.set(c.subarray(0, out.length - at), at);
+      at += c.length;
+    }
+    return out;
+  };
   try {
     const res = await fetch(url, { headers: { ...headers, Range: `bytes=0-${bytes - 1}` }, signal: ctrl.signal });
     ttfb = now() - t0;
@@ -96,10 +107,11 @@ export const fetchTransport: Transport = async (url, headers, { bytes, timeoutMs
       const { done, value } = await reader.read();
       if (done || !value) break;
       if (!head) head = value.subarray(0, HEAD_BYTES);
+      chunks.push(value);
       n += value.length;
     }
     ctrl.abort();
-    return { ...meta, bytes: n, head, ttfbMs: ttfb, totalMs: now() - t0 };
+    return { ...meta, bytes: n, head, body: joined(), ttfbMs: ttfb, totalMs: now() - t0 };
   } catch {
     if (meta) return { ...meta, bytes: n, head, ttfbMs: ttfb, timedOut };
     return { status: 0, bytes: 0, timedOut };
@@ -128,6 +140,16 @@ const emit = () => {
 };
 
 const fresh = (r: RaceResult | undefined, at = Date.now()) => !!r && at - r.at < (r.alive ? ALIVE_TTL_MS : DEAD_TTL_MS);
+
+/**
+ * Sees the body of every alive measurement (the file's first bytes), e.g. to read its audio
+ * tracks (addons/track-sniff.ts). Never throws into the race.
+ */
+export type BodyInspector = (url: string, headers: Record<string, string> | undefined, body: Uint8Array) => void;
+let inspector: BodyInspector | null = null;
+export function setBodyInspector(f: BodyInspector | null) {
+  inspector = f;
+}
 
 export function cachedRace(url: string): RaceResult | undefined {
   const r = results.get(url);
@@ -176,6 +198,13 @@ export function measureUrl(
         if (ctrl.signal.aborted) return undefined;
         const r = evaluateMeasure(raw);
         rememberRace(url, r);
+        if (r.alive && !r.adaptive && raw.body?.length && inspector) {
+          try {
+            inspector(url, headers, raw.body);
+          } catch {
+            // the race never depends on it
+          }
+        }
         return r;
       })
       .catch(() => undefined)

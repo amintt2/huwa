@@ -4,7 +4,7 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useSyncExternalStore } from 'react';
 
-import { pushRing, type AddonStat, type PlaybackEvent, type SwitchEvent } from './model';
+import { pushRing, type AddonStat, type DubEvent, type PlaybackEvent, type SwitchEvent } from './model';
 import { registerRehydrate } from '@/settings/rehydrate';
 
 const KEY = 'huwa/stats/v1';
@@ -16,6 +16,8 @@ export type StatsState = {
   events: PlaybackEvent[];
   /** Automatic source switches (source controller), oldest first. */
   switches: SwitchEvent[];
+  /** Dub-mode outcomes (addons/dub.ts), oldest first. */
+  dubs: DubEvent[];
   addons: Record<string, AddonStat>;
   /** "Comparer avec la communauté" (opt-in). */
   community: boolean;
@@ -23,8 +25,9 @@ export type StatsState = {
   lastShared: number;
 };
 
-const initial: StatsState = { events: [], switches: [], addons: {}, community: false, lastShared: 0 };
+const initial: StatsState = { events: [], switches: [], dubs: [], addons: {}, community: false, lastShared: 0 };
 export const MAX_SWITCHES = 200;
+export const MAX_DUBS = 300;
 let state: StatsState = initial;
 const listeners = new Set<() => void>();
 let timer: ReturnType<typeof setTimeout> | undefined;
@@ -40,6 +43,7 @@ export const statsReady: Promise<void> = AsyncStorage.getItem(KEY)
       ...saved,
       events: [...(Array.isArray(saved.events) ? saved.events : []), ...state.events].slice(-MAX_EVENTS),
       switches: [...(Array.isArray(saved.switches) ? saved.switches : []), ...state.switches].slice(-MAX_SWITCHES),
+      dubs: [...(Array.isArray(saved.dubs) ? saved.dubs : []), ...state.dubs].slice(-MAX_DUBS),
       addons: { ...(saved.addons ?? {}), ...state.addons },
     };
   })
@@ -54,7 +58,14 @@ registerRehydrate(async () => {
   const raw = await AsyncStorage.getItem(KEY).catch(() => null);
   try {
     const saved = raw ? (JSON.parse(raw) as Partial<StatsState>) : {};
-    state = { ...initial, ...saved, events: Array.isArray(saved.events) ? saved.events : [], switches: Array.isArray(saved.switches) ? saved.switches : [], addons: saved.addons ?? {} };
+    state = {
+      ...initial,
+      ...saved,
+      events: Array.isArray(saved.events) ? saved.events : [],
+      switches: Array.isArray(saved.switches) ? saved.switches : [],
+      dubs: Array.isArray(saved.dubs) ? saved.dubs : [],
+      addons: saved.addons ?? {},
+    };
   } catch {
     state = initial;
   }
@@ -101,8 +112,13 @@ export function recordSwitch(e: SwitchEvent) {
   set({ ...state, switches: pushRing(state.switches, e, MAX_SWITCHES) });
 }
 
+/** One dub-mode outcome (numbers only, see `DubEvent`). */
+export function recordDub(e: DubEvent) {
+  set({ ...state, dubs: pushRing(state.dubs ?? [], e, MAX_DUBS) });
+}
+
 export function resetStats() {
-  set({ ...state, events: [], switches: [], addons: {} });
+  set({ ...state, events: [], switches: [], dubs: [], addons: {} });
 }
 
 export function setCommunity(on: boolean) {

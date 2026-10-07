@@ -143,6 +143,14 @@ export default function Settings() {
           <View style={{ padding: S.md }}>
             <LanguagePrefs />
           </View>
+          {s.watchMode === 'dub' && (
+            <Row
+              icon="language-outline"
+              label={t('settings.dubAutoFallback')}
+              hint={t('settings.dubAutoFallbackHint')}
+              right={<Switch value={s.dubAutoFallback} onValueChange={(v) => setSetting('dubAutoFallback', v)} accessibilityLabel={t('settings.dubAutoFallback')} {...switchProps} />}
+            />
+          )}
         </Group>
 
         <Group title={t('settings.playback')}>
