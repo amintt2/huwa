@@ -9,7 +9,7 @@ cd "$(dirname "$0")/.."
 BIN="${1:?usage: bench/matrix.sh <binary> <tag> [cells...]}"
 TAG="${2:?tag}"
 shift 2
-CELLS="${*:-start storm cache prewarm stalls big http hang floor}"
+CELLS="${*:-start storm cache prewarm stalls big http hang floor device}"
 OUT=target/bench-results
 mkdir -p "$OUT"
 REPEAT="${REPEAT:-5}"
@@ -48,6 +48,7 @@ for cell in $CELLS; do
     ;;
   prewarm)
     run prewarm --profiles popular,mid,obscure --files h264.mkv,moov-end.mp4 --scenarios start --repeat "$REPEAT" --prewarm-ms 8000 --timeout 60s
+    run prewarm-attach --profiles popular,mid,few4,obscure --files attach.mkv --scenarios start --repeat "$REPEAT" --prewarm-ms 15000 --timeout 60s
     ;;
   big)
     run big8 --profiles popular,mid,obscure --files h264.mkv --scenarios start,resume --piece-kib 8192 --repeat "$REPEAT" --timeout 60s
@@ -65,6 +66,12 @@ for cell in $CELLS; do
   floor)
     run floor --profiles popular,mid,obscure --files h264.mkv,moov-end.mp4 --scenarios floor-start,floor-resume --repeat "$REPEAT" --timeout 60s
     run floor-verified --profiles popular,mid,obscure --files h264.mkv,moov-end.mp4 --scenarios floor-start,floor-resume --repeat 3 --timeout 60s --verified
+    ;;
+  device)
+    # Device traces: 4 peers at first byte (2 MiB pieces), and fansub MKVs whose font
+    # attachments (6 MiB here) are read before frame 1.
+    run device --profiles few4,mixed4 --files h264.mkv --scenarios start,resume --piece-kib 2048 --repeat "$REPEAT" --timeout 60s
+    run attach --profiles popular,mid,few4,obscure --files attach.mkv --scenarios start,resume --repeat "$REPEAT" --timeout 60s
     ;;
   stalls)
     run stalls --profiles popular,mid --files h264.mkv --scenarios start --repeat 3 --play-secs 300 --timeout 60s

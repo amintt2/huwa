@@ -8,6 +8,7 @@
 #   x265.mkv        24 min 1080p24 HEVC Main10 2.5 Mbit/s + AAC, same layout.
 #   moov-end.mp4    h264.mkv remuxed to MP4 with the moov at the end (ffmpeg's default).
 #   faststart.mp4   same, moov first.
+#   attach.mkv      h264.mkv + 6 MiB of (random) font attachments before the first cluster.
 #
 # Takes a few minutes (x265 is the slow one). Existing files are kept.
 # HUWA_BENCH_DURATION=<seconds> makes shorter files (smoke tests).
@@ -55,5 +56,16 @@ if [ ! -s "$OUT/x265.mkv" ]; then
     -b:v 2500k -maxrate 2500k -bufsize 5000k -x265-params log-level=error \
     "$OUT/x265.tmp.mkv"
   mkv_final "$OUT/x265.tmp.mkv" "$OUT/x265.mkv"
+fi
+# Fansub-style MKV: the same video with font attachments before the first cluster (mpv reads them
+# at open for libass). Synthetic random "fonts" (6 MiB in all), no real font files.
+if [ ! -s "$OUT/attach.mkv" ] && command -v mkvmerge >/dev/null; then
+  head -c 3145728 /dev/urandom >"$OUT/BenchSansA.ttf"
+  head -c 3145728 /dev/urandom >"$OUT/BenchSansB.ttf"
+  mkvmerge -q -o "$OUT/attach.mkv" \
+    --attachment-mime-type font/ttf --attach-file "$OUT/BenchSansA.ttf" \
+    --attachment-mime-type font/ttf --attach-file "$OUT/BenchSansB.ttf" \
+    "$OUT/h264.mkv"
+  rm -f "$OUT/BenchSansA.ttf" "$OUT/BenchSansB.ttf"
 fi
 ls -l "$OUT"
