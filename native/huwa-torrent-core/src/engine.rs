@@ -228,6 +228,8 @@ pub struct Entry {
     pub timeline: StartTimeline,
     /// A pre-warm runs (`Engine::prewarm`): not parked by the monitor meanwhile.
     pub prewarming: AtomicBool,
+    /// The pre-warm's job: aborted by the tap (`start_stream`) and by `park`.
+    pub prewarm_task: parking_lot::Mutex<Option<tokio::task::JoinHandle<()>>>,
     /// Peers that answered the probe (several: the container index is fetched with the head).
     pub answering: AtomicUsize,
 }
@@ -235,6 +237,17 @@ pub struct Entry {
 impl Entry {
     pub fn touch(&self) {
         self.last_access.store(now_secs(), Ordering::Relaxed);
+    }
+
+    /// Stops a running pre-warm: the tap took over (its own reads go first: on a slow swarm the
+    /// pre-warm's head and tail streams took the bandwidth the player's first bytes needed —
+    /// obscure MP4 with 8 s of pre-warm: 7.4 s to the frame against 5.3 s without), or the torrent
+    /// is parked. What it fetched stays on disk.
+    pub fn stop_prewarm(&self) {
+        if let Some(task) = self.prewarm_task.lock().take() {
+            task.abort();
+        }
+        self.prewarming.store(false, Ordering::Release);
     }
 
     pub fn handle(&self) -> Option<ManagedTorrentHandle> {
@@ -670,6 +683,7 @@ impl Engine {
                 resolving_from: AtomicU8::new(META_ENGINE),
                 timeline: StartTimeline::default(),
                 prewarming: AtomicBool::new(false),
+            prewarm_task: parking_lot::Mutex::new(None),
                 answering: AtomicUsize::new(0),
             });
             map.insert(hex, entry);
@@ -731,7 +745,8 @@ impl Engine {
             return Ok(resp);
         }
         let engine = self.clone();
-        self.runtime.spawn(async move {
+        let task_entry = entry.clone();
+        let task = self.runtime.spawn(async move {
             let job = async {
                 let h = entry.wait_ready(PREWARM_BUDGET).await?;
                 h.wait_until_initialized().await?;
@@ -774,6 +789,7 @@ impl Engine {
                 a.and(b)
             };
             let res = tokio::time::timeout(PREWARM_BUDGET, job).await;
+            entry.prewarm_task.lock().take();
             entry.prewarming.store(false, Ordering::Release);
             match res {
                 Ok(Ok(())) => info!(hex = %entry.hex, "pre-warm done"),
@@ -784,6 +800,12 @@ impl Engine {
                 engine.park(&entry);
             }
         });
+        let mut slot = task_entry.prewarm_task.lock();
+        if task.is_finished() || !task_entry.prewarming.load(Ordering::Acquire) {
+            // Done (or stopped) before it could be recorded.
+        } else {
+            *slot = Some(task);
+        }
         Ok(resp)
     }
 
@@ -798,6 +820,9 @@ impl Engine {
         }
 
         if let Some(existing) = self.entry(&hex) {
+            if focus {
+                existing.stop_prewarm();
+            }
             existing.touch();
             if let Some(m) = self.meta_cache.get(&hex, std::time::Instant::now()) {
                 existing.answering.store(m.answering, Ordering::Relaxed);
@@ -894,6 +919,7 @@ impl Engine {
             resolving_from: AtomicU8::new(if probed.is_some() { META_PROBE } else { META_MAGNET }),
             timeline: StartTimeline::default(),
             prewarming: AtomicBool::new(false),
+            prewarm_task: parking_lot::Mutex::new(None),
             answering: AtomicUsize::new(0),
         });
         entry.timeline.begin();
@@ -1101,6 +1127,7 @@ impl Engine {
     /// disconnected, no announce). Non-blocking; pieces on disk and the probe metadata stay, so a
     /// return to it starts like the first time. No-op for a paused torrent.
     pub fn park(self: &Arc<Self>, entry: &Arc<Entry>) {
+        entry.stop_prewarm();
         self.streaming.release(&entry.hex);
         let Some(handle) = entry.handle() else { return };
         if handle.is_paused() {
