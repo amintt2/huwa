@@ -36,6 +36,11 @@ struct StreamState {
     waker: Option<Waker>,
     /// Huwa patch: bytes of look-ahead queued from `position` (`FileStream::set_lookahead`).
     lookahead: u64,
+    /// Huwa patch: the piece this stream is blocked on is downloaded by all peers at once
+    /// (`FileStream::set_urgent`, see `piece_tracker::SharedPiece`).
+    urgent: bool,
+    /// Huwa patch: blocks written but not verified yet may be read (`FileStream::set_unverified`).
+    unverified: bool,
 }
 
 impl StreamState {
@@ -62,6 +67,15 @@ pub(crate) struct TorrentStreams {
 impl TorrentStreams {
     fn next_id(&self) -> usize {
         self.next_stream_id.fetch_add(1, Ordering::Relaxed)
+    }
+
+    /// Huwa patch: the stream reads again (not blocked: not urgent any more).
+    fn clear_waker(&self, stream_id: StreamId) {
+        if let Some(mut s) = self.streams.get_mut(&stream_id)
+            && s.value().waker.is_some()
+        {
+            s.value_mut().waker = None;
+        }
     }
 
     fn register_waker(&self, stream_id: StreamId, waker: Waker) {
@@ -101,6 +115,56 @@ impl TorrentStreams {
         all.shuffle(&mut rand::rng());
 
         Interleave { all: all.into() }
+    }
+
+    /// Huwa patch: the pieces urgent streams read next — the one at their position (from the
+    /// block they are at) and the following ones up to `URGENT_AHEAD` bytes of their look-ahead —
+    /// blocked first. Shared between peers block by block (see `piece_tracker::SharedPiece`):
+    /// a whole piece reserved by one slow peer was the player's wait.
+    pub(crate) fn urgent_pieces(&self, lengths: &Lengths) -> Vec<crate::piece_tracker::UrgentPiece> {
+        const URGENT_AHEAD: u64 = 4 * 1024 * 1024;
+        let dpl = lengths.default_piece_length() as u64;
+        let mut blocked: Vec<crate::piece_tracker::UrgentPiece> = Vec::new();
+        let mut ahead: Vec<crate::piece_tracker::UrgentPiece> = Vec::new();
+        for s in self.streams.iter() {
+            let s = s.value();
+            if !s.urgent || s.position >= s.file_len || dpl == 0 {
+                continue;
+            }
+            let abs = s.file_abs_offset + s.position;
+            let end = (abs + s.lookahead.clamp(1, URGENT_AHEAD)).min(s.file_abs_offset + s.file_len);
+            let first = abs / dpl;
+            for i in first..end.div_ceil(dpl).max(first + 1) {
+                let Some(piece) = u32::try_from(i).ok().and_then(|i| lengths.validate_piece_index(i)) else {
+                    break;
+                };
+                let from_chunk = if i == first { ((abs % dpl) / librqbit_core::constants::CHUNK_SIZE as u64) as u32 } else { 0 };
+                let u = crate::piece_tracker::UrgentPiece { piece, from_chunk, blocked: i == first && s.waker.is_some() };
+                if blocked.iter().chain(ahead.iter()).any(|x| x.piece == piece) {
+                    continue;
+                }
+                if i == first && s.waker.is_some() {
+                    blocked.push(u);
+                } else {
+                    ahead.push(u);
+                }
+            }
+        }
+        blocked.extend(ahead);
+        blocked
+    }
+
+    /// Huwa patch: a block of `piece` was written: streams allowed to read unverified blocks and
+    /// blocked in that piece look again.
+    pub(crate) fn wake_streams_on_chunk(&self, piece_id: ValidPieceIndex, lengths: &Lengths) {
+        for mut w in self.streams.iter_mut() {
+            if w.value().unverified
+                && w.value().current_piece(lengths).map(|p| p.id) == Some(piece_id)
+                && let Some(waker) = w.value_mut().waker.take()
+            {
+                waker.wake();
+            }
+        }
     }
 
     pub(crate) fn wake_streams_on_piece_completed(
@@ -145,6 +209,8 @@ pub struct FileStream {
     file_torrent_abs_offset: u64,
 
     _blocking_permit: OwnedSemaphorePermit,
+    /// Huwa patch: see `StreamState::unverified`.
+    unverified: bool,
 }
 
 macro_rules! map_io_err {
@@ -191,18 +257,31 @@ impl AsyncRead for FileStream {
 
         // if the piece is not there, register to wake when it is
         // check if we have the piece for real
-        let have = poll_try_io!(self.torrent.with_chunk_tracker(|ct| {
+        // Huwa patch: a stream allowed to (`unverified`) reads the blocks already written of a
+        // piece not verified yet, from its position on.
+        let dpl = self.metadata.lengths().default_piece_length() as u64;
+        let in_piece = ((self.file_torrent_abs_offset + self.position) % dpl.max(1)) as u32;
+        let unverified = self.unverified;
+        let available = poll_try_io!(self.torrent.with_chunk_tracker(|ct| {
             let have = ct.get_have_pieces().as_slice()[current.id.get() as usize];
-            if !have {
+            let avail = if have {
+                current.piece_remaining
+            } else if unverified {
+                ct.downloaded_run(current.id, in_piece)
+            } else {
+                0
+            };
+            if avail == 0 {
                 self.streams
                     .register_waker(self.stream_id, cx.waker().clone());
             }
-            have
+            avail
         }));
-        if !have {
+        if available == 0 {
             debug!(stream_id = self.stream_id, file_id = self.file_id, piece_id = %current.id, "poll pending, not have");
             return Poll::Pending;
         }
+        self.streams.clear_waker(self.stream_id);
 
         // actually stream the piece
         let buf = tbuf.initialize_unfilled();
@@ -210,6 +289,7 @@ impl AsyncRead for FileStream {
         let bytes_to_read: usize = poll_try_io!(
             (buf.len() as u64)
                 .min(current.piece_remaining as u64)
+                .min(available as u64)
                 .min(file_remaining)
                 .try_into()
         );
@@ -357,6 +437,7 @@ impl ManagedTorrent {
             file_len: fd_len,
             file_torrent_abs_offset: fd_offset,
             _blocking_permit: blocking_permit,
+            unverified: false,
             torrent: self,
             metadata,
         };
@@ -368,6 +449,8 @@ impl ManagedTorrent {
                 position: 0,
                 waker: None,
                 lookahead: PER_STREAM_BUF_DEFAULT,
+                urgent: false,
+                unverified: false,
                 file_len: fd_len,
                 file_abs_offset: fd_offset,
             },
@@ -415,6 +498,26 @@ impl FileStream {
     /// 32 MiB). A player's first request needs one or two pieces: with the default, every peer
     /// that connected took a different piece of those 32 MiB and the one the player waits for
     /// shared the downlink with all of them.
+    /// Huwa patch: while blocked, this stream's piece is downloaded by every peer that has it,
+    /// block by block, starting at the block it waits for (a player waiting for its next bytes).
+    pub fn set_urgent(&mut self, urgent: bool) {
+        if let Some(mut s) = self.streams.streams.get_mut(&self.stream_id) {
+            s.value_mut().urgent = urgent;
+        }
+        self.torrent.notify_new_pieces();
+    }
+
+    /// Huwa patch: read blocks as soon as they are written, before their piece is verified
+    /// (SHA-1 over the whole piece). A piece failing its check is downloaded again, but bytes
+    /// already read stay read: only for the opening reads of a player (see the engine's
+    /// `unverifiedStart`), never for data kept.
+    pub fn set_unverified(&mut self, on: bool) {
+        self.unverified = on;
+        if let Some(mut s) = self.streams.streams.get_mut(&self.stream_id) {
+            s.value_mut().unverified = on;
+        }
+    }
+
     pub fn set_lookahead(&mut self, bytes: u64) {
         if let Some(mut s) = self.streams.streams.get_mut(&self.stream_id) {
             s.value_mut().lookahead = bytes.max(1);

@@ -68,6 +68,13 @@ pub struct Config {
     /// How long a stream request waits for magnet metadata before answering 504.
     #[serde(default = "default_resolve_timeout")]
     pub resolve_timeout_secs: u64,
+    /// Serve the opening reads of a playback (header, container index, resume / seek target) from
+    /// blocks written but not verified yet, instead of waiting for the whole piece's SHA-1: the
+    /// player needs a few hundred KiB, a piece is 1–16 MiB. Integrity: a piece failing its check is
+    /// downloaded again, but bytes already read stay read (a damaged frame, or a file the player
+    /// cannot open; never data kept on disk). Only until the playback settles.
+    #[serde(default)]
+    pub unverified_start: bool,
 }
 
 fn default_cache_limit() -> u64 {
@@ -542,6 +549,7 @@ impl Engine {
             focus: RwLock::new(None),
             evictions: Default::default(),
         });
+        engine.streaming.unverified_start.store(engine.config.read().unverified_start, Ordering::Relaxed);
         engine.restore_entries();
         let janitor = engine.spawn_janitor();
         let monitor = crate::streaming::spawn_monitor(&engine);
@@ -733,10 +741,11 @@ impl Engine {
                     .unwrap_or_default();
                 let head_end = PREWARM_HEAD_BYTES.max(2 * g.piece_len).min(g.file_len);
                 let (tail, _) = crate::priorities::startup_tail_plan(crate::server::container_index(&name), g.file_len, g.piece_len);
-                let head = crate::streaming::walk_pieces_narrow(h.clone(), file, g, 0, head_end, head_end);
+                let unverified = engine.config().unverified_start;
+                let head = crate::streaming::fetch_region(h.clone(), file, g, 0, head_end, unverified);
                 let tail_job = async {
                     if tail > 0 && g.file_len - tail > head_end {
-                        crate::streaming::walk_pieces_narrow(h.clone(), file, g, g.file_len - tail, g.file_len, tail).await
+                        crate::streaming::fetch_region(h.clone(), file, g, g.file_len - tail, g.file_len, unverified).await
                     } else {
                         Ok(())
                     }

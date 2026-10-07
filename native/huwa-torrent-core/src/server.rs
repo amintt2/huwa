@@ -272,6 +272,15 @@ async fn stream_file(
         let single = intent == PlaybackIntent::DirectInitial && !parallel && index != ContainerIndex::Other;
         stream.set_lookahead(if single { piece.max(1) } else { startup_lookahead(piece) });
     }
+    // The player waits for these bytes: the piece it is blocked on is fetched block by block from
+    // every peer that has it (vendor/librqbit HUWA_PATCHES.md), starting at the block it needs.
+    stream.set_urgent(true);
+    // Opening reads (head, container index, resume / seek target), with `unverifiedStart`: blocks
+    // are served as soon as written, before their piece's SHA-1 (see `Config::unverified_start`).
+    let unverified = engine.config().unverified_start && !quiet && intent != PlaybackIntent::Background;
+    if unverified {
+        stream.set_unverified(true);
+    }
 
     if start > 0 {
         if let Err(e) = stream.seek(SeekFrom::Start(start)).await {
@@ -292,8 +301,14 @@ async fn stream_file(
     entry.first_byte_sent.store(true, Ordering::Relaxed);
     let guard = StreamGuard { entry: entry.clone(), end };
     let mut tracked = TrackedReader::new(stream.take(to_send), playback, start);
-    if narrow {
-        tracked.on_quiet(Box::new(|r: &mut tokio::io::Take<librqbit::FileStream>| r.get_mut().set_lookahead(DEFAULT_LOOKAHEAD_BYTES)));
+    if narrow || unverified {
+        tracked.on_quiet(Box::new(move |r: &mut tokio::io::Take<librqbit::FileStream>| {
+            let s = r.get_mut();
+            if narrow {
+                s.set_lookahead(DEFAULT_LOOKAHEAD_BYTES);
+            }
+            s.set_unverified(false);
+        }));
     }
     let reader = GuardedReader { inner: tracked, _guard: guard };
     let body = Body::from_stream(tokio_util::io::ReaderStream::with_capacity(reader, BODY_CHUNK));

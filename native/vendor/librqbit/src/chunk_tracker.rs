@@ -269,6 +269,40 @@ impl ChunkTracker {
         }
     }
 
+    /// Huwa patch: the chunk (block) `chunk` of `piece` was written (not necessarily verified).
+    pub fn is_chunk_downloaded(&self, piece: ValidPieceIndex, chunk: u32) -> bool {
+        let range = self.lengths.chunk_range(piece);
+        let i = range.start + chunk as usize;
+        i < range.end && self.chunk_status.get(i).map(|b| *b).unwrap_or(false)
+    }
+
+    /// Huwa patch: bytes written contiguously from `offset` (bytes into `piece`), verified or not.
+    pub fn downloaded_run(&self, piece: ValidPieceIndex, offset: u32) -> u32 {
+        use librqbit_core::constants::CHUNK_SIZE;
+        let range = self.lengths.chunk_range(piece);
+        let Some(bits) = self.chunk_status.get(range) else {
+            return 0;
+        };
+        let first = (offset / CHUNK_SIZE) as usize;
+        let mut end = first;
+        while end < bits.len() && bits[end] {
+            end += 1;
+        }
+        if end == first {
+            return 0;
+        }
+        let end_bytes = (end as u32).saturating_mul(CHUNK_SIZE).min(self.lengths.piece_length(piece));
+        end_bytes.saturating_sub(offset)
+    }
+
+    /// Huwa patch: back in the queue without forgetting the chunks already written (their
+    /// requester skips them, see `PieceTracker::claim_chunk`).
+    pub fn requeue_keep_chunks(&mut self, index: ValidPieceIndex) {
+        if !self.have.as_slice().get(index.get_usize()).map(|r| *r).unwrap_or_default() {
+            self.queue_pieces.set(index.get_usize(), true);
+        }
+    }
+
     pub fn mark_piece_downloaded(&mut self, idx: ValidPieceIndex) {
         let id = idx.get() as usize;
         if !self.have.as_slice()[id] {

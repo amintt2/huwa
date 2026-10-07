@@ -1006,6 +1006,14 @@ impl TorrentStateLive {
 // with many peers the downlink held seconds of data requested before a seek, and a peer took a
 // second piece (the container index the player needs next) before the other peers had a first
 // one. 64 x 16 KiB = 1 MiB per peer still covers a 5 MB/s peer at 200 ms.
+/// Huwa patch: what a peer gets to do next.
+enum Acquired {
+    Piece(ValidPieceIndex, Option<Vec<u32>>),
+    /// Waiting for its urgent blocks before taking anything else.
+    Busy,
+    Nothing,
+}
+
 const DEFAULT_PEER_REQUEST_WINDOW: usize = 64;
 
 struct PeerFlowControl {
@@ -1425,10 +1433,19 @@ impl PeerHandler {
     /// Acquire a piece for this peer: try steal (10x) → reserve → steal (3x).
     ///
     /// Returns the piece index to download, or None if no pieces are available.
-    fn acquire_next_piece(&self) -> crate::Result<Option<ValidPieceIndex>> {
+    /// Huwa patch: with the chunks to request when only some (a shared urgent piece).
+    fn acquire_next_piece(&self) -> crate::Result<Option<(ValidPieceIndex, Option<Vec<u32>>)>> {
+        match self.acquire_next_piece_or_busy()? {
+            Acquired::Piece(p, c) => Ok(Some((p, c))),
+            Acquired::Busy | Acquired::Nothing => Ok(None),
+        }
+    }
+
+    /// Huwa patch: `acquire_next_piece`, telling "busy on urgent blocks" from "nothing to do".
+    fn acquire_next_piece_or_busy(&self) -> crate::Result<Acquired> {
         if self.is_choked() {
             debug!("we are choked, can't acquire piece");
-            return Ok(None);
+            return Ok(Acquired::Nothing);
         }
 
         // Steal info to process after releasing the peer lock
@@ -1448,7 +1465,9 @@ impl PeerHandler {
                     ..
                 } = &mut **g;
                 let pieces = pieces.as_mut().ok_or(Error::ChunkTrackerEmpty)?;
+                let urgent = self.state.streams.urgent_pieces(&self.state.lengths);
                 let result = pieces.acquire_piece(AcquireRequest {
+                    urgent,
                     peer: self.addr,
                     peer_avg_time: self.counters.average_piece_download_time(),
                     priority_pieces: self.state.streams.iter_next_pieces(&self.state.lengths),
@@ -1465,19 +1484,24 @@ impl PeerHandler {
                 match result {
                     AcquireResult::Reserved(piece) => {
                         trace!("reserved piece {}", piece);
-                        Ok(Some(piece))
+                        Ok(Acquired::Piece(piece, None))
                     }
+                    AcquireResult::Shared { piece, chunks } => {
+                        trace!("shared piece {} chunks {:?}", piece, chunks);
+                        Ok(Acquired::Piece(piece, Some(chunks)))
+                    }
+                    AcquireResult::Busy => Ok(Acquired::Busy),
                     AcquireResult::Stolen { piece, from_peer } => {
                         debug!("stole piece {} from {}", piece, from_peer);
                         // Store steal info to process after releasing peer lock to avoid deadlock
                         steal_info = Some((from_peer, piece));
-                        Ok(Some(piece))
+                        Ok(Acquired::Piece(piece, None))
                     }
-                    AcquireResult::NoneAvailable => Ok(None),
+                    AcquireResult::NoneAvailable => Ok(Acquired::Nothing),
                 }
             })
             .transpose()
-            .map(|r| r.flatten());
+            .map(|r| r.unwrap_or(Acquired::Nothing));
 
         // Process steal notification outside the peer lock to avoid deadlock
         if let Some((from_peer, piece)) = steal_info {
@@ -1680,9 +1704,16 @@ impl PeerHandler {
 
             // Acquire a piece using the strategy: try steal (10x) → reserve → steal (3x).
             let new_piece_notify = self.state.new_pieces_notify.notified();
-            let next = match self.acquire_next_piece()? {
-                Some(next) => next,
-                None => {
+            let (next, only_chunks) = match self.acquire_next_piece_or_busy()? {
+                Acquired::Piece(p, c) => (p, c),
+                Acquired::Busy => {
+                    // Huwa patch: an urgent block of ours lands (a request slot frees) or 250 ms.
+                    if let Some(n) = self.request_slots_changed() {
+                        let _ = tokio::time::timeout(Duration::from_millis(250), n.notified()).await;
+                    }
+                    continue;
+                }
+                Acquired::Nothing => {
                     debug!("no pieces to request");
                     match aframe!(tokio::time::timeout(
                         // Half of default rw timeout not to race with it.
@@ -1698,7 +1729,12 @@ impl PeerHandler {
                 }
             };
 
-            for chunk in self.state.lengths.iter_chunk_infos(next) {
+            for chunk in self
+                .state
+                .lengths
+                .iter_chunk_infos(next)
+                .filter(|c| only_chunks.as_ref().is_none_or(|o| o.contains(&c.chunk_index)))
+            {
                 let request = Request {
                     index: next.get(),
                     begin: chunk.offset,
@@ -1720,6 +1756,18 @@ impl PeerHandler {
                 }
 
                 aframe!(self.wait_for_request_slot()).await;
+
+                // Huwa patch: never a block already written; for a shared piece, not one another
+                // peer just asked for.
+                let claimed = self
+                    .state
+                    .lock_write("claim_chunk")
+                    .get_pieces_mut()
+                    .map(|p| p.claim_chunk(next, chunk.chunk_index, handle))
+                    .unwrap_or(false);
+                if !claimed {
+                    continue;
+                }
 
                 match self
                     .state
@@ -1854,8 +1902,9 @@ impl PeerHandler {
                     .get(piece.index as usize)
                     .map(|l| l.read());
 
+                let shared = g.get_pieces()?.is_shared(chunk_info.piece_index);
                 match g.get_pieces()?.get_inflight(chunk_info.piece_index) {
-                    Some(inflight) if inflight.peer == addr => {}
+                    Some(inflight) if inflight.peer == addr || shared => {}
                     Some(inflight) => {
                         debug!(
                             "in-flight piece {} was stolen by {}, ignoring",
@@ -1910,7 +1959,12 @@ impl PeerHandler {
                         debug!("piece={} was done by someone else, ignoring", piece.index);
                         return Ok(());
                     }
-                    Some(ChunkMarkingResult::NotCompleted) => None,
+                    Some(ChunkMarkingResult::NotCompleted) => {
+                        // Huwa patch: readers of unverified blocks of this piece.
+                        drop(g);
+                        state.streams.wake_streams_on_chunk(chunk_info.piece_index, &state.lengths);
+                        return Ok(());
+                    }
                     None => {
                         anyhow::bail!(
                             "bogus data received: {:?}, cannot map this to a chunk, dropping peer",

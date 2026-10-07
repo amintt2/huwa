@@ -400,6 +400,8 @@ struct HealthState {
 pub struct Streaming {
     playbacks: Mutex<HashMap<String, Arc<Playback>>>,
     health: Mutex<HashMap<String, HealthState>>,
+    /// `Config::unverified_start`: the container index is prefetched block by block too.
+    pub unverified_start: AtomicBool,
 }
 
 impl Streaming {
@@ -498,6 +500,7 @@ impl Streaming {
                 let handle = handle.clone();
                 let weak = Arc::downgrade(&pb);
                 let rt = runtime.handle().clone();
+                let unverified = self.unverified_start.load(Ordering::Relaxed);
                 let task = runtime.spawn(async move {
                     let job = async {
                         if !index_first {
@@ -512,7 +515,7 @@ impl Streaming {
                         let speculative = speculate_tail.then(|| {
                             let (h, g) = (handle.clone(), geometry);
                             AbortOnDrop(rt.spawn(async move {
-                                let _ = walk_pieces_narrow(h, file_idx, g, tail_start, g.file_len, g.file_len - tail_start).await;
+                                let _ = fetch_region(h, file_idx, g, tail_start, g.file_len, unverified).await;
                             }))
                         });
                         let head = read_head(handle.clone(), file_idx, INDEX_HEAD_BYTES.min(geometry.file_len)).await?;
@@ -528,7 +531,7 @@ impl Streaming {
                             IndexNeed::From(from) => {
                                 drop(speculative);
                                 debug!(from, "container index: exact range");
-                                walk_pieces_narrow(handle, file_idx, geometry, from, geometry.file_len, geometry.file_len - from).await
+                                fetch_region(handle, file_idx, geometry, from, geometry.file_len, unverified).await
                             }
                             IndexNeed::Unknown => match speculative {
                                 Some(s) => {
@@ -608,9 +611,34 @@ pub async fn walk_pieces(handle: ManagedTorrentHandle, file_idx: usize, g: Geome
 
 /// `walk_pieces` with the stream's look-ahead narrowed to `lookahead` bytes (pre-warm: only the
 /// pieces walked are asked for).
+/// Fetches `[from, to)` with the priority of a player read: verified pieces (`walk_pieces_narrow`)
+/// or, with `unverified`, every block in order as it lands (the player then reads them at once).
+pub async fn fetch_region(handle: ManagedTorrentHandle, file_idx: usize, g: Geometry, from: u64, to: u64, unverified: bool) -> anyhow::Result<()> {
+    if !unverified {
+        return walk_pieces_narrow(handle, file_idx, g, from, to, to.saturating_sub(from)).await;
+    }
+    let mut s = handle.stream(file_idx).await?;
+    s.set_lookahead(to.saturating_sub(from).max(1));
+    s.set_urgent(true);
+    s.set_unverified(true);
+    s.seek(SeekFrom::Start(from)).await?;
+    let mut left = to.min(g.file_len).saturating_sub(from);
+    let mut buf = vec![0u8; 64 * 1024];
+    while left > 0 {
+        let n = s.read(&mut buf[..left.min(64 * 1024) as usize]).await?;
+        if n == 0 {
+            break;
+        }
+        left -= n as u64;
+    }
+    Ok(())
+}
+
 pub async fn walk_pieces_narrow(handle: ManagedTorrentHandle, file_idx: usize, g: Geometry, from: u64, to: u64, lookahead: u64) -> anyhow::Result<()> {
     let mut s = handle.stream(file_idx).await?;
     s.set_lookahead(lookahead.max(1));
+    // Container index / pre-warm: read before the first frame, as urgent as the head.
+    s.set_urgent(true);
     let mut pos = from;
     let mut byte = [0u8; 1];
     while pos < to.min(g.file_len) {
@@ -644,6 +672,7 @@ impl Drop for AbortOnDrop {
 async fn read_head(handle: ManagedTorrentHandle, file_idx: usize, len: u64) -> anyhow::Result<Vec<u8>> {
     let mut s = handle.stream(file_idx).await?;
     s.set_lookahead(len.max(1));
+    s.set_urgent(true);
     let mut buf = vec![0u8; len as usize];
     s.read_exact(&mut buf).await?;
     Ok(buf)

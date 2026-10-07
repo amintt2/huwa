@@ -27,3 +27,23 @@ changes below. Every change is marked `Huwa patch` in the code. Measured with
    seconds of data requested before a seek, and a peer took a second piece (the container index
    the player needs next) before the other peers had a first one. 1 MiB per peer still covers a
    5 MB/s peer at 200 ms RTT. Measured: popular MKV start 2.2 s → 1.0 s, mid resume 9.1 s → 5.1 s.
+5. **Urgent pieces shared block by block between peers** (`piece_tracker.rs` `SharedPiece`,
+   `acquire_shared`, `claim_chunk`; `FileStream::set_urgent`; `TorrentStreams::urgent_pieces`).
+   Upstream a piece is downloaded by one peer: the first piece of a start took
+   `piece size / that peer's rate` (16 MiB at 1–3 MB/s: 5–16 s; at 300 KB/s: 56 s) however many
+   peers were connected. The pieces an *urgent* stream (a player response) reads next — the one
+   it is blocked on, from the block it waits for, then up to 4 MiB of its look-ahead — are split
+   into blocks: every peer that has the piece claims at most 4 blocks at a time (8 outstanding),
+   so the piece comes at the swarm's aggregate rate, in the reader's order; blocked pieces first,
+   the one this peer has the fewest blocks of in flight first (a single peer alternates between
+   the head and the container index). A peer at its cap while blocks are still free waits
+   (`Busy`) instead of filling its in-order pipeline with other pieces. A block asked from
+   another peer 1.5 s ago without an answer may be asked again (endgame, urgent blocks only); the
+   same peer re-asks after 5 s. Blocks already written are never requested again; a shared piece
+   nobody works on any more goes back to the queue keeping its blocks; any peer may complete a
+   shared piece (`write_to_disk`).
+6. **Unverified reads** (`FileStream::set_unverified`, `ChunkTracker::downloaded_run`,
+   `wake_streams_on_chunk`). A stream allowed to may read the blocks already written of a piece
+   not verified yet, from its position on (woken as each block lands). Used by Huwa only for the
+   opening reads of a playback (`Config::unverified_start`); a piece failing its SHA-1 is still
+   downloaded again, but the bytes already read stay read.

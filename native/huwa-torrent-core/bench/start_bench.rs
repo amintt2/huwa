@@ -37,6 +37,8 @@ use tokio::{
     net::{TcpListener, TcpStream},
 };
 
+mod files;
+
 const KIB: u64 = 1024;
 const MIB: u64 = 1024 * KIB;
 
@@ -65,6 +67,12 @@ struct Args {
     switch_hard: bool,
     /// Storm: no `release` of the torrent left behind (the app's holds, src/torrent/hold.ts).
     no_release: bool,
+    /// HTTP profiles: mpv reads through the engine's loopback read-ahead proxy.
+    http_proxy: bool,
+    /// Engine `unverifiedStart`.
+    unverified: bool,
+    /// Engine with no peer-limit lift / no shared pieces (A/B of the big-piece work).
+    extra_cfg: Vec<(String, Value)>,
     /// Storm: a new mpv per switch (the app creates a player view per watch screen).
     fresh_mpv: bool,
     race_ms: u64,
@@ -117,6 +125,9 @@ fn parse_args() -> Args {
         switch_every: Duration::from_secs(2),
         switch_hard: false,
         no_release: false,
+        http_proxy: false,
+        unverified: false,
+        extra_cfg: Vec::new(),
         fresh_mpv: false,
         race_ms: 2500,
         presearched: false,
@@ -153,6 +164,13 @@ fn parse_args() -> Args {
             "--switch-every" => a.switch_every = parse_duration(&val()),
             "--switch-hard" => a.switch_hard = true,
             "--no-release" => a.no_release = true,
+            "--http-proxy" => a.http_proxy = true,
+            "--unverified" => a.unverified = true,
+            "--engine-cfg" => {
+                let v = val();
+                let (k, v) = v.split_once('=').expect("--engine-cfg key=json");
+                a.extra_cfg.push((k.into(), serde_json::from_str(v).unwrap_or(Value::String(v.into()))));
+            }
             "--fresh-mpv" => a.fresh_mpv = true,
             "--race-ms" => a.race_ms = val().parse().unwrap(),
             "--presearched" => a.presearched = true,
@@ -703,6 +721,16 @@ impl Mpv {
         self.cmd(json!(["loadfile", url, "replace"]));
     }
 
+    /// `MpvCore.load` for a remote URL (debrid / addon HTTP): network timeout 20 s.
+    fn load_remote(&mut self, url: &str, start: f64) {
+        self.cmd(json!(["set_property", "start", if start > 1.0 { format!("{start:.3}") } else { "none".into() }]));
+        #[cfg(not(huwa_baseline))]
+        self.cmd(json!(["set_property", "hr-seek", if start > 1.0 { "no" } else { "default" }]));
+        self.cmd(json!(["set_property", "pause", "no"]));
+        self.cmd(json!(["set_property", "network-timeout", "20"]));
+        self.cmd(json!(["loadfile", url, "replace"]));
+    }
+
     /// Next line starting with `prefix` (other lines are passed to `other`).
     fn wait(&self, prefix: &str, until: Instant, other: &mut dyn FnMut(Instant, &str)) -> Option<Instant> {
         loop {
@@ -953,6 +981,12 @@ impl Bench {
         let mut cfg = json!({ "dataDir": data_dir, "defaultTrackers": [self.tracker_url] });
         if let Some(cap) = self.args.cache_cap {
             cfg["cacheLimitBytes"] = json!(cap);
+        }
+        if self.args.unverified {
+            cfg["unverifiedStart"] = json!(true);
+        }
+        for (k, v) in &self.args.extra_cfg {
+            cfg[k.as_str()] = v.clone();
         }
         let config: Config = serde_json::from_value(cfg).unwrap();
         let engine = Engine::new(config).unwrap();
@@ -1368,10 +1402,31 @@ fn main() {
             storm(&bench, &mut results, out.as_mut());
             continue;
         }
+        if scenario == "need" {
+            files::measure_needs(&bench);
+            continue;
+        }
+        if let Some(floor_of) = scenario.strip_prefix("floor-") {
+            #[cfg(not(huwa_baseline))]
+            for file in &args.files {
+                for prof in &args.profiles {
+                    for rep in 0..args.repeat {
+                        let r = files::run_floor(&bench, prof, file, floor_of, rep);
+                        println!("{prof:>12} {file:>14} floor {floor_of} #{rep}: floor {} s, need {} KiB, pieces {} KiB, curve {:?}", fmt_ms(r.floor_ms), r.need_kib, r.piece_kib, r.curve_ms);
+                        if let Some(o) = out.as_mut() {
+                            writeln!(o, "{}", json!({ "floor": r })).unwrap();
+                        }
+                    }
+                }
+            }
+            #[cfg(huwa_baseline)]
+            let _ = floor_of;
+            continue;
+        }
         for file in &args.files {
             for prof in &args.profiles {
                 for rep in 0..args.repeat {
-                    let r = bench.run_one(prof, file, scenario, rep);
+                    let r = if files::http_profile(prof).is_some() { files::run_http(&bench, prof, file, scenario, rep) } else { bench.run_one(prof, file, scenario, rep) };
                     println!(
                         "{prof:>12} {file:>14} {scenario:>6} #{rep}: start→frame {} s, tap→frame {} s, probe {} ms ({}), seek {} s, stalls {} ({} ms), launch {} ms, disk MiB {}→{}→{}, evictions {} {}\n      timeline {}",
                         fmt_ms(r.start_to_frame_ms),
@@ -1602,4 +1657,9 @@ fn storm(b: &Bench, _results: &mut Vec<RunResult>, mut out: Option<&mut std::fs:
     drop(engine);
     drop(swarms);
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// HTTP read-ahead proxy of the engine for `--http-proxy` (none yet: the URL as is).
+fn http_readahead_url(_b: &Bench, url: &str) -> String {
+    url.to_string()
 }
