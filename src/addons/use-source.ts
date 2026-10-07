@@ -94,8 +94,11 @@ function dropKey<T>(rec: Record<string, T>, k: string): Record<string, T> {
 export function useSource(seriesId: string, episode: number, { enabled = true, preview = false, engineAvailable = false }: SourceOptions = {}) {
   const { streams, infos, pending, failed, asked, refreshed, refresh } = useStreams(seriesId, episode, enabled);
   const prefs = useAddonPrefs();
-  const { watchMode, subLangs, dubLangs } = useSettings();
-  const langPrefs = useMemo(() => ({ watchMode, subLangs, dubLangs }), [watchMode, subLangs, dubLangs]);
+  const { watchMode, subLangs, dubLangs, autoTranslateSubs } = useSettings();
+  const langPrefs = useMemo(
+    () => ({ watchMode, subLangs, dubLangs, translateSubs: autoTranslateSubs }),
+    [watchMode, subLangs, dubLangs, autoTranslateSubs],
+  );
   const addonList = useAddons();
   const resolverLabel = useTorrentResolver();
   const cached = useCachedHashes(streams.filter(isTorrent).map((s) => s.infoHash!));

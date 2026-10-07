@@ -59,3 +59,12 @@ test('quality: only "1080p" forms, not bare numbers', async () => {
   assert.equal(q({ name: 'Show 1920x1080 HEVC' }), 1080);
   assert.equal(q({ name: 'Show 2160p' }), 2160);
 });
+
+test('with on-device translation, every Japanese-audio release ties (the fastest wins), dubs stay last', () => {
+  const tr = { watchMode: 'sub' as const, subLangs: ['fr'], dubLangs: ['fr'], translateSubs: true };
+  const vostfr = { name: 'Torrentio', title: 'Show S01E01 VOSTFR 1080p' };
+  const engSubs = { name: 'Torrentio', title: '[SubsPlease] Show - 01 (1080p)' };
+  const vf = { name: 'Torrentio', title: 'Show S01E01 VF 1080p' };
+  assert.equal(langScore(vostfr, tr), langScore(engSubs, tr));
+  assert.ok(langScore(engSubs, tr) < langScore(vf, tr));
+});

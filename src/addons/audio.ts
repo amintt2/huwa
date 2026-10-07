@@ -61,7 +61,10 @@ export function streamSubLangs(s: StreamItem): string[] {
  * Sub mode: a stream that carries subtitles in a preferred language (in the file or attached)
  * ranks before an equal one without, so the race only compares those while any is alive.
  */
-export function langScore(s: StreamItem, prefs: { watchMode: WatchMode; subLangs: string[]; dubLangs: string[] }): number {
+export function langScore(
+  s: StreamItem,
+  prefs: { watchMode: WatchMode; subLangs: string[]; dubLangs: string[]; translateSubs?: boolean },
+): number {
   const l = { ...detectLangs(s), subs: streamSubLangs(s) };
   const rank = (list: string[], have: string[]) => {
     const i = list.findIndex((c) => have.includes(c));
@@ -71,7 +74,11 @@ export function langScore(s: StreamItem, prefs: { watchMode: WatchMode; subLangs
     const r = rank(prefs.dubLangs, l.audio);
     return r < prefs.dubLangs.length ? r : 10 + (l.audio.length ? 1 : 0);
   }
-  // Subtitled original: hardsubs in a preferred language first, then Japanese / unknown audio,
+  // Subtitled original with on-device translation: any subtitle track becomes one in the user's
+  // language (embedded, attached or from a subtitles addon), so every Japanese / unknown-audio
+  // release is as good as a VOSTFR one and the fastest wins. Dubbed-only releases stay last.
+  if (prefs.translateSubs) return !l.audio.length || l.audio.includes('ja') ? 0 : 12;
+  // Without translation: hardsubs in a preferred language first, then Japanese / unknown audio,
   // then dubbed-only releases last.
   const hard = rank(prefs.subLangs, l.subs);
   if (hard < prefs.subLangs.length) return hard;
