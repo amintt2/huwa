@@ -34,6 +34,10 @@ parking_lot = "0.12"
 hex = "0.4"
 url = "2"
 urlencoding = "2"
+# HTTP read-ahead proxy for remote streams (src/http_proxy.rs). Already in the tree through
+# librqbit (same version and features: rustls + aws-lc-rs + platform verifier): no new crate. HTTP/1.1
+# only, on purpose (see `build_client`).
+reqwest = { version = "0.13", default-features = false, features = ["rustls"] }
 
 # Offline end-to-end start benchmark (local seeders, shaped links, mpv CLI): bench/README.md.
 [[example]]

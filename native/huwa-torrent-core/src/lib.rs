@@ -14,6 +14,8 @@
 //!   recovery.
 //! - `timeline`: start timeline measured on the device (metadata, first peer / piece / byte…).
 //! - `trackers`: public UDP/HTTPS trackers added to magnets that carry few.
+//! - `http_proxy`: loopback read-ahead proxy for remote HTTP streams (`/http/<id>`), independent
+//!   of the torrent session.
 //! - `api`: JSON dispatch used by both FFI flavours.
 //! - `ffi`: C ABI (iOS / static library). `jni_android`: JNI exports (Android).
 //!
@@ -24,6 +26,7 @@ pub mod api;
 pub mod cache;
 pub mod engine;
 pub mod ffi;
+pub mod http_proxy;
 pub mod priorities;
 pub mod probe;
 pub mod range;

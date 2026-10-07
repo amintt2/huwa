@@ -65,7 +65,9 @@ Pieces: 1 MiB for files over 800 MiB, 512 KiB below (`--piece-kib` to force).
 | `--piece-kib N` | auto | piece size of the generated torrents |
 | `--verified` / `--unverified` | unverified (engine default `unverifiedStart`) | serve written blocks before the piece's SHA-1 for the opening reads |
 | `--engine-cfg k=json` | | extra field of the engine's `initialize` config (repeatable) |
-| `--http-proxy` | off | HTTP profiles: through the loopback read-ahead proxy prototype (`bench/proxy.rs`) |
+| `--http-proxy` | off | HTTP profiles and `hang-tail`: through the shipped read-ahead proxy (`src/http_proxy.rs`), opened like the app does (`httpOpen` with the resume position) |
+| `--duration S` | 1440 | `--http-proxy` resume: the duration the app passes (saved progress) |
+| `--no-size` | off | `--http-proxy`: no file size hint (an addon without `behaviorHints.videoSize`) |
 | `--net-timeout S` | 8 (MpvCore, remote) | mpv `network-timeout` for HTTP profiles |
 | `--hang-once` | off | `hang-tail`: the stuck range hangs once, then answers (a debrid server's first try) |
 | `--trace` | off | log every HTTP request mpv makes (offset, first byte, bytes) |
@@ -85,7 +87,7 @@ Profiles (RTT per peer drawn in the range; rates in bytes/s):
 | `few4` | 4 | 300 KB/s | 60–120 ms (device trace: 4 peers at first byte; run with `--piece-kib 2048`) |
 | `mixed4` | 4 | 100 KB/s–1.2 MB/s | 40–150 ms (same, peers of very different speeds) |
 | `lan` | 3 | 50 MB/s | 1 ms (engine + mpv floor) |
-| `http-<ttfb>-<rate>` | — | e.g. `http-300ms-10M` | debrid-like HTTP server instead of a swarm: time to first byte per request, MB/s |
+| `http-<ttfb>-<rate>[-norange]` | — | e.g. `http-300ms-10M` | debrid-like HTTP server instead of a swarm: time to first byte per request, MB/s per response; `-norange`: the server ignores Range (200 + whole file) |
 
 The whole campaign: `bench/matrix.sh target/release/examples/start_bench after` (cells `start
 storm cache prewarm stalls big http http-proxy hang floor device`; `REPEAT=5`). The baseline
@@ -302,30 +304,125 @@ Profiles `http-<time to first byte>-<MB/s>`. Start time is TTFB × mpv’s seria
 | moov-end.mp4 | start | 20.84 | 8.80 |
 | moov-end.mp4 | resume | 21.25 | 8.80 |
 
-### HTTP through the read-ahead proxy prototype (not shipped)
+### HTTP through the read-ahead proxy (shipped: `src/http_proxy.rs`)
 
-`--http-proxy` (bench/proxy.rs): head and tail fetched in parallel as soon as the link is known. Saves one TTFB or more (0.2–1.3 s); not shipped (a loopback proxy in the player path for every debrid link is a product decision).
+`bench/http-proxy-campaign.sh`: the same binary, mpv straight on the link ("before", the app
+without the proxy: MpvCore options, `network-timeout` 8 s) vs through the shipped proxy, opened the
+way the app opens it (`httpOpen` with the resume position, the duration and the file size an addon
+gives as `behaviorHints.videoSize`; unmetered read-ahead), its loopback URL handed to mpv ("after").
+5 runs per cell, median / worst, s. What it does at open: head (open-ended for a start, 2 MiB for a
+resume), tail (512 KiB suffix for Matroska: Cues + Tags; 2 MiB for MP4: the moov) and the resume
+target (5 s before the position, from the mean bitrate) requested in parallel; mpv's reads are then
+served from them. Seek (mid-play, to a position nobody predicted) still costs one round trip: same
+as before.
 
 | profile | file | scenario | before: start→frame | after: start→frame | after: tap→frame | before: seek | after: seek | runs |
 |---|---|---|---|---|---|---|---|---|
-| http-100ms-50M | h264.mkv | start | 0.49 / 0.57 | 0.29 / 0.34 | 0.29 / 0.34 |  |  | 5 / 5 |
-| http-300ms-10M | h264.mkv | start | 1.13 / 1.14 | 0.66 / 0.67 | 0.66 / 0.67 |  |  | 5 / 5 |
-| http-800ms-2M | h264.mkv | start | 2.69 / 2.71 | 2.00 / 2.01 | 2.00 / 2.01 |  |  | 5 / 5 |
-| http-100ms-50M | moov-end.mp4 | start | 0.55 / 0.60 | 0.28 / 0.29 | 0.28 / 0.29 |  |  | 5 / 5 |
-| http-300ms-10M | moov-end.mp4 | start | 1.23 / 1.26 | 0.67 / 0.67 | 0.67 / 0.67 |  |  | 5 / 5 |
-| http-800ms-2M | moov-end.mp4 | start | 3.27 / 3.30 | 2.00 / 2.00 | 2.00 / 2.00 |  |  | 5 / 5 |
-| http-100ms-50M | h264.mkv | resume | 0.60 / 0.60 | 0.39 / 0.39 | 0.39 / 0.39 |  |  | 5 / 5 |
-| http-300ms-10M | h264.mkv | resume | 1.43 / 1.45 | 0.98 / 0.99 | 0.98 / 0.99 |  |  | 5 / 5 |
-| http-800ms-2M | h264.mkv | resume | 3.67 / 3.68 | 2.98 / 2.99 | 2.98 / 2.99 |  |  | 5 / 5 |
-| http-100ms-50M | moov-end.mp4 | resume | 0.52 / 0.53 | 0.40 / 0.41 | 0.40 / 0.41 |  |  | 5 / 5 |
-| http-300ms-10M | moov-end.mp4 | resume | 1.23 / 1.24 | 0.98 / 0.99 | 0.98 / 0.99 |  |  | 5 / 5 |
-| http-800ms-2M | moov-end.mp4 | resume | 3.27 / 3.27 | 2.88 / 2.89 | 2.88 / 2.89 |  |  | 5 / 5 |
-| http-100ms-50M | h264.mkv | seek | 0.51 / 0.51 | 0.29 / 0.29 | 0.29 / 0.29 | 0.49 / 0.51 | 0.43 / 0.44 | 5 / 5 |
-| http-300ms-10M | h264.mkv | seek | 1.10 / 1.11 | 0.67 / 0.67 | 0.67 / 0.67 | 0.75 / 0.75 | 0.73 / 0.73 | 5 / 5 |
-| http-800ms-2M | h264.mkv | seek | 2.68 / 2.68 | 2.01 / 2.02 | 2.01 / 2.02 | 2.90 / 2.90 | 2.90 / 2.91 | 5 / 5 |
-| http-100ms-50M | moov-end.mp4 | seek | 0.52 / 0.52 | 0.29 / 0.29 | 0.29 / 0.29 | 0.48 / 0.51 | 0.44 / 0.46 | 5 / 5 |
-| http-300ms-10M | moov-end.mp4 | seek | 1.24 / 1.25 | 0.67 / 0.68 | 0.67 / 0.68 | 0.78 / 0.80 | 0.76 / 0.77 | 5 / 5 |
-| http-800ms-2M | moov-end.mp4 | seek | 3.28 / 3.29 | 2.01 / 2.02 | 2.01 / 2.02 | 3.03 / 3.04 | 3.03 / 3.04 | 5 / 5 |
+| http-100ms-2M | h264.mkv | start | 0.57 / 0.62 | 0.43 / 0.46 | 0.43 / 0.46 |  |  | 5 / 5 |
+| http-100ms-10M | h264.mkv | start | 0.48 / 0.49 | 0.31 / 0.38 | 0.31 / 0.38 |  |  | 5 / 5 |
+| http-100ms-50M | h264.mkv | start | 0.47 / 0.48 | 0.25 / 0.26 | 0.25 / 0.26 |  |  | 5 / 5 |
+| http-300ms-2M | h264.mkv | start | 1.17 / 1.18 | 0.70 / 0.71 | 0.70 / 0.71 |  |  | 5 / 5 |
+| http-300ms-10M | h264.mkv | start | 1.09 / 1.09 | 0.51 / 0.51 | 0.51 / 0.51 |  |  | 5 / 5 |
+| http-300ms-50M | h264.mkv | start | 1.07 / 1.07 | 0.47 / 0.47 | 0.47 / 0.47 |  |  | 5 / 5 |
+| http-800ms-2M | h264.mkv | start | 2.67 / 2.67 | 1.22 / 1.23 | 1.22 / 1.23 |  |  | 5 / 5 |
+| http-800ms-10M | h264.mkv | start | 2.59 / 2.60 | 1.01 / 1.03 | 1.01 / 1.03 |  |  | 5 / 5 |
+| http-800ms-50M | h264.mkv | start | 2.57 / 2.57 | 0.97 / 0.97 | 0.97 / 0.97 |  |  | 5 / 5 |
+| http-100ms-2M | moov-end.mp4 | start | 1.25 / 1.26 | 1.11 / 1.11 | 1.11 / 1.11 |  |  | 5 / 5 |
+| http-100ms-10M | moov-end.mp4 | start | 0.64 / 0.64 | 0.47 / 0.48 | 0.47 / 0.48 |  |  | 5 / 5 |
+| http-100ms-50M | moov-end.mp4 | start | 0.51 / 0.51 | 0.29 / 0.30 | 0.29 / 0.30 |  |  | 5 / 5 |
+| http-300ms-2M | moov-end.mp4 | start | 1.85 / 1.86 | 1.51 / 1.52 | 1.51 / 1.52 |  |  | 5 / 5 |
+| http-300ms-10M | moov-end.mp4 | start | 1.24 / 1.25 | 0.67 / 0.68 | 0.67 / 0.68 |  |  | 5 / 5 |
+| http-300ms-50M | moov-end.mp4 | start | 1.11 / 1.12 | 0.50 / 0.50 | 0.50 / 0.50 |  |  | 5 / 5 |
+| http-800ms-2M | moov-end.mp4 | start | 3.37 / 3.39 | 2.01 / 2.01 | 2.01 / 2.01 |  |  | 5 / 5 |
+| http-800ms-10M | moov-end.mp4 | start | 2.74 / 2.75 | 1.17 / 1.17 | 1.17 / 1.17 |  |  | 5 / 5 |
+| http-800ms-50M | moov-end.mp4 | start | 2.60 / 2.62 | 1.00 / 1.01 | 1.00 / 1.01 |  |  | 5 / 5 |
+| http-100ms-2M | h264.mkv | resume | 0.84 / 0.85 | 0.71 / 0.74 | 0.71 / 0.74 |  |  | 5 / 5 |
+| http-100ms-10M | h264.mkv | resume | 0.60 / 0.61 | 0.30 / 0.30 | 0.30 / 0.30 |  |  | 5 / 5 |
+| http-100ms-50M | h264.mkv | resume | 0.57 / 0.58 | 0.25 / 0.26 | 0.25 / 0.26 |  |  | 5 / 5 |
+| http-300ms-2M | h264.mkv | resume | 1.65 / 1.65 | 1.20 / 1.20 | 1.20 / 1.20 |  |  | 5 / 5 |
+| http-300ms-10M | h264.mkv | resume | 1.42 / 1.42 | 0.51 / 0.51 | 0.51 / 0.51 |  |  | 5 / 5 |
+| http-300ms-50M | h264.mkv | resume | 1.39 / 1.39 | 0.47 / 0.47 | 0.47 / 0.47 |  |  | 5 / 5 |
+| http-800ms-2M | h264.mkv | resume | 3.65 / 3.66 | 1.73 / 1.73 | 1.73 / 1.73 |  |  | 5 / 5 |
+| http-800ms-10M | h264.mkv | resume | 3.42 / 3.43 | 1.01 / 1.02 | 1.01 / 1.02 |  |  | 5 / 5 |
+| http-800ms-50M | h264.mkv | resume | 3.39 / 3.39 | 0.97 / 0.97 | 0.97 / 0.97 |  |  | 5 / 5 |
+| http-100ms-2M | moov-end.mp4 | resume | 1.25 / 1.27 | 1.11 / 1.11 | 1.11 / 1.11 |  |  | 5 / 5 |
+| http-100ms-10M | moov-end.mp4 | resume | 0.63 / 0.64 | 0.47 / 0.47 | 0.47 / 0.47 |  |  | 5 / 5 |
+| http-100ms-50M | moov-end.mp4 | resume | 0.51 / 0.51 | 0.28 / 0.29 | 0.28 / 0.29 |  |  | 5 / 5 |
+| http-300ms-2M | moov-end.mp4 | resume | 1.86 / 1.87 | 1.50 / 1.51 | 1.50 / 1.51 |  |  | 5 / 5 |
+| http-300ms-10M | moov-end.mp4 | resume | 1.23 / 1.24 | 0.67 / 0.67 | 0.67 / 0.67 |  |  | 5 / 5 |
+| http-300ms-50M | moov-end.mp4 | resume | 1.11 / 1.11 | 0.50 / 0.52 | 0.50 / 0.52 |  |  | 5 / 5 |
+| http-800ms-2M | moov-end.mp4 | resume | 3.36 / 3.37 | 2.00 / 2.01 | 2.00 / 2.01 |  |  | 5 / 5 |
+| http-800ms-10M | moov-end.mp4 | resume | 2.73 / 2.74 | 1.17 / 1.17 | 1.17 / 1.17 |  |  | 5 / 5 |
+| http-800ms-50M | moov-end.mp4 | resume | 2.61 / 2.62 | 1.00 / 1.00 | 1.00 / 1.00 |  |  | 5 / 5 |
+| http-100ms-2M | h264.mkv | seek | 0.56 / 0.58 | 0.46 / 0.46 | 0.46 / 0.46 | 2.20 / 2.21 | 2.20 / 2.21 | 5 / 5 |
+| http-100ms-10M | h264.mkv | seek | 0.49 / 0.50 | 0.30 / 0.31 | 0.30 / 0.31 | 0.54 / 0.54 | 0.53 / 0.54 | 5 / 5 |
+| http-100ms-50M | h264.mkv | seek | 0.47 / 0.47 | 0.26 / 0.26 | 0.26 / 0.26 | 0.46 / 0.48 | 0.45 / 0.46 | 5 / 5 |
+| http-300ms-2M | h264.mkv | seek | 1.17 / 1.18 | 0.71 / 0.71 | 0.71 / 0.71 | 2.40 / 2.40 | 2.41 / 2.42 | 5 / 5 |
+| http-300ms-10M | h264.mkv | seek | 1.09 / 1.10 | 0.51 / 0.51 | 0.51 / 0.51 | 0.73 / 0.74 | 0.74 / 0.74 | 5 / 5 |
+| http-300ms-50M | h264.mkv | seek | 1.07 / 1.08 | 0.47 / 0.47 | 0.47 / 0.47 | 0.64 / 0.67 | 0.65 / 0.66 | 5 / 5 |
+| http-800ms-2M | h264.mkv | seek | 2.67 / 2.67 | 1.22 / 1.22 | 1.22 / 1.22 | 2.90 / 2.91 | 2.91 / 2.91 | 5 / 5 |
+| http-800ms-10M | h264.mkv | seek | 2.59 / 2.59 | 1.01 / 1.02 | 1.01 / 1.02 | 1.24 / 1.25 | 1.23 / 1.24 | 5 / 5 |
+| http-800ms-50M | h264.mkv | seek | 2.57 / 2.58 | 0.97 / 0.98 | 0.97 / 0.98 | 1.16 / 1.16 | 1.15 / 1.16 | 5 / 5 |
+| http-100ms-2M | moov-end.mp4 | seek | 1.26 / 1.27 | 1.11 / 1.12 | 1.11 / 1.12 | 2.21 / 2.21 | 2.20 / 2.21 | 5 / 5 |
+| http-100ms-10M | moov-end.mp4 | seek | 0.64 / 0.65 | 0.46 / 0.47 | 0.46 / 0.47 | 0.53 / 0.54 | 0.53 / 0.54 | 5 / 5 |
+| http-100ms-50M | moov-end.mp4 | seek | 0.51 / 0.51 | 0.29 / 0.30 | 0.29 / 0.30 | 0.45 / 0.47 | 0.45 / 0.47 | 5 / 5 |
+| http-300ms-2M | moov-end.mp4 | seek | 1.86 / 1.86 | 1.51 / 1.53 | 1.51 / 1.53 | 2.41 / 2.41 | 2.40 / 2.42 | 5 / 5 |
+| http-300ms-10M | moov-end.mp4 | seek | 1.24 / 1.24 | 0.67 / 0.68 | 0.67 / 0.68 | 0.74 / 0.74 | 0.73 / 0.74 | 5 / 5 |
+| http-300ms-50M | moov-end.mp4 | seek | 1.11 / 1.12 | 0.50 / 0.50 | 0.50 / 0.50 | 0.65 / 0.65 | 0.64 / 0.65 | 5 / 5 |
+| http-800ms-2M | moov-end.mp4 | seek | 3.37 / 3.38 | 2.00 / 2.01 | 2.00 / 2.01 | 2.91 / 2.91 | 2.90 / 2.91 | 5 / 5 |
+| http-800ms-10M | moov-end.mp4 | seek | 2.74 / 2.75 | 1.17 / 1.18 | 1.17 / 1.18 | 1.24 / 1.24 | 1.23 / 1.24 | 5 / 5 |
+| http-800ms-50M | moov-end.mp4 | seek | 2.61 / 2.61 | 0.99 / 1.00 | 0.99 / 1.00 | 1.16 / 1.19 | 1.16 / 1.17 | 5 / 5 |
+
+#### Resume without a file size from the addon (`--no-size`)
+
+The target leaves with the first answer (the length), one round trip later; head + tail in
+parallel still save one.
+
+| profile | file | scenario | before: start→frame | after: start→frame | after: tap→frame | before: seek | after: seek | runs |
+|---|---|---|---|---|---|---|---|---|
+| http-100ms-2M | h264.mkv | resume | 0.84 / 0.85 | 0.71 / 0.74 | 0.71 / 0.74 |  |  | 5 / 5 |
+| http-100ms-10M | h264.mkv | resume | 0.60 / 0.61 | 0.40 / 0.40 | 0.40 / 0.40 |  |  | 5 / 5 |
+| http-100ms-50M | h264.mkv | resume | 0.57 / 0.58 | 0.26 / 0.27 | 0.26 / 0.27 |  |  | 5 / 5 |
+| http-300ms-2M | h264.mkv | resume | 1.65 / 1.65 | 1.19 / 1.20 | 1.19 / 1.20 |  |  | 5 / 5 |
+| http-300ms-10M | h264.mkv | resume | 1.42 / 1.42 | 0.80 / 0.81 | 0.80 / 0.81 |  |  | 5 / 5 |
+| http-300ms-50M | h264.mkv | resume | 1.39 / 1.39 | 0.67 / 0.68 | 0.67 / 0.68 |  |  | 5 / 5 |
+| http-800ms-2M | h264.mkv | resume | 3.65 / 3.66 | 2.53 / 2.54 | 2.53 / 2.54 |  |  | 5 / 5 |
+| http-800ms-10M | h264.mkv | resume | 3.42 / 3.43 | 1.80 / 1.81 | 1.80 / 1.81 |  |  | 5 / 5 |
+| http-800ms-50M | h264.mkv | resume | 3.39 / 3.39 | 1.68 / 1.68 | 1.68 / 1.68 |  |  | 5 / 5 |
+| http-100ms-2M | moov-end.mp4 | resume | 1.25 / 1.27 | 1.10 / 1.11 | 1.10 / 1.11 |  |  | 5 / 5 |
+| http-100ms-10M | moov-end.mp4 | resume | 0.63 / 0.64 | 0.47 / 0.48 | 0.47 / 0.48 |  |  | 5 / 5 |
+| http-100ms-50M | moov-end.mp4 | resume | 0.51 / 0.51 | 0.36 / 0.36 | 0.36 / 0.36 |  |  | 5 / 5 |
+| http-300ms-2M | moov-end.mp4 | resume | 1.86 / 1.87 | 1.51 / 1.51 | 1.51 / 1.51 |  |  | 5 / 5 |
+| http-300ms-10M | moov-end.mp4 | resume | 1.23 / 1.24 | 0.84 / 0.85 | 0.84 / 0.85 |  |  | 5 / 5 |
+| http-300ms-50M | moov-end.mp4 | resume | 1.11 / 1.11 | 0.77 / 0.78 | 0.77 / 0.78 |  |  | 5 / 5 |
+| http-800ms-2M | moov-end.mp4 | resume | 3.36 / 3.37 | 2.24 / 2.24 | 2.24 / 2.24 |  |  | 5 / 5 |
+| http-800ms-10M | moov-end.mp4 | resume | 2.73 / 2.74 | 1.85 / 1.85 | 1.85 / 1.85 |  |  | 5 / 5 |
+| http-800ms-50M | moov-end.mp4 | resume | 2.61 / 2.62 | 1.77 / 1.77 | 1.77 / 1.77 |  |  | 5 / 5 |
+
+#### Server ignoring Range (`http-…-norange`)
+
+The proxy finds out from its first answers (head and suffix both `200`) and redirects mpv to the
+original link: one round trip lost the first time, then the origin is remembered for the app's
+session (`httpOpen` answers `fallback: "noRange"` at once). Each bench run starts a fresh proxy, so
+every row pays it.
+
+| profile | file | scenario | before: start→frame | after: start→frame | after: tap→frame | before: seek | after: seek | runs |
+|---|---|---|---|---|---|---|---|---|
+| http-300ms-10M-norange | h264.mkv | start | 0.47 / 0.48 | 0.77 / 0.78 | 0.77 / 0.78 |  |  | 5 / 5 |
+| http-800ms-2M-norange | h264.mkv | start | 1.02 / 1.03 | 1.83 / 1.84 | 1.83 / 1.84 |  |  | 5 / 5 |
+
+#### A range that never comes (`hang-tail --hang-once`: the last 2 MiB hang once)
+
+| file | scenario | before (mpv alone, `network-timeout` 8 s) | after (proxy) |
+|---|---|---|---|
+| h264.mkv | start | 8.73 / 8.74 | 0.37 / 0.38 |
+| h264.mkv | resume | 8.79 / 8.79 | 0.30 / 0.30 |
+| moov-end.mp4 | start | 8.80 / 8.81 | 0.40 / 0.41 |
+| moov-end.mp4 | resume | 8.80 / 8.81 | 0.40 / 0.41 |
+
+The stuck request is the proxy's own tail prefetch; mpv's read is served by a new request (a
+range that stops delivering is asked again after 2–6 s, `stall_after`, or at once when a new
+request is sooner than the stuck one could be).
 
 ### Storm
 
@@ -419,5 +516,5 @@ Cap 5 / 10 GB, data folder empty / 2 GB / 50 % / 95 % / 100 % full before the ta
 - Bytes before frame 1: MP4 `moov` (1.4 MB here) and fansub font attachments (MiB) bound the
   start on slow swarms; pre-warm (Wi-Fi) is the only lever there.
 - A single slow peer's throughput (obscure): the first frame is at the floor; seeks stall.
-- mpv's serial requests (head → index → back): 0.3–0.8 s over the floor on fast swarms, one TTFB
-  each on HTTP (the proxy prototype measures what parallel prefetch would save).
+- mpv's serial requests (head → index → back): 0.3–0.8 s over the floor on fast swarms. On HTTP
+  the read-ahead proxy removes them (one round trip for a start or a resume); a seek still pays one.

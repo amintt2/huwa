@@ -22,6 +22,8 @@ pub struct ServeCfg {
     /// The first request starting at or after this offset never answers (a stuck range); the
     /// next ones are served (`hang-tail` with `--hang-once`).
     pub hang_once_from: Option<u64>,
+    /// Ignores `Range`: every answer is `200` with the whole file (`http-…-norange` profiles).
+    pub no_range: bool,
 }
 
 #[derive(Debug, Clone, serde::Serialize)]
@@ -143,12 +145,17 @@ async fn serve_conn(
         if generation.load(Ordering::Acquire) != gen {
             return Ok(());
         }
-        let status = if range.is_some() { "206 Partial Content" } else { "200 OK" };
-        let head = format!(
-            "HTTP/1.1 {status}\r\nContent-Type: application/octet-stream\r\nAccept-Ranges: bytes\r\nContent-Length: {}\r\nContent-Range: bytes {start}-{}/{len}\r\n\r\n",
-            end - start,
-            end.saturating_sub(1)
-        );
+        let (start, end) = if c.no_range { (0, len) } else { (start, end) };
+        let status = if range.is_some() && !c.no_range { "206 Partial Content" } else { "200 OK" };
+        let head = if c.no_range {
+            format!("HTTP/1.1 {status}\r\nContent-Type: application/octet-stream\r\nContent-Length: {len}\r\n\r\n")
+        } else {
+            format!(
+                "HTTP/1.1 {status}\r\nContent-Type: application/octet-stream\r\nAccept-Ranges: bytes\r\nContent-Length: {}\r\nContent-Range: bytes {start}-{}/{len}\r\n\r\n",
+                end - start,
+                end.saturating_sub(1)
+            )
+        };
         wr.write_all(head.as_bytes()).await?;
         let mut f = tokio::fs::File::open(&file).await?;
         f.seek(std::io::SeekFrom::Start(start)).await?;
@@ -409,11 +416,33 @@ pub fn run_floor(b: &Bench, profile_name: &str, file: &str, scenario: &str, rep:
 // HTTP streams (debrid / AIOStreams links played by mpv)
 // ------------------------------------------------------------------------------------------------
 
-/// `http-<ttfb>-<rate>`, e.g. `http-300ms-10M` (rate in MB/s).
+/// `http-<ttfb>-<rate>[-norange]`, e.g. `http-300ms-10M` (rate in MB/s); `-norange`: a server
+/// that ignores Range (200 + the whole file to every request).
 pub fn http_profile(name: &str) -> Option<ServeCfg> {
     let rest = name.strip_prefix("http-")?;
+    let (rest, no_range) = match rest.strip_suffix("-norange") {
+        Some(r) => (r, true),
+        None => (rest, false),
+    };
     let (ttfb, rate) = rest.split_once('-')?;
-    Some(ServeCfg { ttfb: parse_duration(ttfb), rate: rate.trim_end_matches('M').parse::<f64>().ok()? * 1e6, allowed: None, hang_once_from: None })
+    Some(ServeCfg { ttfb: parse_duration(ttfb), rate: rate.trim_end_matches('M').parse::<f64>().ok()? * 1e6, allowed: None, hang_once_from: None, no_range })
+}
+
+/// The app's path for an HTTP source played by mpv (hybrid-player.ts → src/torrent/http-proxy.ts
+/// → `httpOpen`): the shipped proxy, its loopback URL handed to mpv. A resume passes the position
+/// and the duration (saved progress); the file size is passed like an addon's
+/// `behaviorHints.videoSize` (`--no-size`: an addon without it); unmetered read-ahead.
+pub fn open_through_proxy(b: &Bench, url: &str, file: &str, start: f64) -> (Arc<huwa_torrent_core::http_proxy::HttpProxy>, String) {
+    use huwa_torrent_core::http_proxy::{HttpProxy, ProxyOptions};
+    let px = HttpProxy::start_with(ProxyOptions { allow_loopback: true }).expect("http proxy");
+    let size = (!b.args.no_size).then(|| std::fs::metadata(b.args.fixtures.join(file)).map(|m| m.len()).ok()).flatten();
+    let prefetch = if start > 1.0 { json!({ "startAt": start, "duration": b.args.duration, "size": size }) } else { json!({ "size": size }) };
+    let o = px.dispatch("httpOpen", json!({ "url": url, "prefetch": prefetch })).expect("httpOpen");
+    let u = match o["url"].as_str() {
+        Some(u) => u.to_string(),
+        None => url.to_string(), // fallback (direct)
+    };
+    (px, u)
 }
 
 /// One start / resume / seek of an HTTP link with mpv (no engine).
@@ -425,11 +454,13 @@ pub fn run_http(b: &Bench, profile_name: &str, file: &str, scenario: &str, rep: 
     let start = if scenario == "resume" { b.args.resume_at } else { 0.0 };
     srv.reset(cfg);
     let t0 = Instant::now();
-    // The URL reaches the player: with `--http-proxy`, through the read-ahead proxy started now.
-    let px = b.args.http_proxy.then(|| crate::proxy::start(&b.rt, &srv.url(file)));
-    let url = match &px {
-        Some(p) => format!("http://127.0.0.1:{}/{file}", p.port),
-        None => srv.url(file),
+    // The URL reaches the player: with `--http-proxy`, through the shipped proxy opened now.
+    let (px, url) = match b.args.http_proxy {
+        true => {
+            let (p, u) = open_through_proxy(b, &srv.url(file), file, start);
+            (Some(p), u)
+        }
+        false => (None, srv.url(file)),
     };
     mpv.load_remote(&url, start);
     let mut stalls = Stalls::default();
@@ -459,7 +490,12 @@ pub fn run_http(b: &Bench, profile_name: &str, file: &str, scenario: &str, rep: 
     }
     r.stalls = stalls.count;
     r.stall_ms = stalls.total.as_millis() as u64;
-    r.timeline = json!({ "requests": *srv.log.lock() });
+    let proxy = px.as_ref().and_then(|p| p.status(1)).map(|s| serde_json::to_value(s).unwrap_or_default());
+    r.timeline = json!({ "requests": *srv.log.lock(), "proxy": proxy });
+    drop(mpv);
+    if let Some(p) = px {
+        p.shutdown();
+    }
     r
 }
 
@@ -475,14 +511,21 @@ pub fn hang_tail(b: &Bench) {
             let _ = mpv.wait("END", Instant::now() + Duration::from_secs(2), &mut |_, _| {});
             while mpv.rx.try_recv().is_ok() {}
             let cfg = if b.args.hang_once {
-                ServeCfg { ttfb: Duration::from_millis(100), rate: 10e6, allowed: None, hang_once_from: Some(len - 2 * MIB) }
+                ServeCfg { ttfb: Duration::from_millis(100), rate: 10e6, allowed: None, hang_once_from: Some(len - 2 * MIB), no_range: false }
             } else {
-                ServeCfg { ttfb: Duration::from_millis(100), rate: 10e6, allowed: Some(vec![(0, len - 2 * MIB)]), hang_once_from: None }
+                ServeCfg { ttfb: Duration::from_millis(100), rate: 10e6, allowed: Some(vec![(0, len - 2 * MIB)]), hang_once_from: None, no_range: false }
             };
             srv.reset(cfg);
             let t = Instant::now();
-            mpv.load_remote(&srv.url(file), start);
+            let px = b.args.http_proxy.then(|| open_through_proxy(b, &srv.url(file), file, start));
+            let url = px.as_ref().map_or_else(|| srv.url(file), |(_, u)| u.clone());
+            mpv.load_remote(&url, start);
             let ff = mpv.wait("RESTART", t + b.args.timeout, &mut |_, _| {});
+            if let Some((p, _)) = px {
+                mpv.cmd(json!(["stop"]));
+                let _ = mpv.wait("END", Instant::now() + Duration::from_secs(2), &mut |_, _| {});
+                p.shutdown();
+            }
             let reqs: Vec<(u64, u64)> = srv.log.lock().iter().map(|r| (r.t_ms, r.start)).collect();
             println!("hang-tail {file} {scenario}: frame {} s, requests {:?}", fmt_ms(ff.map(|f| (f - t).as_millis() as u64)), reqs);
         }

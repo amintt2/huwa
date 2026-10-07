@@ -38,7 +38,6 @@ use tokio::{
 };
 
 mod files;
-mod proxy;
 
 const KIB: u64 = 1024;
 const MIB: u64 = 1024 * KIB;
@@ -68,8 +67,12 @@ struct Args {
     switch_hard: bool,
     /// Storm: no `release` of the torrent left behind (the app's holds, src/torrent/hold.ts).
     no_release: bool,
-    /// HTTP profiles: mpv reads through the engine's loopback read-ahead proxy.
+    /// HTTP profiles: mpv reads through the shipped loopback read-ahead proxy (src/http_proxy.rs).
     http_proxy: bool,
+    /// Video duration the app passes with a resume (saved progress), for the proxy's target.
+    duration: f64,
+    /// HTTP proxy: no file size hint (an addon without `behaviorHints.videoSize`).
+    no_size: bool,
     net_timeout: String,
     hang_once: bool,
     /// Engine `unverifiedStart`.
@@ -129,6 +132,8 @@ fn parse_args() -> Args {
         switch_hard: false,
         no_release: false,
         http_proxy: false,
+        duration: 1440.0,
+        no_size: false,
         // MpvCore: 8 s for remote URLs since the start fixes (20 s before, the baseline build).
         net_timeout: if cfg!(huwa_baseline) { "20" } else { "8" }.into(),
         hang_once: false,
@@ -172,6 +177,8 @@ fn parse_args() -> Args {
             "--switch-hard" => a.switch_hard = true,
             "--no-release" => a.no_release = true,
             "--http-proxy" => a.http_proxy = true,
+            "--duration" => a.duration = val().parse().unwrap(),
+            "--no-size" => a.no_size = true,
             "--net-timeout" => a.net_timeout = val(),
             "--hang-once" => a.hang_once = true,
             "--unverified" => a.unverified = true,

@@ -16,6 +16,8 @@
 //!   → `ProbeStatus` (returns at once; the probe runs in the background, see `probe.rs`)
 //! - `probeStatus` `{id}` → `ProbeStatus`; `{ids}` → `ProbeStatus[]` (unknown ids left out)
 //! - `probeCancel` `{id}` | `{ids}` → `true`
+//! - `httpOpen` / `httpPrefetch` / `httpRelease` / `httpStatus`: the HTTP read-ahead proxy, see
+//!   `http_proxy.rs` (dispatched by `ffi::call_json` before this, without the torrent engine)
 
 use std::sync::Arc;
 

@@ -962,6 +962,7 @@ dependencies = [
  "jni 0.21.1",
  "librqbit",
  "parking_lot",
+ "reqwest",
  "serde",
  "serde_json",
  "tokio",

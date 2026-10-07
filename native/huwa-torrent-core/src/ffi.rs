@@ -69,12 +69,17 @@ pub fn init_from_json(config_json: &str) -> Result<Value> {
 }
 
 pub fn call_json(method: &str, args_json: &str) -> Result<Value> {
-    let engine = engine()?;
     let args: Value = if args_json.trim().is_empty() { Value::Object(Default::default()) } else { serde_json::from_str(args_json)? };
+    // The HTTP proxy does not need the torrent engine (nor starts it).
+    if method.starts_with("http") {
+        return crate::http_proxy::dispatch_global(method, args);
+    }
+    let engine = engine()?;
     api::dispatch(&engine, method, args)
 }
 
 pub fn shutdown_engine() {
+    crate::http_proxy::shutdown_global();
     let taken = ENGINE.write().take();
     if let Some(e) = taken {
         let _ = catch_unwind(AssertUnwindSafe(|| e.shutdown()));
