@@ -73,12 +73,16 @@ pub struct Config {
     /// player needs a few hundred KiB, a piece is 1–16 MiB. Integrity: a piece failing its check is
     /// downloaded again, but bytes already read stay read (a damaged frame, or a file the player
     /// cannot open; never data kept on disk). Only until the playback settles.
-    #[serde(default)]
+    /// On by default (`"unverifiedStart": false` turns it off).
+    #[serde(default = "default_true")]
     pub unverified_start: bool,
 }
 
 fn default_cache_limit() -> u64 {
     5 * 1024 * 1024 * 1024
+}
+fn default_true() -> bool {
+    true
 }
 fn default_resolve_timeout() -> u64 {
     90
