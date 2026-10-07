@@ -54,6 +54,11 @@ export type Settings = {
   autoSwitchSource: boolean;
   /** Small message over the video when the source changed by itself. */
   switchToast: boolean;
+  /**
+   * HTTP links played by mpv go through the engine's loopback read-ahead proxy (head, end of file
+   * and resume point fetched in parallel). Builds with the native engine only.
+   */
+  httpProxy: boolean;
 };
 
 export const SETTINGS_KEY = 'huwa/settings/v1';
@@ -76,6 +81,7 @@ export const DEFAULT_SETTINGS: Settings = {
   cellularData: 'balanced',
   autoSwitchSource: true,
   switchToast: true,
+  httpProxy: true,
 };
 
 /** Font size in points for each subtitle size setting. */
@@ -118,6 +124,7 @@ function sanitize(raw: unknown): Settings {
     cellularData: pick('cellularData', (x) => CELLULAR_DATA.includes(x as CellularData)),
     autoSwitchSource: pick('autoSwitchSource', bool),
     switchToast: pick('switchToast', bool),
+    httpProxy: pick('httpProxy', bool),
   };
 }
 

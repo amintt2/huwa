@@ -281,6 +281,8 @@ function WatchScreen({ id, at }: { id: string; at?: number }) {
     if (!saved || !saved.duration) return undefined;
     return saved.position / saved.duration < 0.92 ? saved.position : undefined;
   };
+  /** Length of the file last played for this episode (the HTTP proxy places the resume with it). */
+  const resumeDuration = () => getState().episodes[id]?.duration || undefined;
   const onProgress = (position: number, duration: number) => {
     saveEpisodeProgress(id, position, duration);
     // Preload the next episode from mid-episode (or the last 5 minutes of a long one).
@@ -519,7 +521,7 @@ function WatchScreen({ id, at }: { id: string; at?: number }) {
         ) : (
           <Player
             ref={playerRef}
-            source={offline ? { uri: offline.uri } : src.url ? { uri: src.url, headers: src.headers } : null}
+            source={offline ? { uri: offline.uri } : src.url ? { uri: src.url, headers: src.headers, size: src.current?.behaviorHints?.videoSize } : null}
             title={series.title}
             subtitle={episodeLabel(episode)}
             artwork={series.image}
@@ -558,6 +560,7 @@ function WatchScreen({ id, at }: { id: string; at?: number }) {
                 : null
             }
             startAt={startAt}
+            resumeDuration={resumeDuration}
             onProgress={onProgress}
             onEnd={() => markEpisodeDone(id)}
             onError={onPlayerError}

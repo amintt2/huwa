@@ -1,7 +1,7 @@
 import Constants from 'expo-constants';
 import { router, type Href } from 'expo-router';
 import { useState } from 'react';
-import { ActivityIndicator, Alert, StyleSheet, Switch, View } from 'react-native';
+import { ActivityIndicator, Alert, Platform, StyleSheet, Switch, View } from 'react-native';
 
 import { LanguagePrefs } from '@/components/language-prefs';
 import { EngineSetting } from '@/components/player/engines/EngineSetting';
@@ -15,9 +15,12 @@ import { importAniList, loginWithAniList, oauthAvailable } from '@/settings/anil
 import { clearCache, exportData, personalAddonsInExport, pickBackup, restoreBackup } from '@/settings/backup';
 import { CELLULAR_DATA } from '@/settings/network-budget';
 import { setSetting, useSettings, type Quality } from '@/settings/settings';
+import { isAvailable as torrentEngineLinked } from '@/torrent';
 import { C, S } from '@/theme/tokens';
 
 const QUALITIES: Quality[] = ['auto', '1080p', '720p', '480p'];
+/** The HTTP proxy lives in the native engine (builds with HUWA_TORRENT), iOS only for now. */
+const httpProxyAvailable = Platform.OS === 'ios' && torrentEngineLinked();
 
 export default function Settings() {
   const t = useT();
@@ -187,6 +190,14 @@ export default function Settings() {
             />
           )}
           <EngineSetting />
+          {httpProxyAvailable && (
+            <Row
+              icon="flash-outline"
+              label={t('settings.httpProxy')}
+              hint={t('settings.httpProxyHint')}
+              right={<Switch value={s.httpProxy} onValueChange={(v) => setSetting('httpProxy', v)} accessibilityLabel={t('settings.httpProxy')} {...switchProps} />}
+            />
+          )}
           <View style={styles.block}>
             <Txt v="label">{t('settings.quality')}</Txt>
             <Segmented

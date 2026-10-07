@@ -110,6 +110,23 @@ export function torrentProbeBudget(allowed: boolean, metered: boolean): TorrentP
   return metered ? TORRENT_PROBES_METERED : TORRENT_PROBES_UNMETERED;
 }
 
+// ---------- HTTP read-ahead proxy (src/components/player/engines/http-proxy.ts) ----------
+
+/**
+ * How far the proxy reads ahead of mpv (bytes; mpv's own cache comes on top), and whether a resume
+ * also fetches its estimated target at open (a guess from the mean bitrate: up to 2 MiB wasted
+ * when it misses, so not on Low Data Mode / "économie").
+ */
+export type HttpProxyBudget = { readAhead: number; target: boolean };
+
+const MIB = 1024 * 1024;
+
+export function httpProxyBudget(c: NetClass): HttpProxyBudget {
+  if (c === 'unmetered') return { readAhead: 8 * MIB, target: true };
+  if (c === 'cellular') return { readAhead: 4 * MIB, target: true };
+  return { readAhead: 1 * MIB, target: false };
+}
+
 // ---------- background source checks (while playing, see addons/source-controller.ts) ----------
 
 /** Re-probes of the alternatives while a source plays: how often, how many per round. */

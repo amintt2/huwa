@@ -48,7 +48,8 @@ import { takeWarm } from './warm-pool';
 
 export type { ExternalSubtitle } from './subtitles';
 
-export type PlayerSource = { uri: string; headers?: Record<string, string> };
+/** `size`: file size from the addon (`behaviorHints.videoSize`), a hint for the HTTP proxy. */
+export type PlayerSource = { uri: string; headers?: Record<string, string>; size?: number };
 
 export type PlayerHandle = {
   getTime: () => number;
@@ -79,6 +80,8 @@ export type PlayerProps = {
   onSubtitleLangs?: (langs: string[]) => void;
   /** Resume position in seconds, read when the first source finishes loading. */
   startAt?: () => number | undefined;
+  /** Duration of the episode when known (saved progress): the HTTP proxy places a resume with it. */
+  resumeDuration?: () => number | undefined;
   /** Throttled (5 s) and on leave. */
   onProgress?: (position: number, duration: number) => void;
   onEnd?: () => void;
@@ -188,6 +191,7 @@ export function Player({
   mediaKey,
   onSubtitleLangs,
   startAt,
+  resumeDuration,
   onProgress,
   onEnd,
   onError,
@@ -219,10 +223,10 @@ export function Player({
   const view = useRef<VideoView>(null);
   const lastSave = useRef(0);
   const loadedOnce = useRef(false);
-  const cb = useRef({ startAt, onProgress, onEnd, onError, next, onFullscreenChange, audioLangs, onAudioTracks });
+  const cb = useRef({ startAt, resumeDuration, onProgress, onEnd, onError, next, onFullscreenChange, audioLangs, onAudioTracks });
   const lastPos = useRef({ t: 0, d: 0 });
   useEffect(() => {
-    cb.current = { startAt, onProgress, onEnd, onError, next, onFullscreenChange, audioLangs, onAudioTracks };
+    cb.current = { startAt, resumeDuration, onProgress, onEnd, onError, next, onFullscreenChange, audioLangs, onAudioTracks };
   });
   /** URI of the current source, for the track handlers (events arrive after the render). */
   const sourceUri = useRef<string | null>(null);
@@ -344,7 +348,9 @@ export function Player({
     if (mediaKey) traceMark(mediaKey, 'url', tookWarm ? 'lecteur préchauffé' : undefined);
     // Resume position, known before the load: mpv opens the file right there (see replaceAsync).
     const at = keep != null && keep > 1 ? keep : cb.current.startAt?.();
-    (tookWarm ? Promise.resolve() : player.replaceAsync(src, { startAt: at }))
+    // For the HTTP proxy: where the resume point lies in the file (see replaceAsync).
+    const duration = keep != null && player.duration > 0 ? player.duration : cb.current.resumeDuration?.();
+    (tookWarm ? Promise.resolve() : player.replaceAsync(src, { startAt: at, duration, size: source.size }))
       .then(() => {
         if (!alive) return;
         if (tookWarm) {

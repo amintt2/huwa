@@ -136,6 +136,8 @@ export const fr = {
   'settings.autoSwitchHint': 'Pendant la lecture, passe à une meilleure qualité quand le réseau le permet, ou à une source plus stable si ça coupe. Sans couper la langue choisie.',
   'settings.switchToast': 'Signaler les changements de source',
   'settings.switchToastHint': 'Petit message sur la vidéo (« Qualité améliorée · 1080p → 2160p »).',
+  'settings.httpProxy': 'Démarrage rapide des liens directs',
+  'settings.httpProxyHint': 'Le début, la fin et le point de reprise des liens HTTP (debrid, AIOStreams) sont chargés en même temps au lieu de l’un après l’autre. Moins de lecture anticipée en données mobiles.',
   'settings.dubAutoFallback': 'Passer en VO quand la VF manque',
   'settings.dubAutoFallbackHint': 'Sans demander : la meilleure autre version (VOSTFR…) démarre, un message indique la langue.',
   'settings.quality': 'Qualité préférée',

@@ -6,6 +6,7 @@
 //     never the focus) and its loopback URL is read with a Range request, the first 256 KiB.
 //     Bounded: two torrents at a time, an 8 s budget each, results cached per infoHash + file.
 // Every read is a `RangeReader` (XMLHttpRequest on device, injected in tests).
+import { httpProxy, isProxiable } from '@/components/player/engines/http-proxy';
 import { readHead } from '@/components/player/engines/probe';
 import { sniffMore, sniffTracks, TRACK_HEAD_BYTES, type TrackList, type TrackSniff } from '@/components/player/engines/tracks';
 import { getSettings } from '@/settings/settings';
@@ -14,9 +15,26 @@ import { httpKey, knownOf, setFailed, setPending, setTracks, trackEntry } from '
 
 export type RangeReader = (url: string, headers: Record<string, string> | undefined, start: number, end: number, timeoutMs: number) => Promise<Uint8Array | null>;
 
-const xhrReader: RangeReader = async (url, headers, start, end, timeoutMs) => {
+const directReader: RangeReader = async (url, headers, start, end, timeoutMs) => {
   const h = await readHead(url, headers, start, end, timeoutMs);
   return h.status === 206 && h.bytes?.length ? h.bytes : null;
+};
+
+/**
+ * Through the HTTP proxy when there is one (src/components/player/engines/http-proxy.ts): the
+ * bytes read here (header, MP4 moov at the end) stay in its session for a while, and mpv playing
+ * this link right after reads them from there instead of downloading them again.
+ */
+const xhrReader: RangeReader = async (url, headers, start, end, timeoutMs) => {
+  const px = httpProxy();
+  if (!px || !isProxiable(url)) return directReader(url, headers, start, end, timeoutMs);
+  const h = await px.open(url, headers, null).catch(() => null);
+  if (!h) return directReader(url, headers, start, end, timeoutMs);
+  try {
+    return await directReader(h.url, undefined, start, end, timeoutMs);
+  } finally {
+    h.release();
+  }
 };
 
 /** HTTP sniff budget (head + follow-up). */

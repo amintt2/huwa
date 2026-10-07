@@ -103,8 +103,12 @@ async function withMoov(url: string, headers: Record<string, string> | undefined
   return more.length ? { ...s, codecs: [...new Set([...s.codecs, ...more])] } : s;
 }
 
-/** Never throws; `{ container: 'unknown' }` when nothing could be learned. */
-export async function probeSource(url: string, headers?: Record<string, string>): Promise<Probe> {
+/**
+ * Never throws; `{ container: 'unknown' }` when nothing could be learned. `via`: where to read
+ * the bytes instead (the HTTP proxy's loopback URL of this link: what the sniff reads stays there
+ * for mpv); the result is cached under `url`.
+ */
+export async function probeSource(url: string, headers?: Record<string, string>, via?: string): Promise<Probe> {
   const hit = cache.get(url);
   if (hit) return hit;
 
@@ -120,10 +124,18 @@ export async function probeSource(url: string, headers?: Record<string, string>)
   if (!/^https?:/i.test(url)) return fromExt;
 
   const t0 = Date.now();
-  const head = await readHead(url, headers);
+  // The proxy forwards the link's headers itself.
+  let [readUrl, readHeaders] = via ? [via, undefined] : [url, headers];
+  let head = await readHead(readUrl, readHeaders);
+  if (via && head.status !== 206) {
+    // Not through the proxy after all (a server ignoring Range is redirected there without the
+    // link's headers): the link itself.
+    [readUrl, readHeaders] = [url, headers];
+    head = await readHead(url, headers);
+  }
   if (head.bytes && head.bytes.length) {
     let s = sniff(head.bytes);
-    if (s.container === 'mp4' || s.container === 'mov') s = await withMoov(url, headers, head.bytes, s, t0);
+    if (s.container === 'mp4' || s.container === 'mov') s = await withMoov(readUrl, readHeaders, head.bytes, s, t0);
     if (s.container !== 'unknown') return remember(url, torrent ? { ...s, torrent } : s);
   }
   const mime = containerFromMime(head.contentType);

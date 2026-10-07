@@ -210,7 +210,9 @@ final class MpvCore {
       // never answers (the end of an MKV for its Cues/Tags, a resume target) costs exactly this
       // long before mpv asks again: 20 s each time measured (47 s opens on the device fit two of
       // them), 8 s with this value (native/huwa-torrent-core/bench, `hang-tail`).
-      let loopback = url.hasPrefix("http://127.0.0.1:")
+      // The engine's HTTP read-ahead proxy (`/http/<id>`) is a remote link behind a loopback URL:
+      // remote timeout (the proxy asks a stuck range again by itself after 2–6 s).
+      let loopback = url.hasPrefix("http://127.0.0.1:") && !url.contains("/http/")
       setAsync(ctx, "network-timeout", loopback ? "120" : "8")
       runCommand(ctx, ["loadfile", url, "replace"])
     }

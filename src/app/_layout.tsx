@@ -13,6 +13,7 @@ import { FullWindowOverlay } from 'react-native-screens';
 import { hydrateAddons } from '@/addons/registry';
 import { isStoreBuild } from '@/config/channel';
 import { cloudBackup } from '@/p2p/cloud-backup';
+import { registerHttpProxy } from '@/torrent/http-proxy';
 import { registerNativeTorrentEngine } from '@/torrent/register';
 import { Onboarding } from '@/components/onboarding';
 import { PresearchHost } from '@/components/presearch';
@@ -78,6 +79,7 @@ export default function RootLayout() {
   useEffect(() => {
     hydrateAddons();
     registerNativeTorrentEngine();
+    registerHttpProxy();
     if (!isDemo) cloudBackup.init().catch(() => {});
   }, []);
   useEffect(() => {

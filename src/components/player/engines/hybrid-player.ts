@@ -10,10 +10,11 @@ import { getSettings } from '@/settings/settings';
 
 import HuwaMpv, { getMpvNativeView, type MpvLoadedEvent, type MpvProgressEvent, type MpvStateEvent, type MpvTrack, type MpvViewHandle } from '../../../../modules/huwa-mpv';
 
+import { describeProxyError, httpProxy, isProxiable, type ProxyHandle, type ProxyPrefetch } from './http-proxy';
 import './local-probe';
-import { decideEngine, type DeviceCaps, type Engine } from './policy';
+import { decideEngine, type DeviceCaps, type Engine, type Probe } from './policy';
 import { getEnginePref, setActiveEngine } from './prefs';
-import { cachedProbe, probeSource } from './probe';
+import { cachedProbe, probeSource, probeWithoutRequest } from './probe';
 import { pickAudioTrack } from './tracks';
 
 type Listener = (...args: any[]) => void;
@@ -152,6 +153,8 @@ type MpvStage = {
   hwdec: string;
   size: { width: number; height: number } | null;
   facade: StagedPlayer;
+  /** HTTP read-ahead proxy session it reads from (./http-proxy.ts). */
+  proxy: ProxyHandle | null;
 };
 
 /** Event handlers + ref of one mpv surface (EngineView renders one per slot). */
@@ -233,6 +236,12 @@ export class HybridPlayer implements EventEmitter<VideoPlayerEvents> {
   private mainSlot = 1;
   private nextSlot = 2;
   private slotProps = new Map<number, MpvSlotProps>();
+  /** HTTP read-ahead proxy session of the file mpv plays (./http-proxy.ts), released with it. */
+  private proxy: ProxyHandle | null = null;
+  /** Session opened for the engine probe of the load in progress, handed to mpv or released. */
+  private probeProxy: { uri: string; handle: ProxyHandle } | null = null;
+  /** What the load in progress knows for the proxy (duration, file size, container). */
+  private loadHints: ProxyPrefetch = {};
 
   constructor(native: VideoPlayer) {
     this.native = native;
@@ -619,6 +628,7 @@ export class HybridPlayer implements EventEmitter<VideoPlayerEvents> {
     this.src = null;
     this.fallbackTried = null;
     this.silence();
+    this.dropProxy();
     if (audible === this) audible = null;
     this.native.replaceAsync(null).catch(() => {});
     if (this.engine === 'mpv') {
@@ -634,13 +644,17 @@ export class HybridPlayer implements EventEmitter<VideoPlayerEvents> {
    * `startAt` (s): resume position. mpv opens the file there directly (`start`), instead of
    * decoding the beginning and seeking after the load (a second request, other pieces to wait for
    * on a torrent); the native engine is still positioned by the caller after the load.
+   * `duration` (s, saved progress) and `size` (bytes, from the addon) let the HTTP proxy fetch the
+   * resume point along with the head and the end of the file (./http-proxy.ts).
    */
-  async replaceAsync(source: VideoSource, opts?: { startAt?: number }): Promise<void> {
+  async replaceAsync(source: VideoSource, opts?: { startAt?: number; duration?: number; size?: number }): Promise<void> {
     if (this.released) return;
     const token = ++this.token;
     this.clearWatchdog();
     this.abortStage();
     this.settlePending();
+    // A source switch: the previous link stops downloading at once.
+    this.dropProxy();
     const src = typeof source === 'string' ? { uri: source } : source && typeof source === 'object' && source.uri ? (source as Src) : null;
     this.src = src;
     this.fallbackTried = null;
@@ -652,10 +666,25 @@ export class HybridPlayer implements EventEmitter<VideoPlayerEvents> {
 
     const pref = getEnginePref();
     const c = deviceCaps();
-    const probe = pref === 'auto' && c.mpvAvailable ? await probeSource(src.uri, src.headers) : null;
+    let probe: Probe | null = null;
+    if (pref === 'auto' && c.mpvAvailable) {
+      // A request is needed to decide (no extension): made through the proxy, so the bytes it
+      // reads are already there if mpv plays the link.
+      const px = httpProxy();
+      if (px && !cachedProbe(src.uri) && !probeWithoutRequest(src.uri) && isProxiable(src.uri)) {
+        const h = await px.open(src.uri, src.headers, null).catch(() => null);
+        if (token !== this.token) {
+          h?.release();
+          return;
+        }
+        if (h) this.probeProxy = { uri: src.uri, handle: h };
+      }
+      probe = await probeSource(src.uri, src.headers, this.probeProxy?.handle.url);
+    }
     // Each await may have been overtaken by a newer load, a stop or the release: drop stale work.
     if (token !== this.token) return;
     const d = decideEngine(pref, c, probe);
+    this.loadHints = { duration: opts?.duration, size: opts?.size, container: probe?.container };
 
     if (d.engine === 'mpv') {
       if (this.engine === 'native') {
@@ -669,6 +698,8 @@ export class HybridPlayer implements EventEmitter<VideoPlayerEvents> {
       return this.loadMpv(src, d.reason, at && at > 1 ? at : 0, token);
     }
     this.stopMpv();
+    // AVPlayer / ExoPlayer read the link themselves.
+    this.dropProxy();
     this.setEngine('native', d.reason);
     this.armWatchdog(token);
     try {
@@ -678,6 +709,32 @@ export class HybridPlayer implements EventEmitter<VideoPlayerEvents> {
       if (this.canFallback()) return this.fallback(token);
       throw e;
     }
+  }
+
+  /** Every proxy session of the main player (playing or opened for the probe) stops downloading. */
+  private dropProxy() {
+    this.proxy?.release();
+    this.proxy = null;
+    this.probeProxy?.handle.release();
+    this.probeProxy = null;
+  }
+
+  /**
+   * The proxy session mpv reads `src` from: the one the probe opened (its bytes kept), else a new
+   * one, with the head / end / resume point fetched now. Null: mpv opens the link itself.
+   */
+  private async proxyFor(src: Src, start: number): Promise<ProxyHandle | null> {
+    const hints: ProxyPrefetch = { ...this.loadHints, startAt: start };
+    const probed = this.probeProxy;
+    this.probeProxy = null;
+    if (probed && probed.uri === src.uri) {
+      probed.handle.prefetch(hints);
+      return probed.handle;
+    }
+    probed?.handle.release();
+    const px = httpProxy();
+    if (!px || !isProxiable(src.uri, hints.container)) return null;
+    return px.open(src.uri, src.headers, hints).catch(() => null);
   }
 
   /** Leaving mpv for the native engine: mpv goes quiet now (its surface unmounts and frees it). */
@@ -697,6 +754,7 @@ export class HybridPlayer implements EventEmitter<VideoPlayerEvents> {
     this.clearWatchdog();
     this.settlePending();
     this.abortStage();
+    this.dropProxy();
     // Quiet at once, whatever happens to the native objects next (the screen may stay visible
     // during its exit transition, a native player is released a little later).
     this.silence();
@@ -758,6 +816,7 @@ export class HybridPlayer implements EventEmitter<VideoPlayerEvents> {
       this.view?.setPaused(true).catch(() => {});
       this.view?.stop().catch(() => {});
     }
+    this.dropProxy();
     this.native = next;
     this.ownsNative = true;
     this.src = src;
@@ -932,6 +991,7 @@ export class HybridPlayer implements EventEmitter<VideoPlayerEvents> {
       hwdec: '',
       size: null,
       facade: null as unknown as StagedPlayer,
+      proxy: null,
     };
     st.facade = {
       get status(): VideoPlayerStatus {
@@ -970,14 +1030,26 @@ export class HybridPlayer implements EventEmitter<VideoPlayerEvents> {
     view.setVolume(0).catch(() => {});
     view.setSpeed(this.rate).catch(() => {});
     if (this.fill) view.setFill(true).catch(() => {});
-    view
-      .load(st.src.uri, st.src.headers ?? {}, st.start, false)
-      .then(() => {
+    void (async () => {
+      // Through the HTTP proxy too: its head, end of file and the point it opens at come at once.
+      const px = httpProxy();
+      const container = cachedProbe(st.src.uri)?.container;
+      const proxy =
+        px && isProxiable(st.src.uri, container)
+          ? await px.open(st.src.uri, st.src.headers, { startAt: st.start, duration: this.m.duration || undefined, container }).catch(() => null)
+          : null;
+      if (this.mpvStage !== st) {
+        proxy?.release();
+        return;
+      }
+      st.proxy = proxy;
+      try {
+        await view.load(proxy?.url ?? st.src.uri, st.src.headers ?? {}, st.start, false);
         for (const [k, v] of Object.entries(this.subOpts)) quiet(view.setSubtitleOption?.(k, v));
-      })
-      .catch(() => {
+      } catch {
         st.error = true;
-      });
+      }
+    })();
   }
 
   private stageLoaded(st: MpvStage, e: MpvLoadedEvent) {
@@ -1000,6 +1072,8 @@ export class HybridPlayer implements EventEmitter<VideoPlayerEvents> {
     this.slotProps.delete(st.slot);
     this.slots = this.slots.filter((x) => x !== st.slot);
     st.view?.stop().catch(() => {});
+    st.proxy?.release();
+    st.proxy = null;
     this.notifyViews();
   }
 
@@ -1035,6 +1109,10 @@ export class HybridPlayer implements EventEmitter<VideoPlayerEvents> {
 
     this.mpvStage = null;
     this.clearWatchdog();
+    // The old file's downloads stop; the new one's session is now the main one.
+    this.dropProxy();
+    this.proxy = st.proxy;
+    st.proxy = null;
     this.view = view;
     this.viewReady = true;
     this.mainSlot = st.slot;
@@ -1143,9 +1221,16 @@ export class HybridPlayer implements EventEmitter<VideoPlayerEvents> {
     this.setEngine('mpv', reason);
     this.emit('statusChange', { status: 'loading', oldStatus: old.status });
     if (old.audio.length) this.emit('availableAudioTracksChange', { availableAudioTracks: [], oldAvailableAudioTracks: old.audio } as never);
+    // The proxy session opens (and starts fetching) while the mpv view mounts.
+    const proxied = this.proxyFor(src, start);
     const view = await this.waitForView();
-    if (!view) return;
-    if (token !== this.token) return;
+    const proxy = await proxied;
+    if (!view || token !== this.token) {
+      proxy?.release();
+      return;
+    }
+    this.proxy?.release();
+    this.proxy = proxy;
     const loaded = new Promise<void>((resolve) => {
       this.pending = { resolve };
     });
@@ -1154,7 +1239,9 @@ export class HybridPlayer implements EventEmitter<VideoPlayerEvents> {
     // mpv starts playing on load (autoplay): it takes the audio now.
     this.claimAudio();
     try {
-      await view.load(src.uri, src.headers ?? {}, start, true);
+      // The link's headers go to mpv as well: a server ignoring Range gets mpv redirected to the
+      // original link by the proxy, with them.
+      await view.load(proxy?.url ?? src.uri, src.headers ?? {}, start, true);
       if (token !== this.token) return loaded;
       for (const [k, v] of Object.entries(this.subOpts)) quiet(view.setSubtitleOption?.(k, v));
     } catch (e) {
@@ -1271,13 +1358,23 @@ export class HybridPlayer implements EventEmitter<VideoPlayerEvents> {
     onMpvError: (e: { nativeEvent: { message: string } }) => {
       if (!this.mpvLive()) return;
       const message = e.nativeEvent.message || 'Lecture impossible (mpv)';
-      const p = this.pending;
-      this.pending = null;
-      // Player.tsx reports errors from statusChange; the load promise resolves so it is not reported twice.
-      p?.resolve();
-      this.setStatus('error', message);
+      const proxy = this.proxy;
+      if (!proxy) return this.failMpv(message);
+      // Through the proxy, the server's own answer says why (an expired debrid link: 403…).
+      const token = this.token;
+      void proxy.status().then((s) => {
+        if (token === this.token && this.mpvLive()) this.failMpv(describeProxyError(s) ?? message);
+      });
     },
   };
+
+  private failMpv(message: string) {
+    const p = this.pending;
+    this.pending = null;
+    // Player.tsx reports errors from statusChange; the load promise resolves so it is not reported twice.
+    p?.resolve();
+    this.setStatus('error', message);
+  }
 
   /**
    * Default audio track from the language settings (Réglages → Langues): in "VF" mode the first
