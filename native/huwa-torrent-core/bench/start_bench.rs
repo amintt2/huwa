@@ -38,6 +38,7 @@ use tokio::{
 };
 
 mod files;
+mod proxy;
 
 const KIB: u64 = 1024;
 const MIB: u64 = 1024 * KIB;
@@ -69,6 +70,8 @@ struct Args {
     no_release: bool,
     /// HTTP profiles: mpv reads through the engine's loopback read-ahead proxy.
     http_proxy: bool,
+    net_timeout: String,
+    hang_once: bool,
     /// Engine `unverifiedStart`.
     unverified: bool,
     /// Engine with no peer-limit lift / no shared pieces (A/B of the big-piece work).
@@ -126,7 +129,11 @@ fn parse_args() -> Args {
         switch_hard: false,
         no_release: false,
         http_proxy: false,
-        unverified: false,
+        // MpvCore: 8 s for remote URLs since the start fixes (20 s before, the baseline build).
+        net_timeout: if cfg!(huwa_baseline) { "20" } else { "8" }.into(),
+        hang_once: false,
+        // The engine's default (on since the start fixes; `--verified` turns it off).
+        unverified: cfg!(not(huwa_baseline)),
         extra_cfg: Vec::new(),
         fresh_mpv: false,
         race_ms: 2500,
@@ -165,7 +172,10 @@ fn parse_args() -> Args {
             "--switch-hard" => a.switch_hard = true,
             "--no-release" => a.no_release = true,
             "--http-proxy" => a.http_proxy = true,
+            "--net-timeout" => a.net_timeout = val(),
+            "--hang-once" => a.hang_once = true,
             "--unverified" => a.unverified = true,
+            "--verified" => a.unverified = false,
             "--engine-cfg" => {
                 let v = val();
                 let (k, v) = v.split_once('=').expect("--engine-cfg key=json");
@@ -649,6 +659,8 @@ mp.observe_property("paused-for-cache", "bool", function(_, v) out("CACHE " .. t
 "#;
 
 struct Mpv {
+    /// `network-timeout` of remote loads (MpvCore: 20 s).
+    net_timeout: String,
     child: Child,
     ipc: UnixStream,
     rx: mpsc::Receiver<(Instant, String)>,
@@ -700,7 +712,7 @@ impl Mpv {
                 }
             }
         });
-        Mpv { child, ipc, rx, sock }
+        Mpv { net_timeout: args.net_timeout.clone(), child, ipc, rx, sock }
     }
 
     fn cmd(&mut self, c: Value) {
@@ -727,7 +739,7 @@ impl Mpv {
         #[cfg(not(huwa_baseline))]
         self.cmd(json!(["set_property", "hr-seek", if start > 1.0 { "no" } else { "default" }]));
         self.cmd(json!(["set_property", "pause", "no"]));
-        self.cmd(json!(["set_property", "network-timeout", "20"]));
+        self.cmd(json!(["set_property", "network-timeout", self.net_timeout.clone()]));
         self.cmd(json!(["loadfile", url, "replace"]));
     }
 
@@ -982,8 +994,8 @@ impl Bench {
         if let Some(cap) = self.args.cache_cap {
             cfg["cacheLimitBytes"] = json!(cap);
         }
-        if self.args.unverified {
-            cfg["unverifiedStart"] = json!(true);
+        if !cfg!(huwa_baseline) {
+            cfg["unverifiedStart"] = json!(self.args.unverified);
         }
         for (k, v) in &self.args.extra_cfg {
             cfg[k.as_str()] = v.clone();
@@ -1402,6 +1414,10 @@ fn main() {
             storm(&bench, &mut results, out.as_mut());
             continue;
         }
+        if scenario == "hang-tail" {
+            files::hang_tail(&bench);
+            continue;
+        }
         if scenario == "need" {
             files::measure_needs(&bench);
             continue;
@@ -1659,7 +1675,3 @@ fn storm(b: &Bench, _results: &mut Vec<RunResult>, mut out: Option<&mut std::fs:
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// HTTP read-ahead proxy of the engine for `--http-proxy` (none yet: the URL as is).
-fn http_readahead_url(_b: &Bench, url: &str) -> String {
-    url.to_string()
-}

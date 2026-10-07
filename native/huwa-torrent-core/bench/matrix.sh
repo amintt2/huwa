@@ -9,7 +9,7 @@ cd "$(dirname "$0")/.."
 BIN="${1:?usage: bench/matrix.sh <binary> <tag> [cells...]}"
 TAG="${2:?tag}"
 shift 2
-CELLS="${*:-start storm cache prewarm stalls}"
+CELLS="${*:-start storm cache prewarm stalls big http hang floor}"
 OUT=target/bench-results
 mkdir -p "$OUT"
 REPEAT="${REPEAT:-5}"
@@ -48,6 +48,23 @@ for cell in $CELLS; do
     ;;
   prewarm)
     run prewarm --profiles popular,mid,obscure --files h264.mkv,moov-end.mp4 --scenarios start --repeat "$REPEAT" --prewarm-ms 8000 --timeout 60s
+    ;;
+  big)
+    run big8 --profiles popular,mid,obscure --files h264.mkv --scenarios start,resume --piece-kib 8192 --repeat "$REPEAT" --timeout 60s
+    run big16 --profiles popular,mid,obscure --files h264.mkv --scenarios start,resume --piece-kib 16384 --repeat "$REPEAT" --timeout 60s
+    ;;
+  http)
+    run http --profiles http-100ms-50M,http-300ms-10M,http-800ms-2M --files h264.mkv,moov-end.mp4 --scenarios start,resume,seek --repeat "$REPEAT" --timeout 60s
+    ;;
+  http-proxy)
+    run http-proxy --profiles http-100ms-50M,http-300ms-10M,http-800ms-2M --files h264.mkv,moov-end.mp4 --scenarios start,resume,seek --repeat "$REPEAT" --timeout 60s --http-proxy
+    ;;
+  hang)
+    run hang --files h264.mkv,moov-end.mp4 --scenarios hang-tail --hang-once --timeout 70s
+    ;;
+  floor)
+    run floor --profiles popular,mid,obscure --files h264.mkv,moov-end.mp4 --scenarios floor-start,floor-resume --repeat "$REPEAT" --timeout 60s
+    run floor-verified --profiles popular,mid,obscure --files h264.mkv,moov-end.mp4 --scenarios floor-start,floor-resume --repeat 3 --timeout 60s --verified
     ;;
   stalls)
     run stalls --profiles popular,mid --files h264.mkv --scenarios start --repeat 3 --play-secs 300 --timeout 60s

@@ -1433,14 +1433,6 @@ impl PeerHandler {
     /// Acquire a piece for this peer: try steal (10x) → reserve → steal (3x).
     ///
     /// Returns the piece index to download, or None if no pieces are available.
-    /// Huwa patch: with the chunks to request when only some (a shared urgent piece).
-    fn acquire_next_piece(&self) -> crate::Result<Option<(ValidPieceIndex, Option<Vec<u32>>)>> {
-        match self.acquire_next_piece_or_busy()? {
-            Acquired::Piece(p, c) => Ok(Some((p, c))),
-            Acquired::Busy | Acquired::Nothing => Ok(None),
-        }
-    }
-
     /// Huwa patch: `acquire_next_piece`, telling "busy on urgent blocks" from "nothing to do".
     fn acquire_next_piece_or_busy(&self) -> crate::Result<Acquired> {
         if self.is_choked() {

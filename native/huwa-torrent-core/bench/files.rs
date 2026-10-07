@@ -19,6 +19,9 @@ pub struct ServeCfg {
     pub rate: f64,
     /// Only these `[start, end)` ranges are served; a read reaching another byte hangs.
     pub allowed: Option<Vec<(u64, u64)>>,
+    /// The first request starting at or after this offset never answers (a stuck range); the
+    /// next ones are served (`hang-tail` with `--hang-once`).
+    pub hang_once_from: Option<u64>,
 }
 
 #[derive(Debug, Clone, serde::Serialize)]
@@ -127,7 +130,11 @@ async fn serve_conn(
             Some((_, b)) => (len.saturating_sub(b.parse().unwrap_or(0)), len),
             None => (0, len),
         };
-        let c = cfg.lock().clone();
+        let mut c = cfg.lock().clone();
+        if c.hang_once_from.is_some_and(|f| start >= f) {
+            cfg.lock().hang_once_from = None;
+            c.allowed = Some(Vec::new());
+        }
         if generation.load(Ordering::Acquire) != gen {
             return Ok(());
         }
@@ -406,7 +413,7 @@ pub fn run_floor(b: &Bench, profile_name: &str, file: &str, scenario: &str, rep:
 pub fn http_profile(name: &str) -> Option<ServeCfg> {
     let rest = name.strip_prefix("http-")?;
     let (ttfb, rate) = rest.split_once('-')?;
-    Some(ServeCfg { ttfb: parse_duration(ttfb), rate: rate.trim_end_matches('M').parse::<f64>().ok()? * 1e6, allowed: None })
+    Some(ServeCfg { ttfb: parse_duration(ttfb), rate: rate.trim_end_matches('M').parse::<f64>().ok()? * 1e6, allowed: None, hang_once_from: None })
 }
 
 /// One start / resume / seek of an HTTP link with mpv (no engine).
@@ -416,13 +423,14 @@ pub fn run_http(b: &Bench, profile_name: &str, file: &str, scenario: &str, rep: 
     let mut mpv = Mpv::spawn(&b.args, "http");
     let mut r = RunResult { profile: profile_name.into(), file: file.into(), scenario: scenario.into(), rep, ..Default::default() };
     let start = if scenario == "resume" { b.args.resume_at } else { 0.0 };
-    let url = if b.args.http_proxy {
-        crate::http_readahead_url(b, &srv.url(file))
-    } else {
-        srv.url(file)
-    };
-    let t0 = Instant::now();
     srv.reset(cfg);
+    let t0 = Instant::now();
+    // The URL reaches the player: with `--http-proxy`, through the read-ahead proxy started now.
+    let px = b.args.http_proxy.then(|| crate::proxy::start(&b.rt, &srv.url(file)));
+    let url = match &px {
+        Some(p) => format!("http://127.0.0.1:{}/{file}", p.port),
+        None => srv.url(file),
+    };
     mpv.load_remote(&url, start);
     let mut stalls = Stalls::default();
     let ff = mpv.wait("RESTART", t0 + b.args.timeout, &mut |_, _| {});
@@ -453,4 +461,30 @@ pub fn run_http(b: &Bench, profile_name: &str, file: &str, scenario: &str, rep: 
     r.stall_ms = stalls.total.as_millis() as u64;
     r.timeline = json!({ "requests": *srv.log.lock() });
     r
+}
+
+/// `hang-tail`: an HTTP server whose last `tail` bytes never come (a debrid link stuck on a range
+/// near the end): how long mpv takes to show frame 1 anyway, start and resume.
+pub fn hang_tail(b: &Bench) {
+    let srv = FileServer::start(&b.rt, b.args.fixtures.clone(), ServeCfg::default());
+    let mut mpv = Mpv::spawn(&b.args, "hang");
+    for file in &b.args.files {
+        let len = std::fs::metadata(b.args.fixtures.join(file)).unwrap().len();
+        for (scenario, start) in [("start", 0.0), ("resume", b.args.resume_at)] {
+            mpv.cmd(json!(["stop"]));
+            let _ = mpv.wait("END", Instant::now() + Duration::from_secs(2), &mut |_, _| {});
+            while mpv.rx.try_recv().is_ok() {}
+            let cfg = if b.args.hang_once {
+                ServeCfg { ttfb: Duration::from_millis(100), rate: 10e6, allowed: None, hang_once_from: Some(len - 2 * MIB) }
+            } else {
+                ServeCfg { ttfb: Duration::from_millis(100), rate: 10e6, allowed: Some(vec![(0, len - 2 * MIB)]), hang_once_from: None }
+            };
+            srv.reset(cfg);
+            let t = Instant::now();
+            mpv.load_remote(&srv.url(file), start);
+            let ff = mpv.wait("RESTART", t + b.args.timeout, &mut |_, _| {});
+            let reqs: Vec<(u64, u64)> = srv.log.lock().iter().map(|r| (r.t_ms, r.start)).collect();
+            println!("hang-tail {file} {scenario}: frame {} s, requests {:?}", fmt_ms(ff.map(|f| (f - t).as_millis() as u64)), reqs);
+        }
+    }
 }

@@ -203,9 +203,12 @@ final class MpvCore {
       mpv_set_property_string(ctx, "video-aspect-override", "no")
       // Built-in torrent engine (loopback URL): a read may legitimately wait for a piece (swarm
       // hiccup, automatic re-announce after ~12–20 s without peers). 20 s would turn that wait
-      // into a stream error; remote URLs keep the short timeout.
+      // into a stream error. Remote URLs (debrid, addon links): 8 s. A range request the server
+      // never answers (the end of an MKV for its Cues/Tags, a resume target) costs exactly this
+      // long before mpv asks again: 20 s each time measured (47 s opens on the device fit two of
+      // them), 8 s with this value (native/huwa-torrent-core/bench, `hang-tail`).
       let loopback = url.hasPrefix("http://127.0.0.1:")
-      mpv_set_property_string(ctx, "network-timeout", loopback ? "120" : "20")
+      mpv_set_property_string(ctx, "network-timeout", loopback ? "120" : "8")
       runCommand(ctx, ["loadfile", url, "replace"])
     }
   }
