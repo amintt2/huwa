@@ -131,6 +131,8 @@ export type ProbeStatus = {
   fileName: string | null;
   fileSize: number | null;
   fileCount: number | null;
+  /** Piece size of the torrent in bytes (null before the metadata). */
+  pieceLength?: number | null;
   /** The file is already complete on the device. */
   local: boolean;
   elapsedMs: number;

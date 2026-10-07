@@ -47,7 +47,7 @@ export function reusableWin(win: PeerWin | undefined, nowMs: number, candidateKe
 }
 
 /** What the decision needs from a probe (+ when it ended, ms since the race started). */
-export type PeerProbe = Pick<ProbeStatus, 'state' | 'peers' | 'connected' | 'local'> & {
+export type PeerProbe = Pick<ProbeStatus, 'state' | 'peers' | 'connected' | 'local' | 'pieceLength'> & {
   fileIdx?: number | null;
   doneAtMs?: number;
 };
@@ -82,10 +82,21 @@ export function probeTargets<T extends { key: string }>(ordered: T[], n: number)
   return n > 0 ? ordered.slice(0, n).map((c) => c.key) : [];
 }
 
-/** Lower language score, then the caller's order. */
+/**
+ * Pieces from this size on start slower: the engine reads the first blocks as they land
+ * (unverifiedStart) and splits urgent pieces between peers, but whatever needs a verified piece
+ * (read-ahead, the rest of the window) waits for 8–16 MiB at a time. Among equally good swarms,
+ * smaller pieces win.
+ */
+export const BIG_PIECE_BYTES = 8 * 1024 * 1024;
+const bigPieces = (c: PeerCandidate) => (c.probe?.pieceLength ?? 0) >= BIG_PIECE_BYTES;
+
+/** Lower language score, then smaller pieces (see `BIG_PIECE_BYTES`), then the caller's order. */
 function first(cands: PeerCandidate[]): PeerCandidate | undefined {
   let best: PeerCandidate | undefined;
-  for (const c of cands) if (!best || c.lang < best.lang) best = c;
+  for (const c of cands) {
+    if (!best || c.lang < best.lang || (c.lang === best.lang && bigPieces(best) && !bigPieces(c))) best = c;
+  }
   return best;
 }
 
@@ -100,6 +111,7 @@ function bestSlow(cands: PeerCandidate[]): PeerCandidate {
   return cands.reduce((a, b) => {
     if (b.lang !== a.lang) return b.lang < a.lang ? b : a;
     if (b.probe!.connected !== a.probe!.connected) return b.probe!.connected > a.probe!.connected ? b : a;
+    if (bigPieces(a) !== bigPieces(b)) return bigPieces(a) ? b : a;
     if (b.probe!.peers !== a.probe!.peers) return b.probe!.peers > a.probe!.peers ? b : a;
     return a;
   });

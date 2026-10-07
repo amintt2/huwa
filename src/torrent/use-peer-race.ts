@@ -29,6 +29,7 @@ const toProbe = (st: ProbeStatus, doneAtMs?: number): PeerProbe => ({
   connected: st.connected,
   local: st.local,
   fileIdx: st.fileIdx,
+  pieceLength: st.pieceLength,
   doneAtMs,
 });
 

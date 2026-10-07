@@ -137,6 +137,8 @@ pub struct ProbeStatus {
     pub file_name: Option<String>,
     pub file_size: Option<u64>,
     pub file_count: Option<usize>,
+    /// Piece size of the torrent (bytes): 8–16 MiB pieces start slower (race tie-break).
+    pub piece_length: Option<u64>,
     /// The file is already complete on the device.
     pub local: bool,
     pub elapsed_ms: u64,
@@ -172,6 +174,7 @@ impl Probe {
                 file_name: None,
                 file_size: None,
                 file_count: None,
+                piece_length: None,
                 local: false,
                 elapsed_ms: 0,
                 error: None,
@@ -300,12 +303,14 @@ pub struct CachedMeta {
     pub swarm: usize,
     /// Peers that answered the probe's handshake.
     pub answering: usize,
+    /// Piece size (0 when unknown).
+    pub piece_len: u64,
     at: Instant,
 }
 
 impl CachedMeta {
     pub fn new(torrent_bytes: Bytes, files: Vec<(String, u64)>, peers: Vec<SocketAddr>, at: Instant) -> Self {
-        Self { torrent_bytes, files, peers, swarm: 0, answering: 0, at }
+        Self { torrent_bytes, files, peers, swarm: 0, answering: 0, piece_len: 0, at }
     }
 }
 
@@ -630,6 +635,8 @@ async fn run(engine: Arc<Engine>, probe: Arc<Probe>, req: ProbeRequest, id20: Id
             let live = stats.live.as_ref().map(|l| l.snapshot.peer_stats.live as usize).unwrap_or(0);
             live_peers = live;
             apply_meta(&probe, &files, &pick, Some(0));
+            let piece = h.with_metadata(|m| m.lengths().default_piece_length() as u64).unwrap_or(0);
+            probe.update(|st| st.piece_length = (piece > 0).then_some(piece));
             file_ok = Some(matches!(pick, FilePick::File(_)));
             if complete {
                 probe.update(|st| {
@@ -652,6 +659,7 @@ async fn run(engine: Arc<Engine>, probe: Arc<Probe>, req: ProbeRequest, id20: Id
         if let Some(m) = engine.meta_cache.get(&hex, Instant::now()) {
             let pick = pick_probe_file(&m.files, req.file_idx, req.filename.as_deref(), req.episode);
             apply_meta(&probe, &m.files, &pick, Some(0));
+            probe.update(|st| st.piece_length = (m.piece_len > 0).then_some(m.piece_len));
             file_ok = Some(matches!(pick, FilePick::File(_)));
             enqueue(&mut queue, &mut seen, &mut seen_order, &m.peers, true);
             meta = Some(Meta { files: m.files, from_list_only: false });
@@ -711,10 +719,12 @@ async fn run(engine: Arc<Engine>, probe: Arc<Probe>, req: ProbeRequest, id20: Id
                             .collect();
                         let pick = pick_probe_file(&files, req.file_idx, req.filename.as_deref(), req.episode);
                         apply_meta(&probe, &files, &pick, Some(started.elapsed().as_millis() as u64));
+                        let piece = lo.info.lengths().default_piece_length() as u64;
+                        probe.update(|st| st.piece_length = Some(piece));
                         file_ok = Some(matches!(pick, FilePick::File(_)));
                         // Tracker answers and the peers that served the metadata: alive a moment ago.
                         enqueue(&mut queue, &mut seen, &mut seen_order, &lo.seen_peers, true);
-                        engine.meta_cache.insert(&hex, CachedMeta::new(lo.torrent_bytes.clone(), files.clone(), Vec::new(), Instant::now()));
+                        engine.meta_cache.insert(&hex, CachedMeta { piece_len: piece, ..CachedMeta::new(lo.torrent_bytes.clone(), files.clone(), Vec::new(), Instant::now()) });
                         engine.meta_cache.set_peers(&hex, &good, &seen_order);
                         meta = Some(Meta { files, from_list_only: true });
                     }

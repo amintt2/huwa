@@ -56,7 +56,12 @@ export function ensureEngine(): Promise<number> {
       const s = getTorrentSettings();
       const res = unwrap<{ port: number }>(
         await Native.initialize(
-          JSON.stringify({ dataDir: Native.defaultDataDir(), cacheLimitBytes: s.quotaBytes, seeding: false, maxPeers: 60, resolveTimeoutSecs: 90 }),
+          // unverifiedStart: the opening reads of a playback (header, container index, resume
+          // target: a few hundred KiB) are served as their blocks land instead of after the whole
+          // piece's SHA-1 (1–16 MiB). Measured: 7.6 → 1.6 s for a one-seeder swarm, 16 MiB pieces
+          // from "no frame" to < 2 s (native/huwa-torrent-core/bench). A piece failing its check is
+          // downloaded again; bytes already played stay played (a damaged frame at worst).
+          JSON.stringify({ dataDir: Native.defaultDataDir(), cacheLimitBytes: s.quotaBytes, seeding: false, maxPeers: 60, resolveTimeoutSecs: 90, unverifiedStart: true }),
         ),
       );
       return res.port;
