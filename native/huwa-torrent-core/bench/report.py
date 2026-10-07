@@ -104,6 +104,33 @@ def storm(paths):
         print(f"- peaks: {peak}")
 
 
+def floor(args):
+    """floor <floor.jsonl> -- <after cells jsonl...>: actual first frame vs floor, overhead."""
+    i = args.index("--")
+    floors = OrderedDict()
+    for r in runs_of(args[:i]):
+        f = r.get("floor")
+        if not f:
+            continue
+        floors.setdefault((f["profile"], f["file"], f["scenario"]), []).append(f)
+    actual = OrderedDict()
+    for r in runs_of(args[i + 1:]):
+        if "storm" in r or "floor" in r:
+            continue
+        actual.setdefault((r["profile"], r["file"], r["scenario"]), []).append(r)
+    print("| profile | file | scenario | need KiB | floor (median) | first frame (median) | overhead | overhead % | runs floor / frame |")
+    print("|---|---|---|---|---|---|---|---|---|")
+    for k, fs in floors.items():
+        fv = sorted(f["floor_ms"] for f in fs if f.get("floor_ms") is not None)
+        av = sorted(r["start_to_frame_ms"] for r in actual.get(k, []) if r.get("start_to_frame_ms") is not None)
+        fm = statistics.median_low(fv) if fv else None
+        am = statistics.median_low(av) if av else None
+        over = (am - fm) if (fm is not None and am is not None) else None
+        pct = f"{100 * over / am:.0f} %" if over is not None and am else "—"
+        fmt = lambda v: f"{v / 1000:.2f}" if v is not None else "—"
+        print(f"| {k[0]} | {k[1]} | {k[2]} | {fs[0].get('need_kib')} | {fmt(fm)} | {fmt(am)} | {fmt(over)} | {pct} | {len(fs)} / {len(actual.get(k, []))} |")
+
+
 if __name__ == "__main__":
     mode, rest = sys.argv[1], sys.argv[2:]
-    {"cells": cells, "cache": cache, "storm": storm}[mode](rest)
+    {"cells": cells, "cache": cache, "storm": storm, "floor": floor}[mode](rest)

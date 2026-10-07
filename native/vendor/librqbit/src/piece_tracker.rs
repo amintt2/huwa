@@ -264,9 +264,12 @@ impl PieceTracker {
                 })
             };
             let mine = (0..n).filter(|i| missing(*i) && live(*i) && claim_of(*i).is_some_and(|(p, _)| p == req.peer)).count();
-            let free = order.iter().copied().filter(|i| missing(*i) && claim_of(*i).is_none()).map(|i| i as u32).collect();
-            let stale = order.iter().copied().filter(|i| missing(*i) && claim_of(*i).is_some() && !live(*i)).map(|i| i as u32).collect();
-            if cands.iter().any(|c| c.piece == piece) {
+            let free: Vec<u32> = order.iter().copied().filter(|i| missing(*i) && claim_of(*i).is_none()).map(|i| i as u32).collect();
+            let stale: Vec<u32> = order.iter().copied().filter(|i| missing(*i) && claim_of(*i).is_some() && !live(*i)).map(|i| i as u32).collect();
+            // Without work left in the reader's part (all its blocks claimed), a piece comes back
+            // as "the rest of a shared piece": the blocks before the reader, which its SHA-1 (and
+            // so a verified reader) needs too.
+            if (free.is_empty() && stale.is_empty()) || cands.iter().any(|c| c.piece == piece) {
                 continue;
             }
             cands.push(Cand { piece, n, group, mine, free, stale });
@@ -406,23 +409,15 @@ impl PieceTracker {
     /// Moves all pieces owned by the peer from IN_FLIGHT back to QUEUED.
     /// Returns the number of pieces released.
     pub fn release_pieces_owned_by(&mut self, peer: PeerHandle) -> usize {
-        // Huwa patch: shared pieces lose this peer's claims (others take them over at once); one
-        // nobody works on any more goes back to the queue keeping the blocks already written.
-        let mut orphans = Vec::new();
-        for (piece, entry) in self.shared.iter_mut() {
+        // Huwa patch: shared pieces lose this peer's claims and stay shared (in flight): any peer
+        // takes their free blocks (`acquire_shared` looks at every shared piece). Requeuing one
+        // dropped the blocks still on their way (no longer in flight: ignored on arrival).
+        for entry in self.shared.values_mut() {
             for slot in entry.claims.iter_mut() {
                 if slot.is_some_and(|(p, _)| p == peer) {
                     *slot = None;
                 }
             }
-            if entry.claims.iter().all(|c| c.is_none()) {
-                orphans.push(*piece);
-            }
-        }
-        for piece in &orphans {
-            self.shared.remove(piece);
-            self.inflight.remove(piece);
-            self.chunks.requeue_keep_chunks(*piece);
         }
         // Collect pieces to release (can't modify while iterating)
         let pieces_to_release: Vec<_> = self
@@ -432,7 +427,7 @@ impl PieceTracker {
             .map(|(p, _)| *p)
             .collect();
 
-        let count = pieces_to_release.len() + orphans.len();
+        let count = pieces_to_release.len();
         for piece in pieces_to_release {
             self.inflight.remove(&piece);
             self.chunks.mark_piece_broken_if_not_have(piece);
@@ -560,6 +555,58 @@ mod tests {
 
     fn make_default_file_priorities(file_infos: &FileInfos) -> FilePriorities {
         (0..file_infos.len()).collect()
+    }
+
+    /// Huwa patch: a reader blocked near the end of a piece gets its blocks first, then the
+    /// blocks before its position (the piece's SHA-1 needs them all). The reader's own entry used
+    /// to shadow the "rest of the shared piece" one: those blocks were never asked for.
+    #[test]
+    fn test_shared_piece_fetches_blocks_before_the_reader() {
+        let piece_length = 16 * 16384u32;
+        let lengths = Lengths::new(piece_length as u64 * 3, piece_length).unwrap();
+        let bf_len = lengths.piece_bitfield_bytes();
+        let have = BF::from_boxed_slice(vec![0u8; bf_len].into_boxed_slice());
+        let mut selected = BF::from_boxed_slice(vec![0u8; bf_len].into_boxed_slice());
+        for i in 0..3 {
+            selected.set(i, true);
+        }
+        let file_infos: FileInfos = vec![crate::file_info::FileInfo {
+            relative_filename: "test.dat".into(),
+            offset_in_torrent: 0,
+            len: piece_length as u64 * 3,
+            piece_range: 0..3,
+            attrs: Default::default(),
+        }];
+        let chunks = ChunkTracker::new(have.into_dyn(), selected, lengths, &file_infos).unwrap();
+        let mut tracker = PieceTracker::new(chunks);
+        let file_priorities = make_default_file_priorities(&file_infos);
+        let piece0 = tracker.chunks().get_lengths().validate_piece_index(0).unwrap();
+        let mut acquire = |tracker: &mut PieceTracker| {
+            tracker.acquire_piece(AcquireRequest {
+                urgent: vec![UrgentPiece { piece: piece0, from_chunk: 12, blocked: true }],
+                peer: peer(1),
+                peer_avg_time: None,
+                priority_pieces: std::iter::empty(),
+                file_priorities: &file_priorities,
+                file_infos: &file_infos,
+                peer_has_piece: |_| true,
+                can_steal: |_| true,
+            })
+        };
+        match acquire(&mut tracker) {
+            AcquireResult::Shared { piece, chunks } => {
+                assert_eq!(piece, piece0);
+                assert_eq!(chunks, vec![12, 13, 14, 15]);
+            }
+            r => panic!("Expected Shared, got {:?}", r),
+        }
+        match acquire(&mut tracker) {
+            AcquireResult::Shared { piece, chunks } => {
+                assert_eq!(piece, piece0);
+                assert_eq!(chunks, vec![0, 1, 2, 3]);
+            }
+            r => panic!("Expected the blocks before the reader, got {:?}", r),
+        }
     }
 
     #[test]
