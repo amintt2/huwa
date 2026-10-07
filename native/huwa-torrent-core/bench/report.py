@@ -2,7 +2,7 @@
 """Tables from the bench's --out files (JSON lines).
 
   bench/report.py cells  <before.jsonl...> -- <after.jsonl...>   before/after per profile x file x scenario
-  bench/report.py cache  <files...>                                one row per file (cache cap / fill cell)
+  bench/report.py cache  <files...>                                one row per file (cache cap / fill cell, stalls cell)
   bench/report.py storm  <file>                                    first vs later starts, resources
 
 Values: median / worst over the runs, in seconds. A run without a first frame (or without the
@@ -63,7 +63,7 @@ def cells(args):
 
 
 def cache(paths):
-    print("| cell | profile | scenario | start→frame | engine launch ms (median) | disk written to the frame MiB (median) | evictions (count, ms) | stalls in 60 s | runs |")
+    print("| cell | profile | scenario | start→frame | engine launch ms (median) | disk written to the frame MiB (median) | evictions (count, ms) | stalls: count, paused s (all runs) | runs |")
     print("|---|---|---|---|---|---|---|---|---|")
     for p in paths:
         g = OrderedDict()
@@ -77,7 +77,7 @@ def cache(paths):
             ev = [r.get("evictions") or {} for r in rs]
             ev_count = sum(e.get("count", 0) for e in ev if isinstance(e, dict))
             ev_ms = sum(e.get("total_ms", 0) for e in ev if isinstance(e, dict))
-            stalls = sum(r.get("stalls", 0) for r in rs)
+            stalls = f'{sum(r.get("stalls", 0) for r in rs)}, {sum(r.get("stall_ms", 0) or 0 for r in rs) / 1000:.1f}'
             cell = os.path.basename(p).replace(".jsonl", "")
             print(f"| {cell} | {prof} | {scen} | {field(rs, 'start_to_frame_ms')} | {launch} | {written} | {ev_count}, {ev_ms} | {stalls} | {len(rs)} |")
 
