@@ -10,7 +10,11 @@ import type { NoSourceAction } from '@/addons/no-source';
 import { useSubtitles } from '@/addons/registry';
 import { subtitleExtraOf } from '@/subtitles/request';
 import { isTorrent } from '@/addons/protocol';
+import type { Quality } from '@/addons/quality';
 import { qualityLabel, useSource } from '@/addons/use-source';
+import { useSourceController } from '@/addons/use-source-controller';
+import { PlaybackMonitor } from '@/components/player/playback-monitor';
+import { SWITCH_REASON_LABEL } from '@/stats/model';
 import { EpisodeBridgeStrip } from '@/components/bridge';
 import { CommentsPanel } from '@/components/comments';
 import { DownloadSheet, statusLine, type PlayingSource } from '@/components/downloads/episode-download';
@@ -21,7 +25,7 @@ import { Player, type ExternalSubtitle, type PlayerHandle } from '@/components/p
 import { PrefetchNext } from '@/components/player/prefetch-next';
 import { WebPlayer } from '@/components/player/WebPlayer';
 import { SourceButton, SourcesMenu } from '@/components/sources-menu';
-import { useStreamPolicy } from '@/settings/network';
+import { usePrewarm } from '@/settings/network';
 import { useWatchTrace } from '@/stats/use-watch-trace';
 import { useSettings } from '@/settings/settings';
 import { ActionTile, Chip, Cover, IconButton, Press, Txt } from '@/components/ui';
@@ -102,18 +106,29 @@ function WatchScreen({ id, at }: { id: string; at?: number }) {
   const src = useSource(series.id, episode.number, { enabled: !offline, engineAvailable: torrentEngineLinked() && !torrentSettings.enabled });
   // Subtitle addons, asked again with the playing file (hash / size / name) for exact matches.
   const playing = src.current;
-  const video = useMemo(() => subtitleExtraOf(playing), [playing]);
+  const playingVideo = useMemo(() => subtitleExtraOf(playing), [playing]);
+  // Automatic source switches keep the subtitles: the addons are not asked again for the new
+  // file, and the files shipped with the sources left stay in the list (the selected track, its
+  // translation and its sync offset carry on). A source picked by hand asks again.
+  const [firstVideo, setFirstVideo] = useState(playingVideo);
+  if (!firstVideo && playingVideo) setFirstVideo(playingVideo);
+  const video = src.auto ? (firstVideo ?? playingVideo) : playingVideo;
   const addonSubs = useSubtitles(series.id, episode.number, !offline, video, langPrefs.subLangs);
   // Start timings (tap → sources → choice → first frame) → on-device stats, see addons/timing.ts.
   useWatchTrace(id, src);
   // Subtitles attached to the playing stream first, then the subtitles addons (e.g. OpenSubtitles).
-  const { streamSubtitles } = src;
   const streamAddon = src.current?.addonName ?? 'Flux';
+  const [streamSubs, setStreamSubs] = useState<{ key?: string; list: { url: string; lang: string; addonName: string }[] }>({ list: [] });
+  if (streamSubs.key !== src.currentKey) {
+    const own = src.streamSubtitles.map((x) => ({ url: x.url, lang: x.lang, addonName: streamAddon }));
+    setStreamSubs({ key: src.currentKey, list: src.auto ? [...own, ...streamSubs.list] : own });
+  }
+  const streamSubtitles = streamSubs.list;
   const offlineSubs = offline?.subtitles;
   const subtitles = useMemo<ExternalSubtitle[]>(() => {
     if (offlineSubs) return offlineSubs.map((x) => ({ url: x.url, lang: x.lang, source: 'Téléchargé', label: x.label ?? '' }));
     const all = [
-      ...streamSubtitles.map((x) => ({ url: x.url, lang: x.lang, addonName: streamAddon, match: undefined })),
+      ...streamSubtitles.map((x) => ({ url: x.url, lang: x.lang, addonName: x.addonName, match: undefined })),
       ...addonSubs,
     ].filter((x, i, arr) => arr.findIndex((y) => y.url === x.url) === i);
     // Several files of one language from one source: number them ("Piste 2"); files synced to
@@ -125,7 +140,7 @@ function WatchScreen({ id, at }: { id: string; at?: number }) {
       const label = match ? [num, match === 'hash' ? 'synchro exacte' : 'même release'].filter(Boolean).join(' · ') : num;
       return { url: x.url, lang: x.lang, source: x.addonName, label, match };
     });
-  }, [addonSubs, streamSubtitles, streamAddon, offlineSubs]);
+  }, [addonSubs, streamSubtitles, offlineSubs]);
   // Loading bar before playback: share of addons that answered, then the race / torrent step.
   const [maxPending, setMaxPending] = useState(0);
   if (src.pending > maxPending) setMaxPending(src.pending);
@@ -135,7 +150,8 @@ function WatchScreen({ id, at }: { id: string; at?: number }) {
   } as const;
   const [menuOpen, setMenuOpen] = useState(false);
   const [prefetchArmed, setPrefetchArmed] = useState(false);
-  const streamPolicy = useStreamPolicy();
+  // Next episode buffered ahead: Wi-Fi and cellular "équilibré", not in Low Data Mode / "économie".
+  const prewarmNext = usePrewarm();
   const [notice, setNotice] = useState('');
   // The chosen source doesn't match the user's languages (e.g. no VOSTFR: Spanish audio, English
   // subtitles only): say it instead of letting them find out. Once per source, then a banner.
@@ -157,19 +173,19 @@ function WatchScreen({ id, at }: { id: string; at?: number }) {
   useEffect(() => {
     currentRef.current = src.currentKey;
   }, [src.currentKey]);
-  // "Better quality found" notice when auto mode upgrades the source mid-episode.
-  const loadedQuality = useRef<number | null | undefined>(undefined);
-  const onSourceLoaded = () => {
-    const from = loadedQuality.current;
-    if (from !== undefined && (src.quality ?? 0) > (from ?? 0)) {
-      setNotice(`Meilleure qualité trouvée : ${qualityLabel(src.quality)}`);
-    }
-    loadedQuality.current = src.quality;
-  };
-  useEffect(() => {
-    if (src.url) onSourceLoaded();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [src.url]);
+  // Source controller: better / smoother source while playing, wrong work dropped (see
+  // addons/source-controller.ts). The player reports what it observes through `monitor`.
+  const [monitor] = useState(() => new PlaybackMonitor());
+  const ctl = useSourceController(src, monitor, {
+    episode: { officialMin: episode.officialMin, edge: episode.number === 1 || episode.number === eps.length },
+    enabled: !offline,
+  });
+  // Discreet toast when the source changed by itself ("Qualité améliorée · 1080p → 2160p").
+  const [toastSeen, setToastSeen] = useState<number | undefined>();
+  if (ctl.toast && toastSeen !== ctl.toast.at) {
+    setToastSeen(ctl.toast.at);
+    setNotice(ctl.toast.text);
+  }
 
   // Leaving the episode: the player saves its last position in its own cleanup; write it to disk
   // right after (next tick, once every cleanup ran) instead of waiting for the debounce.
@@ -197,7 +213,9 @@ function WatchScreen({ id, at }: { id: string; at?: number }) {
     if (!prefetchArmed && duration > 0 && (position / duration > 0.5 || duration - position < 300)) setPrefetchArmed(true);
   };
   const onPlayerError = (message: string) => {
-    if (currentRef.current) src.markBad(currentRef.current, message);
+    if (!currentRef.current) return;
+    ctl.onFailed(currentRef.current);
+    src.markBad(currentRef.current, message);
   };
   const noSource = src.noSource;
   const onNoSourceAction = (kind: NoSourceAction) => {
@@ -223,6 +241,19 @@ function WatchScreen({ id, at }: { id: string; at?: number }) {
     const q = qualityLabel(src.quality);
     return name.toLowerCase().includes(q.toLowerCase()) ? name : `${name} · ${q}`;
   })();
+  // "Réglages de lecture" sheet: what plays, and what the automatic switching did last.
+  const sourceInfo = src.current
+    ? {
+        label: `${sourceLabel} · ${src.playingTorrent ? 'torrent' : src.web ? 'lecteur web' : 'lien direct'}`,
+        detail: !src.auto
+          ? 'Source choisie à la main'
+          : !langPrefs.autoSwitchSource
+            ? 'Changement de source automatique désactivé'
+            : ctl.last
+              ? `Changée automatiquement (${SWITCH_REASON_LABEL[ctl.last.reason]}${ctl.last.toRes && ctl.last.fromRes ? ` · ${qualityLabel(ctl.last.fromRes as Quality)} → ${qualityLabel(ctl.last.toRes as Quality)}` : ''})`
+              : 'Changement de source automatique activé',
+      }
+    : undefined;
   // What "Télécharger" would take from this screen: the source playing now.
   const playingForDownload: PlayingSource | null = (() => {
     if (!src.current) return null;
@@ -397,9 +428,11 @@ function WatchScreen({ id, at }: { id: string; at?: number }) {
             commentCount={count}
             timedComments={timed}
             renderComments={renderComments}
-            upgrade={src.upgrade}
-            onUpgraded={src.adoptUpgrade}
-            onUpgradeDeferred={src.deferUpgrade}
+            upgrade={src.auto ? ctl.request : null}
+            onUpgraded={ctl.onSwapped}
+            onUpgradeDeferred={ctl.onDeferred}
+            monitor={monitor}
+            sourceInfo={sourceInfo}
           />
         )}
       </View>
@@ -414,7 +447,7 @@ function WatchScreen({ id, at }: { id: string; at?: number }) {
           subtitles={subtitlesForDownload}
         />
       )}
-      {next && <PrefetchNext seriesId={series.id} episode={next.number} armed={prefetchArmed} buffer={streamPolicy.allowed} />}
+      {next && <PrefetchNext seriesId={series.id} episode={next.number} armed={prefetchArmed} buffer={prewarmNext} />}
       {/* Hidden, not unmounted, in fullscreen: keeps the comment draft and scroll position. */}
       <View style={{ flex: 1, display: full ? 'none' : 'flex' }}>
         <CommentsPanel

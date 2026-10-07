@@ -184,6 +184,79 @@ export function slowestStep(stages: Stage[]): { from: string; to: Stage; ms: num
   return best;
 }
 
+// ---------- automatic source switches (addons/source-controller.ts) ----------
+
+export type SwitchReasonStat = 'upgrade' | 'stall' | 'weak-swarm' | 'slow-start' | 'wrong-duration';
+export type SwitchNet = 'unmetered' | 'cellular' | 'metered';
+
+/**
+ * One switch made by the source controller. Numbers only: no URL, no title, no episode id. Stalls
+ * "before" are those of the source left over the 90 s before the decision; "after" those of the
+ * new source over `afterMs` (2 min, less when the episode / screen ended first).
+ */
+export type SwitchEvent = {
+  at: number;
+  reason: SwitchReasonStat;
+  /** Warm hidden player swap, reload at the same position, or source dropped (broken / wrong work). */
+  mode: 'seamless' | 'hard' | 'drop';
+  net?: SwitchNet;
+  fromKind: 'http' | 'torrent';
+  toKind?: 'http' | 'torrent';
+  fromRes: number;
+  toRes?: number;
+  stallsBefore: number;
+  stalledMsBefore: number;
+  stallsAfter?: number;
+  stalledMsAfter?: number;
+  afterMs?: number;
+  /** Decision → new source playing (ms). */
+  tSwitch?: number;
+};
+
+export type SwitchSummary = {
+  total: number;
+  byReason: Partial<Record<SwitchReasonStat, number>>;
+  seamless: number;
+  /** Switches with an "after" window: stalls per minute before vs after (medians). */
+  measured: number;
+  stallsPerMinBefore?: number;
+  stallsPerMinAfter?: number;
+  /** Share of stability switches whose new source stalled less than the old one. */
+  helped?: number;
+  tSwitch?: number;
+};
+
+const BEFORE_WINDOW_MIN = 1.5;
+
+export function summarizeSwitches(list: SwitchEvent[]): SwitchSummary {
+  const byReason: Partial<Record<SwitchReasonStat, number>> = {};
+  for (const e of list) byReason[e.reason] = (byReason[e.reason] ?? 0) + 1;
+  const measured = list.filter((e) => e.afterMs != null && e.afterMs >= 30_000 && e.stallsAfter != null);
+  const before = measured.map((e) => e.stallsBefore / BEFORE_WINDOW_MIN);
+  const after = measured.map((e) => e.stallsAfter! / (e.afterMs! / 60_000));
+  const stability = measured.filter((e) => e.reason !== 'upgrade');
+  return {
+    total: list.length,
+    byReason,
+    seamless: list.filter((e) => e.mode === 'seamless').length,
+    measured: measured.length,
+    stallsPerMinBefore: median(before),
+    stallsPerMinAfter: median(after),
+    helped: stability.length
+      ? stability.filter((e) => e.stallsAfter! / (e.afterMs! / 60_000) < e.stallsBefore / BEFORE_WINDOW_MIN).length / stability.length
+      : undefined,
+    tSwitch: median(list.flatMap((e) => (e.tSwitch != null ? [e.tSwitch] : []))),
+  };
+}
+
+export const SWITCH_REASON_LABEL: Record<SwitchReasonStat, string> = {
+  upgrade: 'meilleure qualité',
+  stall: 'coupures',
+  'weak-swarm': 'torrent sans pairs',
+  'slow-start': 'démarrage trop long',
+  'wrong-duration': 'mauvaise vidéo (durée)',
+};
+
 /** Per-addon response of the stream search (keyed by manifest id, never by URL). */
 export type AddonStat = { name: string; ok: number; fail: number; /** last response times (ms) of successful answers */ ms: number[] };
 

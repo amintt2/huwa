@@ -15,7 +15,7 @@ import { Button, Txt } from '@/components/ui';
 import { isDemo } from '@/demo/flags';
 import { communityView, K_MIN, WEEK_MS } from '@/stats/community';
 import { DEMO_ADDONS, DEMO_COMMUNITY, DEMO_EVENTS } from '@/stats/demo';
-import { addonTable, describeStart, formatMs, formatPct, PATH_LABEL, PATHS, summarize, type Group as StatGroup } from '@/stats/model';
+import { addonTable, describeStart, formatMs, formatPct, PATH_LABEL, PATHS, summarize, summarizeSwitches, SWITCH_REASON_LABEL, type Group as StatGroup, type SwitchReasonStat } from '@/stats/model';
 import { useCommunityStats } from '@/stats/share';
 import { resetStats, setCommunity, useStats } from '@/stats/store';
 import { C, S } from '@/theme/tokens';
@@ -52,6 +52,9 @@ export default function PlaybackStats() {
     [events],
   );
   const rows = useMemo(() => addonTable(addons), [addons]);
+  const switches = useStats((s) => s.switches);
+  const switchSum = useMemo(() => summarizeSwitches(switches ?? []), [switches]);
+  const switchReasons = Object.entries(switchSum.byReason).sort((a, b) => b[1] - a[1]) as [SwitchReasonStat, number][];
   const net = useCommunityStats();
   const network = communityView(demo && community ? DEMO_COMMUNITY : net.data);
   const [consent, setConsent] = useState(false);
@@ -131,6 +134,28 @@ export default function PlaybackStats() {
                 ))}
                 {sum.fallbackRate != null && (
                   <MetricRow label="Bascule vers mpv" value={formatPct(sum.fallbackRate)} detail="Le lecteur natif n’a pas su lire la source" last />
+                )}
+              </StatCard>
+            )}
+
+            {switchSum.total > 0 && (
+              <StatCard
+                title="Changements de source automatiques"
+                footer="Coupures par minute de la source quittée (sur les 90 s d’avant) et de la nouvelle (sur les 2 min d’après).">
+                <View style={styles.figures}>
+                  <Figure small value={String(switchSum.total)} label={`changements · ${switchSum.seamless} sans coupure`} />
+                  <Figure small value={formatPct(switchSum.helped)} label="ont réduit les coupures" tone={C.success} />
+                </View>
+                {switchReasons.map(([reason, n], i) => (
+                  <MetricRow key={reason} label={SWITCH_REASON_LABEL[reason]} value={String(n)} last={i === switchReasons.length - 1 && switchSum.measured === 0} />
+                ))}
+                {switchSum.measured > 0 && (
+                  <MetricRow
+                    label="Coupures / min avant → après"
+                    value={`${(switchSum.stallsPerMinBefore ?? 0).toFixed(1).replace('.', ',')} → ${(switchSum.stallsPerMinAfter ?? 0).toFixed(1).replace('.', ',')}`}
+                    detail={`${switchSum.measured} changement${switchSum.measured > 1 ? 's' : ''} mesuré${switchSum.measured > 1 ? 's' : ''} · bascule ${formatMs(switchSum.tSwitch)}`}
+                    last
+                  />
                 )}
               </StatCard>
             )}

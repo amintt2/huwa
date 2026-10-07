@@ -17,6 +17,8 @@ import { useEffect, useState } from 'react';
 import { Alert } from 'react-native';
 
 import Native from '../../modules/huwa-torrent';
+import { allowsPrewarm, torrentWindowed } from '@/settings/network-budget';
+import { currentNetClass } from '@/settings/net-path';
 import { createHolds } from './hold';
 import { getTorrentSettings, hydrateTorrentSettings, setTorrentSettings } from './settings';
 import { startStreamInput, type TorrentStreamLike } from './stream-input';
@@ -124,7 +126,7 @@ export async function prewarmTorrent(stream: TorrentStreamLike): Promise<StreamH
   if (!stream.infoHash || !isAvailable()) return null;
   await hydrateTorrentSettings();
   const s = getTorrentSettings();
-  if (!s.enabled || !s.legalAccepted || isMeteredNow()) return null;
+  if (!s.enabled || !s.legalAccepted || !allowsPrewarm(currentNetClass())) return null;
   return call<StreamHandle>('prewarm', startStreamInput({ ...stream, infoHash: stream.infoHash }, false));
 }
 
@@ -150,12 +152,21 @@ export function canProbeTorrents(): boolean {
 }
 
 /**
- * Metered connection right now (cellular), as the network settings see it (`useUnmetered`,
- * `useTorrentProbeBudget`). Unknown → unmetered, like there.
+ * The engine keeps only a window ahead of the playhead (`metered` in `startStream`) on this
+ * connection: cellular ("équilibré": capped background download) and Low Data Mode / "économie".
+ * Wi-Fi and cellular "illimité" download the whole file in the background.
  */
-export function isMeteredNow(): boolean {
+const onCellular = () => {
   try {
     return !!Native?.isOnCellular();
+  } catch {
+    return false;
+  }
+};
+
+export function isMeteredNow(): boolean {
+  try {
+    return torrentWindowed(currentNetClass());
   } catch {
     return false;
   }
@@ -237,7 +248,7 @@ export async function resolveTorrent(stream: TorrentStreamLike): Promise<StreamH
   const s = getTorrentSettings();
   if (!s.enabled) return null;
   const metered = isMeteredNow();
-  if (s.wifiOnly && metered) return null;
+  if (s.wifiOnly && onCellular()) return null;
   if (!(await ensureLegalAccepted())) return null;
   return startStream(startStreamInput({ ...stream, infoHash: stream.infoHash }, metered));
 }

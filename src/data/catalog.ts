@@ -12,6 +12,11 @@ export type Episode = {
   number: number;
   title: string;
   durationMin: number;
+  /**
+   * Official length per episode from AniList (minutes), when known. `durationMin` falls back to a
+   * placeholder; this one is only set from real data (wrong-work check of the source controller).
+   */
+  officialMin?: number;
   /** Manhwa chapters adapted by this episode (inclusive). This powers the bridge. */
   chapters: readonly [number, number];
   videoUrl: string;
@@ -103,7 +108,8 @@ const CH_TITLES = [
   'La nuit longue', 'Traces', 'Brèche', 'Héritage', 'Le jardin', 'Marée haute', 'Silence',
 ];
 
-export function makeEpisodes(seriesId: string, count: number, lastChapter: number, titled = true): Episode[] {
+export function makeEpisodes(seriesId: string, count: number, lastChapter: number, titled = true, officialMin?: number | null): Episode[] {
+  const official = officialMin && officialMin > 0 ? officialMin : undefined;
   return Array.from({ length: count }, (_, i) => {
     const from = Math.floor((i * lastChapter) / count) + 1;
     const to = Math.floor(((i + 1) * lastChapter) / count);
@@ -112,7 +118,8 @@ export function makeEpisodes(seriesId: string, count: number, lastChapter: numbe
       seriesId,
       number: i + 1,
       title: titled ? EP_TITLES[i % EP_TITLES.length] : '',
-      durationMin: 23 + (i % 2),
+      durationMin: official ?? 23 + (i % 2),
+      ...(official ? { officialMin: official } : null),
       chapters: [from, to] as const,
       videoUrl: SAMPLE_VIDEOS[i % SAMPLE_VIDEOS.length],
     };
@@ -246,7 +253,7 @@ const airedOverlays = new Map<string, number>();
 function resizeEpisodes(episodes: Episode[], seriesId: string, count: number): Episode[] {
   if (count <= episodes.length) return episodes.slice(0, count);
   const last = episodes[episodes.length - 1];
-  const more = makeEpisodes(seriesId, count, Math.max(count, last?.chapters[1] ?? 0), !!last?.title);
+  const more = makeEpisodes(seriesId, count, Math.max(count, last?.chapters[1] ?? 0), !!last?.title, last?.officialMin);
   return [...episodes, ...more.slice(episodes.length)];
 }
 

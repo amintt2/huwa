@@ -5,6 +5,8 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useEffect, useState, useSyncExternalStore } from 'react';
 
+import { CELLULAR_DATA, type CellularData } from './network-budget';
+
 export type Lang = 'fr' | 'en';
 export type Quality = 'auto' | '1080p' | '720p' | '480p';
 export type SubtitleSize = 'small' | 'medium' | 'large';
@@ -38,6 +40,15 @@ export type Settings = {
   readsManhwa: boolean;
   /** Chapter languages, primary first (chapter lists are filtered with it). */
   mangaLangs: LangList;
+  /**
+   * "Données mobiles": économie (Low Data Mode budgets), équilibré (near-Wi-Fi start, capped
+   * background download), illimité (as on Wi-Fi). See ./network-budget.ts.
+   */
+  cellularData: CellularData;
+  /** Move to a better / smoother source while playing (addons/source-controller.ts). */
+  autoSwitchSource: boolean;
+  /** Small message over the video when the source changed by itself. */
+  switchToast: boolean;
 };
 
 export const SETTINGS_KEY = 'huwa/settings/v1';
@@ -56,6 +67,9 @@ export const DEFAULT_SETTINGS: Settings = {
   autoTranslateSubs: true,
   readsManhwa: true,
   mangaLangs: ['fr', 'en'],
+  cellularData: 'balanced',
+  autoSwitchSource: true,
+  switchToast: true,
 };
 
 /** Font size in points for each subtitle size setting. */
@@ -94,6 +108,9 @@ function sanitize(raw: unknown): Settings {
     autoTranslateSubs: pick('autoTranslateSubs', bool),
     readsManhwa: pick('readsManhwa', bool),
     mangaLangs: pick('mangaLangs', langs),
+    cellularData: pick('cellularData', (x) => CELLULAR_DATA.includes(x as CellularData)),
+    autoSwitchSource: pick('autoSwitchSource', bool),
+    switchToast: pick('switchToast', bool),
   };
 }
 

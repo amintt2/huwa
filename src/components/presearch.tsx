@@ -16,7 +16,7 @@ import { useEffect, useSyncExternalStore } from 'react';
 import { useAddonSetHash, useSubtitles } from '@/addons/registry';
 import { useSource } from '@/addons/use-source';
 import { WarmPlayer } from '@/components/player/warm-player';
-import { useStreamPolicy, useUnmetered } from '@/settings/network';
+import { usePrewarm, useStreamPolicy } from '@/settings/network';
 import { getState } from '@/store/store';
 
 import { getWinner, park, propose, subscribeWinner, unpark, withdraw, type PresearchTarget } from './presearch-targets';
@@ -65,8 +65,8 @@ export function PresearchHost() {
 function Presearch({ target }: { target: PresearchTarget }) {
   const src = useSource(target.seriesId, target.episode, { preview: true });
   useSubtitles(target.seriesId, target.episode);
-  const unmetered = useUnmetered();
-  if (!unmetered || !src.url || src.web) return null;
+  const prewarm = usePrewarm();
+  if (!prewarm || !src.url || src.web) return null;
   const saved = getState().episodes[target.episodeId];
   const startAt = saved && !saved.done ? saved.position : undefined;
   return <WarmPlayer key={src.url} uri={src.url} headers={src.headers} startAt={startAt} meta={target.meta} />;

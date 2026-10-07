@@ -60,6 +60,7 @@ export function PlayerSettings({
   liveComments,
   onLiveComments,
   onClosed,
+  sourceInfo,
 }: {
   visible: boolean;
   onClose: () => void;
@@ -85,9 +86,20 @@ export function PlayerSettings({
   onLiveComments: (v: boolean) => void;
   /** The sheet finished closing (see Sheet). */
   onClosed?: () => void;
+  /** What plays and the last automatic source change. */
+  sourceInfo?: { label: string; detail?: string };
 }) {
   return (
     <Sheet visible={visible} onClose={onClose} onClosed={onClosed} title="Réglages de lecture" detents="fit">
+      {sourceInfo && (
+        <View style={styles.infoRow} accessibilityRole="text">
+          <Ionicons name="layers-outline" size={18} color={C.text2} />
+          <View style={{ flex: 1, gap: 2 }}>
+            <Txt v="label" style={{ fontSize: 14 }} numberOfLines={1}>{sourceInfo.label}</Txt>
+            {sourceInfo.detail ? <Txt v="small" style={{ fontSize: 12 }}>{sourceInfo.detail}</Txt> : null}
+          </View>
+        </View>
+      )}
       <Row title="Vitesse" value={String(rate)} onPick={(k) => onRate(Number(k))}
         options={SPEEDS.map((s) => ({ key: String(s), label: s === 1 ? 'Normale' : `${String(s).replace('.', ',')}×` }))} />
       {onOpenSubtitles && (
@@ -133,6 +145,7 @@ const styles = StyleSheet.create({
     borderCurve: 'continuous', backgroundColor: C.elevated, borderWidth: 1, borderColor: 'rgba(255,255,255,0.05)',
   },
   switchRow: { flexDirection: 'row', alignItems: 'center', gap: S.md, paddingTop: S.xs },
+  infoRow: { flexDirection: 'row', alignItems: 'center', gap: S.md, paddingBottom: S.xs },
   linkRow: {
     flexDirection: 'row', alignItems: 'center', gap: S.md, minHeight: 52, paddingHorizontal: 14, borderRadius: R.control,
     borderCurve: 'continuous', backgroundColor: C.elevated, borderWidth: 1, borderColor: 'rgba(255,255,255,0.05)',

@@ -157,8 +157,15 @@ export function clearRaceCache() {
  * before an answer (nothing is cached then). Callers share one request: it is only cancelled when
  * every caller has given up, so a pre-search handing over to the watch screen keeps its probe.
  */
-export function measureUrl(url: string, headers: Record<string, string> | undefined, o: ProbeOptions, transport: Transport = defaultTransport): Promise<RaceResult | undefined> {
-  const hit = cachedRace(url);
+export function measureUrl(
+  url: string,
+  headers: Record<string, string> | undefined,
+  o: ProbeOptions,
+  transport: Transport = defaultTransport,
+  /** Measure again even when a fresh result is cached (background re-probes while playing). */
+  refresh = false,
+): Promise<RaceResult | undefined> {
+  const hit = refresh ? undefined : cachedRace(url);
   if (hit) return Promise.resolve(hit);
   let f = inflight.get(url);
   if (!f) {
@@ -220,6 +227,21 @@ export async function runPool<T>(items: T[], concurrency: number, job: (item: T)
     }
   };
   await Promise.all(Array.from({ length: Math.max(1, Math.min(concurrency, items.length)) }, worker));
+}
+
+/**
+ * Background re-probes while an episode plays (source controller): each link measured again with
+ * the race's probe size, at most `concurrency` at a time. The new results replace the old ones in
+ * the cache (the sources menu and the controller see them). Resolves when all answered.
+ */
+export async function remeasure(entries: RaceEntry[], budget: RaceBudget, signal?: AbortSignal, transport: Transport = defaultTransport) {
+  if (budget.max <= 0) return;
+  await runPool(
+    dedupe(entries).slice(0, budget.max),
+    Math.max(1, budget.concurrency),
+    (e) => measureUrl(e.url, e.headers, { bytes: budget.bytes, timeoutMs: budget.timeoutMs, signal }, transport, true),
+    signal,
+  );
 }
 
 // ---------- hook ----------

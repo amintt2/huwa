@@ -17,7 +17,7 @@ const CACHE_KEY = 'huwa/catalog/v2';
 /** Bound for broken data only: long-runners (One Piece, Detective Conan) are past 1200. */
 const MAX_EPISODES = 5000;
 
-export const NODE = `id type format status countryOfOrigin episodes chapters averageScore genres seasonYear startDate { year month day }
+export const NODE = `id type format status countryOfOrigin episodes duration chapters averageScore genres seasonYear startDate { year month day }
   title { english userPreferred } description(asHtml: false)
   coverImage { extraLarge color } bannerImage nextAiringEpisode { episode airingAt }`;
 
@@ -35,6 +35,8 @@ export type Media = {
   status: 'FINISHED' | 'RELEASING' | 'NOT_YET_RELEASED' | 'CANCELLED' | 'HIATUS' | null;
   countryOfOrigin: string | null;
   episodes: number | null;
+  /** Minutes per episode (anime). Absent from older cached answers. */
+  duration?: number | null;
   chapters: number | null;
   averageScore: number | null;
   genres: string[] | null;
@@ -113,7 +115,7 @@ export function build(anime: Media | null, manhwa: Media | null, trendRank: numb
     estimated: !!(anime && manhwa),
     manhwaId: manhwa?.id,
     chaptersKnown: manhwa ? manhwa.chapters != null : undefined,
-    anime: anime && eps > 0 ? { episodes: makeEpisodes(id, eps, covered, false) } : undefined,
+    anime: anime && eps > 0 ? { episodes: makeEpisodes(id, eps, covered, false, anime.duration) } : undefined,
     manhwa: manhwa ? { chapters: makeChapters(id, chapterTotal, false) } : undefined,
   };
 }

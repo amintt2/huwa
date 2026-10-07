@@ -1,7 +1,7 @@
 // Renders the video surface of the engine in use: expo-video's VideoView (native engine) or the
 // libmpv view. Same props as VideoView; the ref reaches the VideoView (PiP) only in native mode.
 import { useVideoPlayer, VideoView, type VideoPlayer, type VideoViewProps } from 'expo-video';
-import { useEffect, useLayoutEffect, useMemo, useRef, useSyncExternalStore, type Ref } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useSyncExternalStore, type Ref } from 'react';
 import { StyleSheet, View } from 'react-native';
 
 import { getMpvNativeView, type MpvViewHandle } from '../../../../modules/huwa-mpv';
@@ -31,7 +31,18 @@ const idOf = (p: VideoPlayer) => {
 export function EngineView({ player, ref, style, ...rest }: Props) {
   const engine = useSyncExternalStore(player.subscribeEngine, player.getEngine, player.getEngine);
   const views = useSyncExternalStore(player.subscribeEngine, player.getViews, player.getViews);
-  if (engine === 'mpv') return <MpvSurface player={player} style={style} />;
+  const slots = useSyncExternalStore(player.subscribeEngine, player.getMpvSlots, player.getMpvSlots);
+  if (engine === 'mpv') {
+    // One surface per libmpv instance: the visible one on top, a hidden warm one (seamless
+    // source switch) under it. Keys are stable: the warm one is not remounted when it takes over.
+    return (
+      <View style={[style, styles.black]} pointerEvents="none">
+        {slots.map((slot) => (
+          <MpvSurface key={slot} player={player} slot={slot} main={player.isMainSlot(slot)} />
+        ))}
+      </View>
+    );
+  }
   const main = views[views.length - 1];
   return (
     <View style={style} pointerEvents="box-none">
@@ -49,7 +60,7 @@ export function EngineView({ player, ref, style, ...rest }: Props) {
 
 const MpvNative = getMpvNativeView();
 
-function MpvSurface({ player, style }: { player: HybridPlayer; style: VideoViewProps['style'] }) {
+function MpvSurface({ player, slot, main }: { player: HybridPlayer; slot: number; main: boolean }) {
   const handle = useRef<MpvViewHandle | null>(null);
   // Stop libmpv (network, decoder, GPU) as soon as the surface goes away, while the view still exists.
   useLayoutEffect(() => {
@@ -60,23 +71,29 @@ function MpvSurface({ player, style }: { player: HybridPlayer; style: VideoViewP
       h?.stop().catch(() => {});
     };
   }, []);
-  if (!MpvNative) return <View style={[style, styles.black]} />;
-  const setRef = (h: MpvViewHandle | null) => {
-    if (h) handle.current = h;
-    player.attachView(h);
-  };
+  const p = player.mpvSlot(slot);
+  // Stable: a new ref function would detach and re-attach the view on every render.
+  const setRef = useCallback(
+    (h: MpvViewHandle | null) => {
+      if (h) handle.current = h;
+      p.ref(h);
+    },
+    [p],
+  );
+  const style = [StyleSheet.absoluteFill, styles.black, { zIndex: main ? 1 : 0 }];
+  if (!MpvNative) return <View style={style} />;
   return (
     <MpvNative
       ref={setRef}
-      style={[style, styles.black]}
+      style={style}
       pointerEvents="none"
-      onReady={player.viewDidMount}
-      onLoaded={player.mpv.onLoaded}
-      onProgress={player.mpv.onProgress}
-      onStateChange={player.mpv.onStateChange}
-      onTracks={player.mpv.onTracks}
-      onEnd={player.mpv.onEnd}
-      onMpvError={player.mpv.onMpvError}
+      onReady={p.onReady}
+      onLoaded={p.onLoaded}
+      onProgress={p.onProgress}
+      onStateChange={p.onStateChange}
+      onTracks={p.onTracks}
+      onEnd={p.onEnd}
+      onMpvError={p.onMpvError}
     />
   );
 }
