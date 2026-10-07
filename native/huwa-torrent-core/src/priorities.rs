@@ -610,6 +610,36 @@ fn mkv_index_need(head: &[u8], file_len: u64) -> IndexNeed {
     parse().unwrap_or(IndexNeed::Unknown)
 }
 
+/// Offset of the first Matroska cluster, from the file's first bytes: the top-level elements are
+/// walked by their headers (Attachments — the fonts of a fansub release, often several MiB — sit
+/// between the tracks and the first cluster, and mpv reads them all before frame 1). When the next
+/// element header lies past `head`, its offset is returned (the clusters start there or later).
+pub fn mkv_first_cluster(head: &[u8]) -> Option<u64> {
+    let (id, l) = ebml_id(head, 0)?;
+    if id != MKV_EBML {
+        return None;
+    }
+    let (size, l2) = ebml_size(head, l)?;
+    let mut p = l + l2 + size? as usize;
+    let (id, l) = ebml_id(head, p)?;
+    if id != MKV_SEGMENT {
+        return None;
+    }
+    let (_, l2) = ebml_size(head, p + l)?;
+    p += l + l2;
+    loop {
+        if p >= head.len() {
+            return Some(p as u64);
+        }
+        let (id, l) = ebml_id(head, p)?;
+        if id == MKV_CLUSTER {
+            return Some(p as u64);
+        }
+        let (size, l2) = ebml_size(head, p + l)?;
+        p += l + l2 + size? as usize;
+    }
+}
+
 /// MP4 top-level boxes: `moov` before `mdat` = nothing at the end; `mdat` first = the `moov`
 /// right after it, to the end of the file.
 fn mp4_index_need(head: &[u8], file_len: u64) -> IndexNeed {
@@ -943,6 +973,29 @@ mod tests {
         // Not Matroska / cut too short: the startup plan.
         assert_eq!(index_need(ContainerIndex::MatroskaTail, b"RIFF....AVI ", len), IndexNeed::Unknown);
         assert_eq!(index_need(ContainerIndex::MatroskaTail, &head[..20], len), IndexNeed::Unknown);
+    }
+
+    #[test]
+    fn first_cluster_after_the_attachments() {
+        // EBML header, Segment, SeekHead, then 6 MiB of attachments: only their header is in the
+        // head, the cluster offset comes from its size.
+        let mut head = ebml(MKV_EBML, &[0u8; 16]);
+        head.extend_from_slice(&MKV_SEGMENT.to_be_bytes());
+        head.extend_from_slice(&[0x01, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF]);
+        let seg = head.len();
+        head.extend(ebml(MKV_SEEKHEAD, &[0u8; 8]));
+        let att = head.len();
+        head.extend_from_slice(&0x1941_A469u32.to_be_bytes());
+        head.push(0x01);
+        head.extend_from_slice(&(6u64 << 20).to_be_bytes()[1..]);
+        assert_eq!(mkv_first_cluster(&head), Some((att + 12 + (6 << 20)) as u64));
+        // No attachments: the cluster itself.
+        let mut plain = head[..att].to_vec();
+        let cl = plain.len();
+        plain.extend(ebml(MKV_CLUSTER, &[0u8; 4]));
+        assert_eq!(mkv_first_cluster(&plain), Some(cl as u64));
+        assert!(seg > 0);
+        assert_eq!(mkv_first_cluster(b"\x00\x00\x00\x20ftypisom"), None);
     }
 
     #[test]
