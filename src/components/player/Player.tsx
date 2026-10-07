@@ -534,6 +534,21 @@ export function Player({
     ? timedComments.filter((c) => t >= c.timestamp && t < Math.max(c.end ?? 0, c.timestamp + LIVE_COMMENT_SECONDS)).slice(-3)
     : [];
 
+  // ---------- subtitles only over a picture ----------
+  // Before the current file's first frame (loading, a source that never shows), cues timed from 0
+  // would read as nonsense over a black screen: subtitles wait for a picture of this source.
+  const uri = source?.uri ?? null;
+  const uriRef = useRef(uri);
+  useEffect(() => {
+    uriRef.current = uri;
+  }, [uri]);
+  const [frameFor, setFrameFor] = useState<string | null>(null);
+  useEffect(() => player.onMpvFirstFrame(() => setFrameFor(uriRef.current)), [player]);
+  // A handed-over source (warm hidden player) may have drawn its first frame before it became
+  // current: playback moving on it counts as a picture too.
+  if (uri && frameFor !== uri && isPlaying && time.t > 0.2 && status === 'readyToPlay') setFrameFor(uri);
+  const hasPicture = !!uri && frameFor === uri;
+
   const pipOk = Platform.OS !== 'web' && isPictureInPictureSupported();
   const loading = !!source?.uri && (status === 'loading' || (status === 'idle' && !ended));
 
@@ -567,7 +582,10 @@ export function Player({
         contentFit={zoomed ? 'cover' : 'contain'}
         allowsPictureInPicture
         startsPictureInPictureAutomatically
-        onFirstFrameRender={() => mediaKey && traceMark(mediaKey, 'first-frame')}
+        onFirstFrameRender={() => {
+          setFrameFor(uriRef.current);
+          if (mediaKey) traceMark(mediaKey, 'first-frame');
+        }}
         onPictureInPictureStart={() => setPip(true)}
         onPictureInPictureStop={() => setPip(false)}
       />
@@ -585,7 +603,7 @@ export function Player({
         onPinch={full ? onPinch : undefined}
       />
 
-      {!pip && (
+      {!pip && hasPicture && (
         <SubtitleOverlay
           doc={libass ? null : subs.doc}
           time={time.t}
