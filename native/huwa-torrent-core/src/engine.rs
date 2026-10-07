@@ -301,8 +301,10 @@ pub struct Engine {
 
 /// Head bytes fetched by a pre-warm (at least two pieces): what a player reads before frame 1.
 pub const PREWARM_HEAD_BYTES: u64 = 2 * 1024 * 1024;
+/// At most this much head is pre-warmed (MKV font attachments included).
+pub const PREWARM_HEAD_MAX: u64 = 48 * 1024 * 1024;
 /// A pre-warm gives up (and parks the torrent) after this long.
-pub const PREWARM_BUDGET: Duration = Duration::from_secs(30);
+pub const PREWARM_BUDGET: Duration = Duration::from_secs(60);
 
 /// Free space kept under the cache quota by the janitor (at most a tenth of the quota), so a new
 /// stream never waits for an eviction.
@@ -743,9 +745,18 @@ impl Engine {
                     .ok()
                     .flatten()
                     .unwrap_or_default();
-                let head_end = PREWARM_HEAD_BYTES.max(2 * g.piece_len).min(g.file_len);
-                let (tail, _) = crate::priorities::startup_tail_plan(crate::server::container_index(&name), g.file_len, g.piece_len);
                 let unverified = engine.config().unverified_start;
+                // An MKV's opening reads run to its first cluster: past the font attachments of a
+                // fansub release (often several MiB, all read before frame 1).
+                let mut head_end = PREWARM_HEAD_BYTES.max(2 * g.piece_len).min(g.file_len);
+                if crate::server::container_index(&name) == crate::priorities::ContainerIndex::MatroskaTail {
+                    if let Ok(first) = crate::streaming::read_head(h.clone(), file, crate::priorities::INDEX_HEAD_BYTES.min(g.file_len), unverified).await {
+                        if let Some(cluster) = crate::priorities::mkv_first_cluster(&first) {
+                            head_end = head_end.max(cluster + PREWARM_HEAD_BYTES / 4).min(PREWARM_HEAD_MAX).min(g.file_len);
+                        }
+                    }
+                }
+                let (tail, _) = crate::priorities::startup_tail_plan(crate::server::container_index(&name), g.file_len, g.piece_len);
                 let head = crate::streaming::fetch_region(h.clone(), file, g, 0, head_end, unverified);
                 let tail_job = async {
                     if tail > 0 && g.file_len - tail > head_end {

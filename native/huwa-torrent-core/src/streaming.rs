@@ -128,6 +128,9 @@ const RECOVER_MIN_INTERVAL: Duration = Duration::from_secs(30);
 const RECOVER_MAX_INTERVAL: Duration = Duration::from_secs(240);
 /// A playback without any open HTTP response for this long is forgotten (walker stopped).
 const PLAYBACK_IDLE_TTL: Duration = Duration::from_secs(90);
+/// A player response serves at most this many bytes from unverified blocks (then whole verified
+/// pieces again, and librqbit's default look-ahead).
+pub const UNVERIFIED_BUDGET_BYTES: u64 = 48 * 1024 * 1024;
 /// Background work (walker, whole-file selection) waits this long after a window's first bytes.
 pub const QUIET_AFTER_DATA: Duration = Duration::from_secs(3);
 /// A torrent that is no longer the latest start is parked (playback released, torrent paused)
@@ -194,6 +197,8 @@ pub struct Playback {
     /// Responses currently blocked on a missing piece, and since when (`now_ms`, 0 = none).
     waiting: AtomicUsize,
     wait_since_ms: AtomicU64,
+    /// When the last wait of a player response ended (`now_ms`, 0 = never waited).
+    last_wait_end_ms: AtomicU64,
     open_responses: AtomicUsize,
     last_activity_ms: AtomicU64,
     tail_started: AtomicBool,
@@ -226,6 +231,7 @@ impl Playback {
             generation: AtomicU64::new(0),
             waiting: AtomicUsize::new(0),
             wait_since_ms: AtomicU64::new(0),
+            last_wait_end_ms: AtomicU64::new(0),
             open_responses: AtomicUsize::new(0),
             last_activity_ms: AtomicU64::new(now_ms()),
             tail_started: AtomicBool::new(false),
@@ -313,8 +319,14 @@ impl Playback {
     /// order): before, it filled every peer's request pipeline and the downlink, and the next
     /// piece the player needed (the index at the end, the resume target) queued behind seconds of
     /// data already requested.
+    ///
+    /// "Quiet" also means the player did not wait for bytes during that time: a player still
+    /// waiting for its opening bytes (slow swarm, big attachments before the first cluster) is not
+    /// past its opening reads. (Counting only from the window's first bytes switched the opening
+    /// reads back to verified pieces 3 s after them: the device's 11 s first frames.)
     pub fn settled_for(&self, d: Duration) -> bool {
-        self.settled() && now_ms().saturating_sub(self.data_at_ms.load(Ordering::Acquire)) >= d.as_millis() as u64
+        let since = self.data_at_ms.load(Ordering::Acquire).max(self.last_wait_end_ms.load(Ordering::Acquire));
+        self.settled() && self.waiting.load(Ordering::Acquire) == 0 && now_ms().saturating_sub(since) >= d.as_millis() as u64
     }
 
     /// Waits until the window opened by `generation` (or a later one) delivered bytes. False when
@@ -518,7 +530,7 @@ impl Streaming {
                                 let _ = fetch_region(h, file_idx, g, tail_start, g.file_len, unverified).await;
                             }))
                         });
-                        let head = read_head(handle.clone(), file_idx, INDEX_HEAD_BYTES.min(geometry.file_len)).await?;
+                        let head = read_head(handle.clone(), file_idx, INDEX_HEAD_BYTES.min(geometry.file_len), unverified).await?;
                         match index_need(index, &head, geometry.file_len) {
                             IndexNeed::Nothing => {
                                 debug!("container index: nothing at the end before frame 1");
@@ -669,10 +681,11 @@ impl Drop for AbortOnDrop {
 
 /// The first `len` bytes of the file (waits for them: the head the player is fetching anyway),
 /// with a look-ahead of just those bytes.
-async fn read_head(handle: ManagedTorrentHandle, file_idx: usize, len: u64) -> anyhow::Result<Vec<u8>> {
+pub async fn read_head(handle: ManagedTorrentHandle, file_idx: usize, len: u64, unverified: bool) -> anyhow::Result<Vec<u8>> {
     let mut s = handle.stream(file_idx).await?;
     s.set_lookahead(len.max(1));
     s.set_urgent(true);
+    s.set_unverified(unverified);
     let mut buf = vec![0u8; len as usize];
     s.read_exact(&mut buf).await?;
     Ok(buf)
@@ -824,6 +837,8 @@ pub struct TrackedReader<R> {
     playback: Option<Arc<Playback>>,
     generation: u64,
     pos: u64,
+    /// Where the response started.
+    start: u64,
     waiting: bool,
     id: u64,
     /// Run once, on bytes served after the playback went quiet (`settled_for(QUIET_AFTER_DATA)`):
@@ -842,7 +857,7 @@ impl<R> TrackedReader<R> {
             p.open_responses.fetch_add(1, Ordering::AcqRel);
             id = p.next_reader.fetch_add(1, Ordering::Relaxed);
         }
-        Self { inner, playback, generation, pos: start, waiting: false, id, on_quiet: None }
+        Self { inner, playback, generation, pos: start, start, waiting: false, id, on_quiet: None }
     }
 
     pub fn on_quiet(&mut self, f: Box<dyn FnOnce(&mut R) + Send>) {
@@ -861,6 +876,7 @@ impl<R> TrackedReader<R> {
             }
         } else if p.waiting.fetch_sub(1, Ordering::AcqRel) == 1 {
             p.wait_since_ms.store(0, Ordering::Release);
+            p.last_wait_end_ms.store(now_ms(), Ordering::Release);
         }
     }
 }
@@ -910,7 +926,10 @@ impl<R: AsyncRead + Unpin> AsyncRead for TrackedReader<R> {
                 let n = (buf.filled().len() - before) as u64;
                 self.pos += n;
                 if n > 0 {
-                    let quiet = self.playback.as_ref().is_none_or(|p| p.settled_for(QUIET_AFTER_DATA));
+                    // Or a long response: its opening reads are over whatever the swarm does
+                    // (bounds the bytes ever served unverified).
+                    let quiet = self.playback.as_ref().is_none_or(|p| p.settled_for(QUIET_AFTER_DATA))
+                        || self.pos.saturating_sub(self.start) >= UNVERIFIED_BUDGET_BYTES;
                     if let Some(f) = self.on_quiet.take_if(|_| quiet) {
                         f(&mut self.inner);
                     }
@@ -1168,6 +1187,24 @@ mod tests {
         // The new window's own response and the tail probes (generation 0) are never stale.
         assert!(!pb.is_stale(2, 0));
         assert!(!pb.is_stale(0, 0));
+    }
+
+    #[test]
+    fn a_player_still_waiting_for_its_opening_bytes_is_not_quiet() {
+        let pb = playback();
+        pb.open_window(1, 0, false);
+        pb.on_data(1);
+        // The window delivered, but the player waits for more (slow swarm, big attachments).
+        pb.waiting.store(1, Ordering::Release);
+        pb.data_at_ms.store(1, Ordering::Release);
+        assert!(!pb.settled_for(Duration::from_millis(0)), "waiting right now");
+        pb.waiting.store(0, Ordering::Release);
+        pb.last_wait_end_ms.store(now_ms(), Ordering::Release);
+        assert!(!pb.settled_for(QUIET_AFTER_DATA), "a wait just ended");
+        pb.last_wait_end_ms.store(now_ms(), Ordering::Release);
+        pb.data_at_ms.store(now_ms(), Ordering::Release);
+        std::thread::sleep(Duration::from_millis(30));
+        assert!(pb.settled_for(Duration::from_millis(20)), "a while since its last wait and its first bytes");
     }
 
     #[test]
