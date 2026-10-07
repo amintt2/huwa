@@ -295,14 +295,6 @@ impl ChunkTracker {
         end_bytes.saturating_sub(offset)
     }
 
-    /// Huwa patch: back in the queue without forgetting the chunks already written (their
-    /// requester skips them, see `PieceTracker::claim_chunk`).
-    pub fn requeue_keep_chunks(&mut self, index: ValidPieceIndex) {
-        if !self.have.as_slice().get(index.get_usize()).map(|r| *r).unwrap_or_default() {
-            self.queue_pieces.set(index.get_usize(), true);
-        }
-    }
-
     pub fn mark_piece_downloaded(&mut self, idx: ValidPieceIndex) {
         let id = idx.get() as usize;
         if !self.have.as_slice()[id] {

@@ -39,9 +39,13 @@ changes below. Every change is marked `Huwa patch` in the code. Measured with
    the head and the container index). A peer at its cap while blocks are still free waits
    (`Busy`) instead of filling its in-order pipeline with other pieces. A block asked from
    another peer 1.5 s ago without an answer may be asked again (endgame, urgent blocks only); the
-   same peer re-asks after 5 s. Blocks already written are never requested again; a shared piece
-   nobody works on any more goes back to the queue keeping its blocks; any peer may complete a
-   shared piece (`write_to_disk`).
+   same peer re-asks after 5 s. Blocks already written are never requested again. Once the
+   reader's part of a piece is all claimed, the blocks before the reader come next (its SHA-1,
+   and so a verified reader, needs them: without this a verified read of a piece entered past its
+   start waited for the regular reservation, 25–37 s in the bench's verified floor). A shared
+   piece stays shared when its peers leave (their claims are freed for the others; requeuing it
+   ignored the blocks still on their way); any peer may complete a shared piece
+   (`write_to_disk`).
 6. **Unverified reads** (`FileStream::set_unverified`, `ChunkTracker::downloaded_run`,
    `wake_streams_on_chunk`). A stream allowed to may read the blocks already written of a piece
    not verified yet, from its position on (woken as each block lands). Used by Huwa only for the
