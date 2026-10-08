@@ -50,6 +50,12 @@ unexpected_cfgs = { level = "warn", check-cfg = ["cfg(huwa_baseline)"] }
 
 [target.'cfg(target_os = "android")'.dependencies]
 jni = "0.21"
+# reqwest's rustls-platform-verifier (HTTPS trackers, torrents added by https URL) needs the app's
+# Context on Android, given once through `nativeInitTls` (src/jni_android.rs). Same version as the
+# one reqwest pulls in (exact pin: its Kotlin part, org.rustls:rustls-platform-verifier, must match
+# rustls-platform-verifier-android in Cargo.lock), and its jni major (0.22) under another name.
+rustls-platform-verifier = "=0.7.1"
+jni22 = { package = "jni", version = "0.22", default-features = false }
 
 [profile.release]
 opt-level = 3

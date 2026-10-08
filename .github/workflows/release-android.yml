@@ -83,7 +83,7 @@ jobs:
           if "$BIN/llvm-readelf" -d "$SO" | grep NEEDED | grep -vE '\[(libc|libm|libdl|liblog)\.so\]'; then
             echo "::error::dépendance non système dans $SO"; exit 1
           fi
-          "$BIN/llvm-nm" -D --defined-only "$SO" | grep -E ' Java_expo_modules_huwatorrent_HuwaTorrentNative_native(Version|Init|Call|Shutdown)$' | tee /dev/stderr | wc -l | grep -qx 4
+          "$BIN/llvm-nm" -D --defined-only "$SO" | grep -E ' Java_expo_modules_huwatorrent_HuwaTorrentNative_native(Version|InitTls|Init|Call|Shutdown)$' | tee /dev/stderr | wc -l | grep -qx 5
 
       - uses: actions/upload-artifact@v4
         with:
@@ -229,6 +229,20 @@ jobs:
             echo '|---|---|'
             for f in *.apk; do echo "| $f | $(du -h "$f" | cut -f1) |"; done
           } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: HTTPS du moteur torrent (rustls-platform-verifier)
+        # La partie Kotlin du vérifieur doit être dans le dex (appelée seulement par JNI), et son
+        # android:networkSecurityConfig retiré du manifeste fusionné (plugins/with-huwa-torrent.js).
+        run: |
+          BT="$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)"
+          for f in dist-apk/*.apk; do
+            n="$(unzip -p "$f" 'classes*.dex' | grep -a -c 'Lorg/rustls/platformverifier/CertificateVerifier;' || true)"
+            [ "$n" -gt 0 ] || { echo "::error::org.rustls.platformverifier absent de $f"; exit 1; }
+            if "$BT/aapt2" dump xmltree --file AndroidManifest.xml "$f" | grep -q networkSecurityConfig; then
+              echo "::error::android:networkSecurityConfig présent dans le manifeste de $f"; exit 1
+            fi
+            echo "OK: $f"
+          done
 
       - name: Empreinte runtime (pour publier l'OTA correspondante)
         run: npx expo-updates fingerprint:generate --platform android > dist-apk/fingerprint-android.json

@@ -28,6 +28,22 @@ pub extern "system" fn Java_expo_modules_huwatorrent_HuwaTorrentNative_nativeVer
     out(&env, crate::VERSION.to_string())
 }
 
+/// Hands the app `Context` to rustls-platform-verifier, which checks HTTPS certificates through
+/// Android's verifier (its Kotlin part, org.rustls:rustls-platform-verifier, is in the APK).
+/// Without it the first HTTPS handshake (https tracker announce, torrent added by https URL)
+/// panics in that request's task. Called once before `nativeInit`; later calls are no-ops.
+/// Written against jni 0.22 (the verifier's), whose wrappers are `repr(transparent)` over the
+/// same raw `JNIEnv*` / `jobject`. A failure is thrown to Kotlin as a RuntimeException.
+#[no_mangle]
+pub extern "system" fn Java_expo_modules_huwatorrent_HuwaTorrentNative_nativeInitTls<'local>(
+    mut env: jni22::EnvUnowned<'local>,
+    _class: jni22::objects::JClass<'local>,
+    context: jni22::objects::JObject<'local>,
+) {
+    env.with_env(|env| rustls_platform_verifier::android::init_with_env(env, context))
+        .resolve::<jni22::errors::ThrowRuntimeExAndDefault>()
+}
+
 #[no_mangle]
 pub extern "system" fn Java_expo_modules_huwatorrent_HuwaTorrentNative_nativeInit<'local>(
     mut env: JNIEnv<'local>,

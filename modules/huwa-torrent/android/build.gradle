@@ -18,11 +18,29 @@ if (huwaTorrentFlag && !huwaLinkRust) {
   logger.warn("[HuwaTorrent] HUWA_TORRENT=1 but ${huwaJniLibs} is missing. Run scripts/build-torrent.sh android. Building WITHOUT the torrent engine.")
 }
 
+// Kotlin half of rustls-platform-verifier (HTTPS certificate checks of the Rust engine, initialized
+// by HuwaTorrentNative.initTls). Its version must equal rustls-platform-verifier-android in
+// Cargo.lock, so it is read from there. The Maven repository is added to every project through
+// `android.extraMavenRepos` (plugins/with-huwa-torrent.js), which also drops the library's
+// android:networkSecurityConfig from the app manifest.
+def rustlsVerifierVersion = { ->
+  def lock = file("${projectDir}/../../../native/huwa-torrent-core/Cargo.lock")
+  def lines = lock.readLines()
+  def idx = lines.findIndexOf { it.trim() == 'name = "rustls-platform-verifier-android"' }
+  def version = idx < 0 ? null : lines.drop(idx + 1)
+    .find { it.trim().startsWith('version = ') }
+    ?.find(/"([^"]*)"/) { match, v -> v }
+  if (!version) throw new GradleException("[HuwaTorrent] rustls-platform-verifier-android not found in ${lock}")
+  return version
+}
+
 android {
   namespace 'expo.modules.huwatorrent'
   defaultConfig {
     versionCode 1
     versionName '0.1.0'
+    // The verifier's classes are only reached from Rust through JNI: kept if the app enables R8.
+    consumerProguardFiles 'proguard-rules.pro'
   }
   if (huwaLinkRust) {
     sourceSets {
@@ -31,5 +49,11 @@ android {
         jniLibs.srcDirs += huwaJniLibs.absolutePath
       }
     }
+  }
+}
+
+dependencies {
+  if (huwaLinkRust) {
+    implementation "org.rustls:rustls-platform-verifier:${rustlsVerifierVersion()}"
   }
 }
