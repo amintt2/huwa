@@ -6,8 +6,6 @@ import type { EventEmitter } from 'expo-modules-core/types';
 import { createVideoPlayer, type AudioTrack, type SubtitleTrack, type VideoPlayer, type VideoPlayerEvents, type VideoPlayerStatus, type VideoSource, type VideoTrack } from 'expo-video';
 import { Platform } from 'react-native';
 
-import { getSettings } from '@/settings/settings';
-
 import HuwaMpv, { getMpvNativeView, type MpvLoadedEvent, type MpvProgressEvent, type MpvStateEvent, type MpvTrack, type MpvViewHandle } from '../../../../modules/huwa-mpv';
 
 import { describeProxyError, httpProxy, isProxiable, type ProxyHandle, type ProxyPrefetch } from './http-proxy';
@@ -15,7 +13,7 @@ import './local-probe';
 import { decideEngine, type DeviceCaps, type Engine, type Probe } from './policy';
 import { getEnginePref, setActiveEngine } from './prefs';
 import { cachedProbe, probeSource, probeWithoutRequest } from './probe';
-import { pickAudioTrack } from './tracks';
+import { chooseAudio, mpvAlang, type AudioWish } from '../audio-pick';
 
 type Listener = (...args: any[]) => void;
 type Subscription = { remove(): void };
@@ -242,6 +240,8 @@ export class HybridPlayer implements EventEmitter<VideoPlayerEvents> {
   private probeProxy: { uri: string; handle: ProxyHandle } | null = null;
   /** What the load in progress knows for the proxy (duration, file size, container). */
   private loadHints: ProxyPrefetch = {};
+  /** Audio wanted (Player: series pick, dub, original language): every file opens on it. */
+  private audioWish: AudioWish | null = null;
 
   constructor(native: VideoPlayer) {
     this.native = native;
@@ -510,6 +510,26 @@ export class HybridPlayer implements EventEmitter<VideoPlayerEvents> {
     this.m.subtitleTrack = t;
     this.view?.setSubtitleTrack(mpvId(t)).catch(() => {});
     this.emit('subtitleTrackChange', { subtitleTrack: t, oldSubtitleTrack: old });
+  }
+
+  /**
+   * The audio to play (see audio-pick.ts). mpv gets it as `alang` before each file opens (no
+   * blip of the file's default track), and the seamless swaps keep it; the Player still checks
+   * every track event against it.
+   */
+  setAudioPreference(wish: AudioWish | null) {
+    this.audioWish = wish;
+    if (this.view) this.sendAlang(this.view);
+  }
+
+  private sendAlang(view: MpvViewHandle) {
+    // Native call added after the first mpv builds: absent on an older binary.
+    if (this.audioWish) quiet(view.setAudioLanguages?.(mpvAlang(this.audioWish.langs)));
+  }
+
+  /** Index of the wished audio track among mpv tracks, or -1. */
+  private wishedMpvAudio(audio: MpvTrack[]): number {
+    return this.audioWish ? chooseAudio(audio.map(toTrack), this.audioWish) : -1;
   }
 
   // ---------- subtitles drawn by mpv ----------
@@ -912,10 +932,11 @@ export class HybridPlayer implements EventEmitter<VideoPlayerEvents> {
       next.playbackRate = this.rate;
       next.volume = old.volume;
       next.timeUpdateEventInterval = old.timeUpdateEventInterval;
-      if (audioLang) {
-        const t = next.availableAudioTracks.find((a) => a.language === audioLang);
-        if (t && t.id !== next.audioTrack?.id) next.audioTrack = t;
-      }
+      // The wished track (user's pick, dub, original language), else the language heard until now.
+      const tracks = next.availableAudioTracks;
+      const wished = this.audioWish ? chooseAudio(tracks, this.audioWish) : -1;
+      const t = wished >= 0 ? tracks[wished] : audioLang ? tracks.find((a) => a.language === audioLang) : undefined;
+      if (t && t.id !== next.audioTrack?.id) next.audioTrack = t;
       next.muted = old.muted;
       next.allowsExternalPlayback = true;
       next.showNowPlayingNotification = true;
@@ -1029,6 +1050,7 @@ export class HybridPlayer implements EventEmitter<VideoPlayerEvents> {
     const view = st.view;
     view.setVolume(0).catch(() => {});
     view.setSpeed(this.rate).catch(() => {});
+    this.sendAlang(view);
     if (this.fill) view.setFill(true).catch(() => {});
     void (async () => {
       // Through the HTTP proxy too: its head, end of file and the point it opens at come at once.
@@ -1095,8 +1117,12 @@ export class HybridPlayer implements EventEmitter<VideoPlayerEvents> {
     view.setFill(this.fill).catch(() => {});
     const audio = st.tracks.filter((t) => t.type === 'audio');
     const subs = st.tracks.filter((t) => t.type === 'sub' && !(t.external && t.title === EXT_SUB_TITLE));
+    // The wished track (user's pick, dub, original language), else the language heard until now.
+    const wished = this.wishedMpvAudio(audio);
     const wantAudio = old.audioTrack?.language;
-    const pickAudio = (wantAudio ? audio.find((t) => normLang(t.lang) === wantAudio) : undefined) ?? audio.find((t) => t.selected) ?? null;
+    const pickAudio = (wished >= 0 ? audio[wished] : undefined)
+      ?? (wantAudio ? audio.find((t) => normLang(t.lang) === wantAudio) : undefined)
+      ?? audio.find((t) => t.selected) ?? null;
     if (pickAudio && !pickAudio.selected) view.setAudioTrack(pickAudio.id).catch(() => {});
     const wantSub = !this.extSub ? old.subtitleTrack?.language : undefined;
     const pickSub = wantSub ? (subs.find((t) => normLang(t.lang) === wantSub) ?? null) : null;
@@ -1236,6 +1262,7 @@ export class HybridPlayer implements EventEmitter<VideoPlayerEvents> {
     });
     view.setSpeed(this.rate).catch(() => {});
     view.setVolume(this.vol).catch(() => {});
+    this.sendAlang(view);
     // mpv starts playing on load (autoplay): it takes the audio now.
     this.claimAudio();
     try {
@@ -1377,18 +1404,15 @@ export class HybridPlayer implements EventEmitter<VideoPlayerEvents> {
   }
 
   /**
-   * Default audio track from the language settings (Réglages → Langues): in "VF" mode the first
-   * dub language found (track language, else its title: "VF", "Français"), otherwise the file's
-   * default track (usually the original version). Right at load, before the first frame; the
-   * Player then confirms it for the source (`audioLangs`), for both engines. Subtitles are chosen
-   * by the subtitle controller of the Player, as for the native engine.
+   * Audio track the Player wishes (`setAudioPreference`: the user's pick for the series, the dub
+   * language, else the original language — never just the file's default flag, which dual-audio
+   * releases put on the English dub). Right at load, before the first frame; `alang` already
+   * did it on builds that have it. Subtitles are chosen by the subtitle controller of the Player.
    */
   private pickDefaultAudio(tracks: MpvTrack[]) {
     const audio = tracks.filter((t) => t.type === 'audio');
     if (audio.length < 2) return;
-    const { watchMode, dubLangs } = getSettings();
-    if (watchMode !== 'dub') return;
-    const i = pickAudioTrack(audio.map((a) => ({ lang: a.lang, name: a.title })), dubLangs);
+    const i = this.wishedMpvAudio(audio);
     if (i >= 0 && !audio[i].selected) this.audioTrack = toTrack(audio[i]);
   }
 

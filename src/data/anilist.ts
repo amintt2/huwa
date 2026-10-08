@@ -115,6 +115,7 @@ export function build(anime: Media | null, manhwa: Media | null, trendRank: numb
     estimated: !!(anime && manhwa),
     manhwaId: manhwa?.id,
     chaptersKnown: manhwa ? manhwa.chapters != null : undefined,
+    origin: anime?.countryOfOrigin ?? undefined,
     anime: anime && eps > 0 ? { episodes: makeEpisodes(id, eps, covered, false, anime.duration) } : undefined,
     manhwa: manhwa ? { chapters: makeChapters(id, chapterTotal, false) } : undefined,
   };

@@ -33,7 +33,8 @@ import { C, F, R, S } from '@/theme/tokens';
 import { useSkipTimes, type Segment } from './aniskip';
 import { SourceLoadingBar, type LoadPhase } from './SourceLoadingBar';
 import { EngineView, useEnginePlayer, type EnginePlayer as VideoPlayer } from './engines';
-import { pickAudioTrack } from './engines/tracks';
+import { AudioKeeper, type AudioPick, type AudioWish } from './audio-pick';
+import { langCode } from './engines/tracks';
 import { useMpvSubtitles } from './engines/use-mpv-subtitles';
 import { GestureLayer, type Hud } from './GestureLayer';
 import { AUTO_NEXT_SECONDS, NextCard, Pill, type NextInfo } from './overlays';
@@ -137,6 +138,14 @@ export type PlayerProps = {
   audioLangs?: string[] | null;
   /** Audio tracks of the loaded file (the source's real languages), per source URI. */
   onAudioTracks?: (uri: string, tracks: AudioTrack[]) => void;
+  /**
+   * Audio to play (audio-pick.ts: the user's pick for the series, the dub languages, else the
+   * original language). Kept through seeks, source switches and track events. Without it:
+   * `audioLangs`, else the file's default track.
+   */
+  audioPref?: AudioWish | null;
+  /** The user picked an audio track by hand (to remember for the series). */
+  onAudioPick?: (pick: AudioPick) => void;
 };
 
 const NEXT_WINDOW = 90;
@@ -216,6 +225,8 @@ export function Player({
   sourceInfo,
   audioLangs,
   onAudioTracks,
+  audioPref,
+  onAudioPick,
 }: PlayerProps) {
   const insets = useSafeAreaInsets();
   const window = useWindowDimensions();
@@ -389,31 +400,45 @@ export function Player({
     onDeferred: (key, reason) => onUpgradeDeferred?.(key, reason),
   });
 
-  // ---------- audio track of a dubbed source ----------
-  // Once per source: the track in the dub language (a manual pick in the settings sheet stays).
-  const audioPicked = useRef<string | null>(null);
+  // ---------- audio track ----------
+  // The wished track (audioPref, else the dub languages) is put back whenever a track event shows
+  // another one: a reloaded source, AVPlayer's own media selection, mpv carrying a track id over.
+  // A manual pick becomes the wish at once (before the parent stores it for the series).
+  const propWish: AudioWish | null = audioPref ?? (audioLangs?.length ? { langs: audioLangs } : null);
+  const wishKey = propWish ? `${propWish.langs.join(',')}|${propWish.manual?.lang ?? ''}|${propWish.manual?.label ?? ''}` : '';
+  const wish = useRef<AudioWish | null>(propWish);
+  const [keeper] = useState(() => new AudioKeeper());
+  const keepAudio = (tracks: AudioTrack[], current: AudioTrack | null) => {
+    const i = keeper.check(sourceUri.current, tracks, current, wish.current);
+    if (i >= 0) setProp(player, 'audioTrack', tracks[i]);
+  };
   const onTracks = (tracks: AudioTrack[]) => {
     const uri = sourceUri.current;
     if (!uri) return;
     if (tracks.length) cb.current.onAudioTracks?.(uri, tracks);
-    const langs = cb.current.audioLangs;
-    if (!langs?.length || tracks.length < 1 || audioPicked.current === uri) return;
-    const i = pickAudioTrack(tracks, langs);
-    if (i < 0) return;
-    audioPicked.current = uri;
-    const want = tracks[i];
-    const cur = player.audioTrack;
-    if (!cur || cur.id !== want.id || cur.language !== want.language || cur.label !== want.label) setProp(player, 'audioTrack', want);
+    keepAudio(tracks, player.audioTrack);
   };
-  const onTracksRef = useRef(onTracks);
+  const keepAudioRef = useRef(keepAudio);
   useEffect(() => {
-    onTracksRef.current = onTracks;
+    keepAudioRef.current = keepAudio;
   });
-  // The source became dubbed after it loaded (a track check, the user's choice): pick now.
-  const dubAudioKey = (audioLangs ?? []).join(',');
+  // The wish changed (a dub confirmed after the load, a pick stored for the series): apply now.
   useEffect(() => {
-    if (dubAudioKey) onTracksRef.current(player.availableAudioTracks);
-  }, [dubAudioKey, player]);
+    wish.current = propWish;
+    player.setAudioPreference(propWish);
+    keepAudioRef.current(player.availableAudioTracks, player.audioTrack);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [wishKey, player]);
+  const pickAudio = (tr: AudioTrack) => {
+    const lang = langCode(tr.language);
+    const label = (tr.label || tr.name || '').trim();
+    const pick: AudioPick = { lang, ...(label ? { label } : null) };
+    const base = wish.current?.langs ?? [];
+    wish.current = { langs: [...new Set([...(lang !== 'und' ? [lang] : []), ...base])], manual: pick };
+    player.setAudioPreference(wish.current);
+    setProp(player, 'audioTrack', tr);
+    onAudioPick?.(pick);
+  };
 
   useEventListener(player, 'sourceLoad', (e) => {
     setDuration(e.duration);
@@ -436,7 +461,10 @@ export function Player({
     onTracks(e.availableAudioTracks);
   });
   useEventListener(player, 'availableSubtitleTracksChange', (e) => setEmbedded(e.availableSubtitleTracks));
-  useEventListener(player, 'audioTrackChange', (e) => setAudioTrack(e.audioTrack));
+  useEventListener(player, 'audioTrackChange', (e) => {
+    setAudioTrack(e.audioTrack);
+    keepAudio(player.availableAudioTracks, e.audioTrack);
+  });
 
   // ---------- AniSkip segments ----------
   const { segments } = useSkipTimes(malId, episodeNumber, duration);
@@ -919,9 +947,7 @@ export function Player({
         audioKey={audioKey}
         onAudio={(k) => {
           const tr = audioTracks[Number(k)];
-          if (!tr) return;
-          audioPicked.current = source?.uri ?? null;
-          setProp(player, 'audioTrack', tr);
+          if (tr) pickAudio(tr);
         }}
         // One modal at a time: iOS does not present a modal while another one is still on screen
         // (the subtitle sheet would never show and could not be closed), so it opens once the
