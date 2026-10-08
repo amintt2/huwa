@@ -6,14 +6,14 @@ Fournisseur : Tahar Touzi (particulier, France). Moyen : **Huwa**, version 1.0.0
 
 ## Contexte
 
-Huwa est distribué gratuitement et partout dans le monde par des magasins d'applications (App Store d'Apple, place de marché AltStore PAL dans l'Union européenne) et par téléchargement direct (IPA, APK). Le fournisseur demande donc :
+Huwa est distribué gratuitement et partout dans le monde par téléchargement direct (IPA, APK) et, après notarisation par Apple, sur la place de marché AltStore PAL dans l'Union européenne ; une publication sur l'App Store d'Apple est envisagée. Le fournisseur demande donc :
 
 - le récépissé ou l'attestation de déclaration de **fourniture** en France (article 3, 1°, du décret) ;
 - dans la mesure où la même déclaration couvre le **transfert vers les États membres de l'Union européenne** et l'**exportation** (annexe 2, A, catégorie 1), la reconnaissance du statut « grand public » (annexe 2, B, catégorie 3), au vu des éléments ci-dessous.
 
 ## Condition a) Couramment à la disposition du public, sans restriction, par transaction électronique
 
-- L'application est publiée sans restriction d'accès sur l'App Store d'Apple, sur la place de marché alternative AltStore PAL, et sous forme de paquets téléchargeables (IPA, APK publiés sur GitHub).
+- L'application est publiée sans restriction d'accès sous forme de paquets téléchargeables (IPA, APK publiés sur GitHub) et, après notarisation, sur la place de marché alternative AltStore PAL ; une publication sur l'App Store d'Apple est envisagée.
 - Elle est gratuite, sans achat intégré ni abonnement. N'importe qui peut l'installer, sans contrat, sans licence et sans vérification d'identité.
 - Elle vise le grand public (loisir : bibliothèque d'anime et de manhwa). Elle n'est pas conçue pour des administrations, des opérateurs ou des clients professionnels.
 
@@ -23,7 +23,7 @@ Huwa est distribué gratuitement et partout dans le monde par des magasins d'app
 - L'utilisateur peut seulement activer ou désactiver certaines fonctions (sauvegarde dans le Trousseau iCloud, clé d'accès, relais, moteur BitTorrent dans les versions hors App Store). Il ne peut pas toucher aux mécanismes cryptographiques.
 - Les extensions qu'il ajoute sont des sources de contenu (catalogues, liens). Elles n'ont pas accès aux fonctions cryptographiques.
 - L'application ne permet pas de chiffrer des fichiers ou des données arbitraires.
-- Sur iOS, le binaire est signé, et sa modification invalide la signature. Sur l'App Store et AltStore PAL, il est aussi soumis au contrôle d'Apple.
+- Sur iOS, le binaire est signé, et sa modification invalide la signature. Sur AltStore PAL (et sur l'App Store si l'application y est publiée), il est aussi soumis au contrôle d'Apple.
 
 ## Condition c) Installation par l'utilisateur sans assistance ultérieure importante du fournisseur
 

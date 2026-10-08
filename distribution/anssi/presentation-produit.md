@@ -50,7 +50,7 @@ Tous les algorithmes sont publics et standard (X25519/Ed25519, ChaCha20-Poly1305
 
 | Canal | Version | Contenu |
 |---|---|---|
-| App Store (Apple), dont la France | build « store » | Sans lecteur libmpv ni moteur BitTorrent |
+| App Store (Apple) : prévue, pas encore publiée | build « store » | Sans lecteur libmpv ni moteur BitTorrent |
 | AltStore PAL (place de marché alternative, Union européenne) | build « complet » | Avec lecteur libmpv et moteur BitTorrent optionnel |
 | Paquet IPA à installer soi-même (sideload) | build « complet » | Idem |
 | Paquet APK Android (publié sur GitHub) | build « complet » | Moteur BitTorrent optionnel ; pas de libmpv sur Android |

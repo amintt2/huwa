@@ -7,7 +7,7 @@
 | Produit | Huwa, application mobile, version 1.0.0 |
 | Identifiant | `com.amintt2.huwa` (iOS, Android) |
 | Fournisseur | Tahar Touzi, personne physique, France |
-| Nature | Logiciel grand public, gratuit, distribué sous forme binaire (App Store, AltStore PAL, IPA, APK) |
+| Nature | Logiciel grand public, gratuit, distribué sous forme binaire (IPA, APK, AltStore PAL après notarisation ; App Store envisagé) |
 | Date du document | Octobre 2026 |
 
 Toutes les informations ci-dessous ont été relevées dans le code source de la version 1.0.0 et dans les versions exactes des bibliothèques résolues par `package-lock.json` (JavaScript) et `Cargo.lock` (Rust).
