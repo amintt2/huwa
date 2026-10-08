@@ -1,16 +1,21 @@
-# Release Android : APK signé construit localement (expo prebuild + Gradle, sans serveur EAS),
+# Release Android : APK signé construit dans Actions (expo prebuild + Gradle, sans serveur EAS),
 # attaché à la GitHub Release du tag `v*`.
 #
-# Secrets à définir dans le dépôt (Settings → Secrets and variables → Actions) :
-#   HUWA_KEYSTORE_B64        keystore de release encodé en base64 (`base64 -i huwa-release.keystore`)
+# Secrets du dépôt (posés par scripts/android-keystore.sh) :
+#   HUWA_KEYSTORE_B64        keystore de release (PKCS12) encodé en base64
 #   HUWA_KEYSTORE_PASSWORD   mot de passe du keystore
-#   HUWA_KEY_ALIAS           alias de la clé (ex. huwa)
+#   HUWA_KEY_ALIAS           alias de la clé (huwa)
 #   HUWA_KEY_PASSWORD        mot de passe de la clé
-# Le certificat OTA public (certs/certificate.pem) doit être commité : expo prebuild le lit.
-# Aucune variable EXPO_TOKEN n'est nécessaire (pas d'appel à EAS).
 #
-# Variante EAS local (commentée en bas) : `eas build --local` exige un compte Expo + EXPO_TOKEN
-# et le projet lié (`extra.eas.projectId`) ; la voie Gradle n'en dépend pas.
+# - Tag `v*` : les quatre secrets sont obligatoires, sinon le job échoue.
+# - workflow_dispatch sans secrets : clé jetable générée dans le job, fichiers et artefact suffixés
+#   `-unsigned-test`, jamais publiés (installables pour tester, pas de mise à jour possible ensuite).
+#
+# Mises à jour OTA : désactivées tant que certs/certificate.pem et l'URL du serveur ne sont pas
+# en place (app.config.js) ; le build n'en dépend pas.
+#
+# Sorties : Huwa-<v>.apk (universel : arm64-v8a, armeabi-v7a, x86_64) + Huwa-<v>-<abi>.apk + .sha256.
+# Le job `smoke` (émulateur) est informatif : il ne bloque pas la release.
 
 name: Release Android
 
@@ -22,15 +27,87 @@ on:
 permissions:
   contents: write
 
+concurrency:
+  group: release-android-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  # NDK de React Native 0.86 (node_modules/react-native/gradle/libs.versions.toml) : le même pour
+  # Rust et Gradle.
+  NDK_VERSION: 27.1.12297006
+
 jobs:
-  apk:
-    name: APK sideload
+  torrent:
+    name: moteur torrent (Rust, ${{ matrix.abi }})
     runs-on: ubuntu-latest
     timeout-minutes: 60
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - { abi: arm64-v8a, target: aarch64-linux-android }
+          - { abi: armeabi-v7a, target: armv7-linux-androideabi }
+          - { abi: x86_64, target: x86_64-linux-android }
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: native/huwa-torrent-core
+          key: android-${{ matrix.abi }}
+
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-ndk
+
+      - uses: android-actions/setup-android@v3
+        with:
+          packages: "platform-tools ndk;${{ env.NDK_VERSION }}"
+          log-accepted-android-sdk-licenses: false
+
+      - name: cargo ndk
+        working-directory: native/huwa-torrent-core
+        run: |
+          export ANDROID_NDK_HOME="$ANDROID_HOME/ndk/$NDK_VERSION"
+          cargo ndk -t ${{ matrix.abi }} -P 24 -o dist/jniLibs build --release --lib --locked
+          ls -la dist/jniLibs/${{ matrix.abi }}/
+          # System.loadLibrary échoue en silence (isAvailable() == false) : on vérifie ici que la
+          # bibliothèque ne dépend que de bibliothèques système et exporte les symboles JNI.
+          BIN="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin"
+          SO="dist/jniLibs/${{ matrix.abi }}/libhuwa_torrent_core.so"
+          "$BIN/llvm-readelf" -d "$SO" | grep NEEDED
+          if "$BIN/llvm-readelf" -d "$SO" | grep NEEDED | grep -vE '\[(libc|libm|libdl|liblog)\.so\]'; then
+            echo "::error::dépendance non système dans $SO"; exit 1
+          fi
+          "$BIN/llvm-nm" -D --defined-only "$SO" | grep -E ' Java_expo_modules_huwatorrent_HuwaTorrentNative_native(Version|Init|Call|Shutdown)$' | tee /dev/stderr | wc -l | grep -qx 4
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: jnilibs-${{ matrix.abi }}
+          path: native/huwa-torrent-core/dist/jniLibs/
+          retention-days: 3
+
+  apk:
+    name: APK sideload
+    needs: torrent
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
     env:
       HUWA_LITE: "0"
       HUWA_TORRENT: "1"
+    outputs:
+      version: ${{ steps.ver.outputs.version }}
+      suffix: ${{ steps.signing.outputs.suffix }}
     steps:
+      - name: Libérer de la place disque
+        run: |
+          sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/.ghcup /usr/local/share/boost /opt/hostedtoolcache/CodeQL || true
+          df -h /
+
       - uses: actions/checkout@v4
 
       - uses: actions/setup-node@v4
@@ -38,85 +115,135 @@ jobs:
           node-version: 22
           cache: npm
 
-      - uses: actions/setup-java@v4
+      - uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: 17
 
       - uses: android-actions/setup-android@v3
+        with:
+          packages: "platform-tools ndk;${{ env.NDK_VERSION }}"
+          log-accepted-android-sdk-licenses: false
 
+      - uses: gradle/actions/setup-gradle@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: jnilibs-*
+          merge-multiple: true
+          path: native/huwa-torrent-core/dist/jniLibs
+
+      - name: Bibliothèques du moteur torrent
+        run: ls -la native/huwa-torrent-core/dist/jniLibs/*/
+
+      # postinstall : worklet Bare (src/p2p/worklet.bundle.js) + runtime Paperback.
       - run: npm ci
 
-      - name: Version depuis le tag
+      - name: Version
         id: ver
         run: |
-          TAG="${GITHUB_REF_NAME#v}"
-          [ "${GITHUB_EVENT_NAME}" = "workflow_dispatch" ] && TAG="$(node -p "require('./app.json').expo.version")-manual"
-          echo "version=$TAG" >> "$GITHUB_OUTPUT"
+          V="$(node -p "require('./app.json').expo.version")"
+          if [ "$GITHUB_REF_TYPE" = "tag" ]; then
+            V="${GITHUB_REF_NAME#v}"
+          fi
+          echo "version=$V" >> "$GITHUB_OUTPUT"
 
-      - name: Vérifier que le certificat OTA est présent
-        run: test -f certs/certificate.pem || { echo "certs/certificate.pem manquant (voir services/ota/README.md)"; exit 1; }
+      - name: Clé de signature
+        id: signing
+        env:
+          KS_B64: ${{ secrets.HUWA_KEYSTORE_B64 }}
+          KS_PW: ${{ secrets.HUWA_KEYSTORE_PASSWORD }}
+          K_ALIAS: ${{ secrets.HUWA_KEY_ALIAS }}
+          K_PW: ${{ secrets.HUWA_KEY_PASSWORD }}
+        run: |
+          KS="$RUNNER_TEMP/huwa-release.keystore"
+          if [ -n "$KS_B64" ] && [ -n "$KS_PW" ] && [ -n "$K_ALIAS" ] && [ -n "$K_PW" ]; then
+            printf '%s' "$KS_B64" | base64 -d > "$KS"
+            test -s "$KS"
+            echo "mode=release" >> "$GITHUB_OUTPUT"
+            echo "suffix=" >> "$GITHUB_OUTPUT"
+            echo "Clé de release (secrets du dépôt)."
+          elif [ "$GITHUB_REF_TYPE" = "tag" ]; then
+            echo "::error::Secrets HUWA_KEYSTORE_* manquants : un tag ne peut pas produire d'APK de release (bash scripts/android-keystore.sh)."
+            exit 1
+          else
+            PW="$(openssl rand -hex 24)"
+            echo "::add-mask::$PW"
+            keytool -genkeypair -storetype PKCS12 -keystore "$KS" -alias huwa-test \
+              -keyalg RSA -keysize 2048 -validity 30 -dname "CN=Huwa TEST ONLY" \
+              -storepass "$PW" -keypass "$PW" >/dev/null 2>&1
+            printf '%s' "$PW" > "$RUNNER_TEMP/test-pw"
+            echo "mode=test" >> "$GITHUB_OUTPUT"
+            echo "suffix=-unsigned-test" >> "$GITHUB_OUTPUT"
+            echo "::warning::Secrets absents : clé jetable, APK de TEST uniquement (-unsigned-test)."
+          fi
 
       - name: Prebuild Android (CNG)
         run: npx expo prebuild --platform android --clean --no-install
 
-      - name: Restaurer le keystore
-        run: |
-          mkdir -p android/keystores
-          echo "${{ secrets.HUWA_KEYSTORE_B64 }}" | base64 -d > android/keystores/release.keystore
-          test -s android/keystores/release.keystore
-
-      - name: Injecter la signature de release dans Gradle
-        # On ne modifie pas build.gradle généré à la main : on ajoute un fichier d'init Gradle
-        # qui configure signingConfigs.release depuis l'environnement.
-        run: |
-          mkdir -p ~/.gradle/init.d
-          cat > ~/.gradle/init.d/huwa-signing.gradle <<'EOF'
-          allprojects {
-            afterEvaluate { project ->
-              if (project.name == 'app' && project.plugins.hasPlugin('com.android.application')) {
-                project.android {
-                  signingConfigs {
-                    huwaRelease {
-                      storeFile project.rootProject.file('keystores/release.keystore')
-                      storePassword System.getenv('HUWA_KEYSTORE_PASSWORD')
-                      keyAlias System.getenv('HUWA_KEY_ALIAS')
-                      keyPassword System.getenv('HUWA_KEY_PASSWORD')
-                    }
-                  }
-                  buildTypes.release.signingConfig signingConfigs.huwaRelease
-                }
-              }
-            }
-          }
-          EOF
-
       - name: Gradle assembleRelease
         working-directory: android
         env:
+          MODE: ${{ steps.signing.outputs.mode }}
           HUWA_KEYSTORE_PASSWORD: ${{ secrets.HUWA_KEYSTORE_PASSWORD }}
           HUWA_KEY_ALIAS: ${{ secrets.HUWA_KEY_ALIAS }}
           HUWA_KEY_PASSWORD: ${{ secrets.HUWA_KEY_PASSWORD }}
-        run: ./gradlew :app:assembleRelease --no-daemon
-
-      - name: Renommer et hacher
         run: |
-          V="${{ steps.ver.outputs.version }}"
+          export HUWA_KEYSTORE_FILE="$RUNNER_TEMP/huwa-release.keystore"
+          if [ "$MODE" = "test" ]; then
+            HUWA_KEYSTORE_PASSWORD="$(cat "$RUNNER_TEMP/test-pw")"
+            export HUWA_KEYSTORE_PASSWORD HUWA_KEY_PASSWORD="$HUWA_KEYSTORE_PASSWORD" HUWA_KEY_ALIAS=huwa-test
+          fi
+          ./gradlew :app:assembleRelease --no-daemon \
+            -Dorg.gradle.jvmargs="-Xmx6g -XX:MaxMetaspaceSize=1g -Dfile.encoding=UTF-8"
+
+      - name: Renommer, hacher, inspecter
+        env:
+          V: ${{ steps.ver.outputs.version }}
+          SUFFIX: ${{ steps.signing.outputs.suffix }}
+        run: |
+          OUT=android/app/build/outputs/apk/release
+          ls -la "$OUT"
           mkdir -p dist-apk
-          cp android/app/build/outputs/apk/release/app-release.apk "dist-apk/Huwa-$V.apk"
-          (cd dist-apk && sha256sum "Huwa-$V.apk" > "Huwa-$V.apk.sha256")
-          "$ANDROID_HOME"/build-tools/*/apksigner verify --print-certs "dist-apk/Huwa-$V.apk" | head -5
+          cp "$OUT/app-universal-release.apk" "dist-apk/Huwa-$V$SUFFIX.apk"
+          for abi in arm64-v8a armeabi-v7a x86_64; do
+            cp "$OUT/app-$abi-release.apk" "dist-apk/Huwa-$V-$abi$SUFFIX.apk"
+          done
+          BT="$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)"
+          cd dist-apk
+          for f in *.apk; do
+            sha256sum "$f" > "$f.sha256"
+            echo "=== $f ($(du -h "$f" | cut -f1), $(stat -c %s "$f") octets)"
+            "$BT/aapt2" dump badging "$f" | grep -E "^(package|sdkVersion|targetSdkVersion|native-code|launchable-activity)"
+            echo "--- plus gros fichiers (taille, compressé) :"
+            unzip -lv "$f" | awk 'NR>3 && $1 ~ /^[0-9]+$/ {print $3, $1, $8}' | sort -rn 2>/dev/null | head -12 | awk '{printf "  %10d %10d  %s\n", $2, $1, $3}'
+            echo "--- moteur torrent : $(unzip -l "$f" | grep -c 'libhuwa_torrent_core.so') ABI"
+            # Universel : seules les bibliothèques RN en pickFirst restent en x86 (voir plugins/with-android-release.js).
+            echo "--- fichiers lib/x86/ : $(unzip -l "$f" | grep -c ' lib/x86/')"
+            if ! "$BT/apksigner" verify --verbose --print-certs "$f" > "$RUNNER_TEMP/apksigner.txt" 2>&1; then
+              cat "$RUNNER_TEMP/apksigner.txt"; echo "::error::apksigner verify a échoué pour $f"; exit 1
+            fi
+            grep -E "^Verified using v[23] " "$RUNNER_TEMP/apksigner.txt" || true
+            # Certificat (public) : DN et empreinte SHA-256, à comparer avec scripts/android-keystore.sh.
+            "$BT/apksigner" verify --print-certs "$f" 2>&1 | grep -vE "^WARNING" || true
+          done
+          {
+            echo "### APK Huwa $V$SUFFIX"
+            echo '| Fichier | Taille |'
+            echo '|---|---|'
+            for f in *.apk; do echo "| $f | $(du -h "$f" | cut -f1) |"; done
+          } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Empreinte runtime (pour publier l'OTA correspondante)
         run: npx expo-updates fingerprint:generate --platform android > dist-apk/fingerprint-android.json
 
       - uses: actions/upload-artifact@v4
         with:
-          name: huwa-apk
+          name: huwa-apk-${{ steps.ver.outputs.version }}${{ steps.signing.outputs.suffix }}
           path: dist-apk/*
 
       - name: GitHub Release
-        if: startsWith(github.ref, 'refs/tags/v')
+        if: startsWith(github.ref, 'refs/tags/v') && steps.signing.outputs.mode == 'release'
         uses: softprops/action-gh-release@v2
         with:
           files: |
@@ -126,20 +253,43 @@ jobs:
           generate_release_notes: true
           body: |
             APK signé pour installation directe (Obtainium : `obtainium://add/https://github.com/${{ github.repository }}`).
+            `Huwa-<version>.apk` fonctionne partout ; `-arm64-v8a` est plus léger pour les téléphones récents.
             Vérifiez le SHA-256 fourni. Huwa ne contient et ne fournit aucun contenu.
 
-  # --- Variante EAS local (à activer si vous préférez les credentials gérés par EAS) ---
-  # apk-eas-local:
-  #   runs-on: ubuntu-latest
-  #   steps:
-  #     - uses: actions/checkout@v4
-  #     - uses: actions/setup-node@v4
-  #       with: { node-version: 22, cache: npm }
-  #     - uses: actions/setup-java@v4
-  #       with: { distribution: temurin, java-version: 17 }
-  #     - uses: android-actions/setup-android@v3
-  #     - run: npm ci
-  #     - run: echo '${{ secrets.HUWA_CREDENTIALS_JSON }}' > credentials.json   # format : distribution/ANDROID.md
-  #     - run: echo "${{ secrets.HUWA_KEYSTORE_B64 }}" | base64 -d > huwa-release.keystore
-  #     - run: npx eas-cli@latest build --platform android --profile sideload-android --local --non-interactive --output Huwa.apk
-  #       env: { EXPO_TOKEN: "${{ secrets.EXPO_TOKEN }}" }
+  # Test de fumée : l'APK x86_64 s'installe et démarre sans crash dans un émulateur.
+  # Informatif (continue-on-error) : un émulateur capricieux ne bloque pas une release.
+  smoke:
+    name: smoke test (émulateur)
+    needs: apk
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: huwa-apk-${{ needs.apk.outputs.version }}${{ needs.apk.outputs.suffix }}
+          path: dist-apk
+
+      - name: Activer KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      - uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 34
+          arch: x86_64
+          target: google_apis
+          disable-animations: true
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
+          script: bash scripts/android-smoke.sh "dist-apk/Huwa-${{ needs.apk.outputs.version }}-x86_64${{ needs.apk.outputs.suffix }}.apk"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: smoke-${{ needs.apk.outputs.version }}${{ needs.apk.outputs.suffix }}
+          path: smoke/
+          if-no-files-found: ignore
