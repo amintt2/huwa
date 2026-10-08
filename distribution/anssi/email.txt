@@ -1,0 +1,70 @@
+IMPORTANT : DEPUIS LE 31 MARS 2026, LA DÉCLARATION SE DÉPOSE EN LIGNE
+=====================================================================
+https://demarche.numerique.gouv.fr/commencer/declaration-relative-a-un-moyen-de-cryptologie
+(notice ANSSI V3 du 31/03/2026 ; page « les formulaires » de cyber.gouv.fr).
+Le dossier ne s'envoie donc plus par e-mail. Les deux textes ci-dessous servent :
+  (A) de message à envoyer depuis la messagerie du dossier, juste après le dépôt
+      (canal officiel pour les questions à l'instruction) ;
+  (B) d'e-mail de secours à controle@ssi.gouv.fr, seulement si la plateforme ne
+      fonctionne pas, ou pour une question avant le dépôt. Ne pas l'envoyer
+      en plus d'un dépôt en ligne.
+Remplacer les [À RENSEIGNER] avant l'envoi.
+
+
+---------------------------------------------------------------------
+(A) MESSAGE DANS LA MESSAGERIE DU DOSSIER (après le dépôt)
+---------------------------------------------------------------------
+
+Bonjour,
+
+Je viens de déposer la déclaration de fourniture du moyen de cryptologie « Huwa » (version 1.0.0), une application mobile gratuite pour iOS et Android, que je développe et publie en tant que particulier.
+
+Cette déclaration m'est demandée par Apple pour distribuer l'application sur l'App Store en France : App Store Connect attend le document délivré par l'ANSSI. Je vous serais reconnaissant de bien vouloir me délivrer l'attestation de déclaration dès que l'instruction le permet.
+
+L'application est aussi distribuée gratuitement dans l'Union européenne (place de marché AltStore PAL) et dans le monde (App Store, paquets IPA et APK). J'ai joint à cet effet une note qui demande le classement du moyen en catégorie 3 de l'annexe 2 du décret n° 2007-663 (« grand public »). Si une démarche distincte est nécessaire pour le transfert intracommunautaire ou l'exportation, merci de me l'indiquer.
+
+Je reste à votre disposition pour tout élément complémentaire.
+
+Cordialement,
+Tahar Touzi
+[À RENSEIGNER : téléphone]
+
+
+---------------------------------------------------------------------
+(B) E-MAIL DE SECOURS (uniquement si la plateforme n'est pas utilisable)
+---------------------------------------------------------------------
+
+À : controle@ssi.gouv.fr
+Objet : [formalités] Huwa – Huwa
+   (format historique « [formalités] marque – nom du produit », repris de
+   l'ancienne page des formulaires : non confirmé sur le site actuel)
+Pièces jointes :
+   - description-technique.pdf      (brochure technique)
+   - presentation-produit.pdf       (brochure commerciale)
+   - note-grand-public.pdf          (demande de classement « grand public »)
+   - formulaire-rempli.pdf          (réponses aux rubriques du formulaire)
+   - attestation signée (PDF scanné)
+
+Bonjour,
+
+Je souhaite déclarer la fourniture d'un moyen de cryptologie au titre de l'article 3, 1°, du décret n° 2007-663 du 2 mai 2007.
+
+Déclarant : M. Tahar TOUZI, particulier, [À RENSEIGNER : adresse postale complète], [À RENSEIGNER : téléphone].
+Moyen : « Huwa », version 1.0.0, logiciel (application mobile iOS et Android, identifiant com.amintt2.huwa), gratuit, grand public, dont je suis le fabricant.
+
+Fonctions cryptographiques, toutes fondées sur des algorithmes publics et standard, sans algorithme propriétaire ni paramétrage par l'utilisateur :
+  - confidentialité du transport pair à pair (Noise, ChaCha20-Poly1305 / XChaCha20-Poly1305, Curve25519, 256 bits) ;
+  - confidentialité de bout en bout des messages privés (X25519 + XSalsa20-Poly1305, 256 bits) ;
+  - chiffrement de la sauvegarde de la phrase de récupération (AES-256-GCM via CryptoKit, HKDF-SHA-256) ;
+  - signatures Ed25519 et intégrité BLAKE2b ;
+  - HTTPS (TLS 1.2/1.3).
+Le détail figure dans la description technique jointe.
+
+J'ai tenté de déposer le dossier sur demarche.numerique.gouv.fr, sans succès : [À RENSEIGNER : préciser le problème rencontré]. Pourriez-vous m'indiquer la marche à suivre, ou enregistrer la déclaration à partir des pièces jointes ?
+
+Cette déclaration m'est demandée par Apple pour la distribution de l'application sur l'App Store en France. L'attestation de déclaration me serait donc très utile.
+
+Je vous remercie par avance.
+
+Cordialement,
+Tahar Touzi
