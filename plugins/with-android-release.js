@@ -60,7 +60,7 @@ const SPLITS = `
     }
     packaging {
         jniLibs {
-            excludes += ['**/x86/*.so']
+            excludes += ['x86/**', '/x86/**', 'lib/x86/**', '/lib/x86/**', '**/x86/*.so']
         }
         // minSdk >= 28 stores dex uncompressed by default (~60 MB here): compress it for download size.
         dex {
