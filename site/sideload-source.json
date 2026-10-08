@@ -1,0 +1,55 @@
+{
+  "name": "Huwa (sideload)",
+  "subtitle": "Anime et manhwa, pont épisode ↔ chapitre",
+  "description": "Source officielle de Huwa. L'app ne fournit aucun contenu : elle lit un catalogue public (AniList) et les addons de flux que vous ajoutez vous-même.",
+  "iconURL": "https://huwa.mciut.fr/altstore/icon.png",
+  "website": "https://huwa.mciut.fr",
+  "tintColor": "#2F6BEB",
+  "nsfw": false,
+  "featuredApps": [
+    "com.amintt2.huwa"
+  ],
+  "apps": [
+    {
+      "name": "Huwa",
+      "bundleIdentifier": "com.amintt2.huwa",
+      "developerName": "Huwa",
+      "subtitle": "Regarder, lire, reprendre au bon chapitre",
+      "localizedDescription": "Huwa relie les épisodes d'un anime aux chapitres du manhwa correspondant et mémorise votre progression. Catalogue AniList, lecteur vidéo (HLS/HTTP via vos addons), lecture verticale, commentaires locaux.\n\nHuwa n'héberge, n'indexe ni ne recommande aucun contenu. Voir les conditions d'utilisation : https://github.com/amintt2/huwa/blob/huwa-v1/distribution/LEGAL.md",
+      "iconURL": "https://huwa.mciut.fr/altstore/icon.png",
+      "tintColor": "#2F6BEB",
+      "category": "entertainment",
+      "screenshots": [],
+      "appPermissions": {
+        "entitlements": [
+          "com.apple.developer.associated-domains"
+        ],
+        "privacy": {
+          "NSCameraUsageDescription": "Huwa utilise la caméra uniquement pour scanner le QR code d’appairage d’un autre appareil."
+        }
+      },
+      "versions": [
+        {
+          "version": "1.0.0",
+          "buildVersion": "2",
+          "date": "2026-10-08",
+          "localizedDescription": "Première version publique : addons, lecteur mpv, moteur torrent optionnel, saisons, mode VF/VO, communauté P2P.",
+          "downloadURL": "https://github.com/amintt2/huwa/releases/download/v1.0.0/Huwa-1.0.0.ipa",
+          "size": 57953170,
+          "minOSVersion": "16.4"
+        }
+      ]
+    }
+  ],
+  "news": [
+    {
+      "title": "Huwa 1.0.0",
+      "identifier": "huwa-1-0-0",
+      "caption": "Première version publique pour iPhone et iPad.",
+      "date": "2026-10-08",
+      "tintColor": "#2F6BEB",
+      "notify": true,
+      "appID": "com.amintt2.huwa"
+    }
+  ]
+}
