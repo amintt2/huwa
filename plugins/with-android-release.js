@@ -16,6 +16,8 @@
 //    stays (local `assembleRelease` keeps working). Secrets never touch the generated files.
 //  - ABI splits: one APK per ABI + a universal APK; 32-bit x86 libraries (prebuilt by some
 //    dependencies) are left out of every APK.
+//  - dex compressed too (AGP stores it uncompressed from minSdk 28): smaller download, the
+//    install extracts it once.
 const { withAppBuildGradle, withGradleProperties } = require('expo/config-plugins');
 
 const ABIS = ['arm64-v8a', 'armeabi-v7a', 'x86_64'];
@@ -58,7 +60,11 @@ const SPLITS = `
     }
     packaging {
         jniLibs {
-            excludes += ['lib/x86/**']
+            excludes += ['**/x86/*.so']
+        }
+        // minSdk >= 28 stores dex uncompressed by default (~60 MB here): compress it for download size.
+        dex {
+            useLegacyPackaging true
         }
     }
 `;
