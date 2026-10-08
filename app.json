@@ -2,7 +2,7 @@
   "expo": {
     "name": "Huwa",
     "slug": "huwa",
-    "version": "1.1.0",
+    "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
     "scheme": "huwa",
