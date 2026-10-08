@@ -93,7 +93,8 @@
       "expo-notifications",
       "./plugins/with-huwa-torrent",
       "./plugins/with-huwa-mpv",
-      "./plugins/with-passkeys"
+      "./plugins/with-passkeys",
+      "./plugins/with-android-release"
     ],
     "experiments": {
       "typedRoutes": true,
