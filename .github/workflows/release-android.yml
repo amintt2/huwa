@@ -206,8 +206,13 @@ jobs:
             sha256sum "$f" > "$f.sha256"
             echo "=== $f ($(du -h "$f" | cut -f1), $(stat -c %s "$f") octets)"
             "$BT/aapt2" dump badging "$f" | grep -E "^(package|sdkVersion|targetSdkVersion|native-code|launchable-activity)"
-            unzip -l "$f" | grep -E "lib/.*/lib(huwa_torrent_core|bare-kit|hermes|reactnative)\.so" || true
-            "$BT/apksigner" verify --print-certs "$f" | grep -E "Signer #1 certificate (DN|SHA-256)"
+            echo "--- plus gros fichiers (taille, compressé) :"
+            unzip -lv "$f" | awk 'NR>3 && $1 ~ /^[0-9]+$/ {print $3, $1, $8}' | sort -rn | head -12 | awk '{printf "  %10d %10d  %s\n", $2, $1, $3}'
+            echo "--- moteur torrent : $(unzip -l "$f" | grep -c 'libhuwa_torrent_core.so') ABI"
+            if ! "$BT/apksigner" verify --verbose --print-certs "$f" > "$RUNNER_TEMP/apksigner.txt" 2>&1; then
+              cat "$RUNNER_TEMP/apksigner.txt"; echo "::error::apksigner verify a échoué pour $f"; exit 1
+            fi
+            grep -E "^Verified using|Signer #1 certificate (DN|SHA-256)" "$RUNNER_TEMP/apksigner.txt" || cat "$RUNNER_TEMP/apksigner.txt"
           done
           {
             echo "### APK Huwa $V$SUFFIX"

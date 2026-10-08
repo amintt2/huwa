@@ -45,16 +45,23 @@ Source : developer.android.com/developer-verification (consulté septembre 2026)
 
 ## 3. Publier sur GitHub Releases
 
-Le workflow `.github/workflows/release-android.yml` construit l'APK sur un tag `v*` et l'attache à la release (voir les secrets à définir dans le workflow). Nom d'artefact stable : `Huwa-<version>.apk` + `Huwa-<version>.apk.sha256`.
+Le workflow `.github/workflows/release-android.yml` construit les APK sur un tag `v*` et les attache à la release. Clé : `bash scripts/android-keystore.sh` (secrets `HUWA_KEYSTORE_*`).
 
-Manuellement :
+- Jobs : `torrent` (moteur Rust, `cargo ndk`, un job par ABI, en cache) → `apk` (prebuild + Gradle `assembleRelease`, signature depuis l'environnement) → `smoke` (émulateur x86_64, informatif, ne bloque pas la release).
+- Sorties : `Huwa-<version>.apk` (universel : arm64-v8a, armeabi-v7a, x86_64), `Huwa-<version>-<abi>.apk`, `.sha256` et `fingerprint-android.json`.
+- Tag sans secrets : échec. `workflow_dispatch` sans secrets : clé jetable, fichiers suffixés `-unsigned-test`, jamais publiés (ils ne peuvent pas être mis à jour par une vraie release : désinstaller avant).
+- Réglages Gradle (minSdk 29 imposé par react-native-bare-kit, ABI, splits, signature) : `plugins/with-android-release.js`.
+- OTA : désactivées tant que `certs/certificate.pem` et l'URL du serveur manquent (`app.config.js`), le build n'en dépend pas.
+
+Localement (JDK 17, SDK + NDK 27.1.12297006) :
 
 ```sh
-npx expo prebuild --platform android --clean
-cd android && ./gradlew :app:assembleRelease   # avec les variables HUWA_KEYSTORE_* du workflow
+scripts/build-torrent.sh android                      # optionnel : moteur torrent
+HUWA_TORRENT=1 npx expo prebuild --platform android --clean
+cd android && HUWA_KEYSTORE_FILE=… HUWA_KEYSTORE_PASSWORD=… HUWA_KEY_ALIAS=huwa HUWA_KEY_PASSWORD=… ./gradlew :app:assembleRelease
 ```
 
-ou `npx eas-cli build --platform android --profile sideload-android --local --output Huwa.apk`.
+Sans `HUWA_KEYSTORE_FILE`, l'APK de release est signé avec la clé de debug (test local uniquement).
 
 Rédiger les notes de version en français, mentionner le SHA-256 et rappeler que l'app ne contient aucun contenu.
 
@@ -67,7 +74,7 @@ Obtainium suit directement les releases GitHub (source vérifiée : README Imran
 
   `obtainium://add/https://github.com/ORG/huwa`
 
-- Filtre d'asset recommandé si plusieurs fichiers : regex `Huwa-.*\.apk$`.
+- Plusieurs APK par release (universel + un par ABI) : Obtainium choisit selon l'ABI de l'appareil ; filtre conseillé `Huwa-[0-9.]+(-arm64-v8a)?\.apk$` pour s'en tenir à l'universel ou à arm64.
 - Optionnel : proposer la configuration sur `apps.obtainium.imranr.dev` (dépôt communautaire, par pull request).
 
 ## 5. IzzyOnDroid (si open source)
