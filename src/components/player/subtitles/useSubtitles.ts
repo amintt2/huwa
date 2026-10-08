@@ -148,6 +148,12 @@ export function useSubtitleController({
     [tracks, baseTracks, autoTranslated, prefs.enabled, autoLangs, watchMode],
   );
   const key = userKey && (userKey === 'off' || tracks.some((t) => t.key === userKey)) ? userKey : autoKey;
+  // Track the "sous-titres" toggle of the player turns on: the best full track in the user's
+  // languages, else the first one.
+  const onKey = useMemo(() => {
+    const k = chooseTrack(autoTranslated ? tracks : baseTracks, { enabled: true, languages: autoLangs, forcedOnly: false });
+    return k !== 'off' ? k : tracks.find((t) => !t.forced)?.key ?? tracks[0]?.key;
+  }, [tracks, baseTracks, autoTranslated, autoLangs]);
   const selected = tracks.find((t) => t.key === key);
   const translating = selected?.kind === 'translated';
 
@@ -236,6 +242,8 @@ export function useSubtitleController({
     groups: groupTracks(tracks.filter((t) => t.kind !== 'local'), subLangs),
     locals: locals.map((l) => l.track),
     selectedKey: key,
+    /** Track to turn on from "off" (player toggle), undefined when there is none. */
+    onKey,
     selected,
     select,
     /** Parsed document to draw (external or local track), null for embedded / off. */

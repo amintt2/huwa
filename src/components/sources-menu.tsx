@@ -52,8 +52,28 @@ const GROUPS: { label: string; match: (q: Quality | null) => boolean }[] = [
   { label: 'Qualité inconnue', match: (x) => x == null },
 ];
 
+/** Sheet under the player (portrait) with the source list. */
 export function SourcesMenu({ src, visible, onClose }: { src: Source; visible: boolean; onClose: () => void }) {
+  const { ranked, pending } = src;
+  return (
+    <Sheet
+      visible={visible}
+      onClose={onClose}
+      title="Sources"
+      subtitle={`${ranked.length} source${ranked.length > 1 ? 's' : ''}${pending > 0 ? ` · ${pending} addon${pending > 1 ? 's' : ''} en attente` : ''}`}
+      detents={['medium', 'large']}>
+      <SourcesList src={src} onDone={onClose} />
+    </Sheet>
+  );
+}
+
+/**
+ * "Automatique" + every source by quality, with the torrent / debrid fixes. Shown in the sheet
+ * above and in the player settings ("Qualité et source"). `onDone`: a source was chosen.
+ */
+export function SourcesList({ src, onDone }: { src: Source; onDone: () => void }) {
   const { ranked, auto, pending, failed, resolverLabel, currentKey } = src;
+  const onClose = onDone;
   const [yt, setYt] = useState<{ id: string; title?: string } | null>(null);
 
   const engineOff = !resolverLabel && torrentEngineAvailable();
@@ -79,12 +99,7 @@ export function SourcesMenu({ src, visible, onClose }: { src: Source; visible: b
   };
 
   return (
-    <Sheet
-      visible={visible}
-      onClose={onClose}
-      title="Sources"
-      subtitle={`${ranked.length} source${ranked.length > 1 ? 's' : ''}${pending > 0 ? ` · ${pending} addon${pending > 1 ? 's' : ''} en attente` : ''}`}
-      detents={['medium', 'large']}>
+    <>
       <EngineBadge variant="row" />
       <Press onPress={() => { src.pick('auto'); onClose(); }} scaleTo={0.98} style={[styles.row, auto && styles.active]}
         accessibilityRole="button" accessibilityState={{ selected: auto }} accessibilityLabel="Automatique">
@@ -94,7 +109,7 @@ export function SourcesMenu({ src, visible, onClose }: { src: Source; visible: b
         <View style={{ flex: 1, gap: 3 }}>
           <Txt v="label" color={auto ? C.accentText : C.text}>Automatique</Txt>
           <Txt v="footnote">
-            Teste la vitesse des meilleurs liens, écarte ceux qui sont hors ligne et lance le plus rapide dans ta langue. Si une meilleure qualité s’avère assez rapide, elle prend le relais sans couper la lecture (sinon, elle sert pour l’épisode suivant). Les lecteurs web ne servent que s’il n’y a pas de lien direct.
+            Le lien le plus rapide dans ta langue. Une meilleure qualité prend le relais sans couper la lecture quand le réseau suit.
           </Txt>
           {src.raceStats.enabled ? (
             src.raceStats.measured > 0 && (
@@ -136,7 +151,7 @@ export function SourcesMenu({ src, visible, onClose }: { src: Source; visible: b
         </View>
       )}
       <YouTubePlayer ytId={yt?.id ?? null} title={yt?.title} onClose={() => setYt(null)} />
-    </Sheet>
+    </>
   );
 }
 

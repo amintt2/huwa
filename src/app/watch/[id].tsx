@@ -34,7 +34,7 @@ import { getDebrid } from '@/debrid/store';
 import { Player, type ExternalSubtitle, type PlayerHandle } from '@/components/player/Player';
 import { PrefetchNext } from '@/components/player/prefetch-next';
 import { WebPlayer } from '@/components/player/WebPlayer';
-import { SourceButton, SourcesMenu } from '@/components/sources-menu';
+import { SourceButton, SourcesList, SourcesMenu } from '@/components/sources-menu';
 import { usePrewarm } from '@/settings/network';
 import { useWatchTrace } from '@/stats/use-watch-trace';
 import { useSettings } from '@/settings/settings';
@@ -576,6 +576,8 @@ function WatchScreen({ id, at }: { id: string; at?: number }) {
             onFullscreenChange={setFull}
             onOpenSources={() => setMenuOpen(true)}
             sourceLabel={sourceLabel}
+            sourceValue={src.current ? `${qualityLabel(src.quality)} · ${src.auto ? 'Auto' : 'Manuel'}` : 'Aucune'}
+            renderSources={offline ? undefined : (done) => <SourcesList src={src} onDone={done} />}
             commentCount={count}
             timedComments={timed}
             renderComments={renderComments}

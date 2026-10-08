@@ -1,6 +1,6 @@
 // Subtitle engine for the players: parsing lives in `@/subtitles`, drawing and UI here.
 export { SubtitleOverlay, videoRect, type Insets, type SubtitleOverlayProps } from './SubtitleOverlay';
-export { SubtitleSheet } from './SubtitleSheet';
+export { SubtitlePanel } from './SubtitlePanel';
 export {
   cueAt,
   loadSubtitleDoc,
