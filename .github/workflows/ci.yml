@@ -4,6 +4,8 @@ on:
   push:
     branches: [main, huwa-v1]
   pull_request:
+  # Branch runs on demand (gh workflow run ci.yml --ref <branch>).
+  workflow_dispatch:
 
 concurrency:
   group: ci-${{ github.ref }}
