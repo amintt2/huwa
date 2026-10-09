@@ -30,6 +30,15 @@
       },
       "versions": [
         {
+          "version": "1.0.1",
+          "buildVersion": "3",
+          "date": "2026-10-09",
+          "localizedDescription": "Corrections : moteur torrent (HTTPS), lecteur, choix de la piste audio en VO, menus du lecteur simplifiés, mode VF.",
+          "downloadURL": "https://github.com/amintt2/huwa/releases/download/v1.0.1/Huwa-1.0.1.ipa",
+          "size": 57961277,
+          "minOSVersion": "16.4"
+        },
+        {
           "version": "1.0.0",
           "buildVersion": "2",
           "date": "2026-10-08",
