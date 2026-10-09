@@ -11,7 +11,7 @@ import org.json.JSONObject
  * CI self-test of the torrent engine's HTTPS stack (scripts/android-smoke.sh): initialises the TLS
  * verifier exactly like the module does, then has the Rust engine GET each URL (`tlsCheck`, see
  * native/huwa-torrent-core/src/tls_check.rs) and logs the JSON results, plus the app's cleartext
- * policy for the loopback servers.
+ * policy (loopback servers, a CA revocation host, any other host).
  *
  * Inert in a normal install: declared `android:enabled="false"` and `android:exported="false"` in
  * the module manifest, so nothing outside the app can reach it unless root or the system first
@@ -32,7 +32,9 @@ class HuwaTorrentTlsCheckReceiver : BroadcastReceiver() {
           TAG,
           "tlsCheck cleartext 127.0.0.1=${policy.isCleartextTrafficPermitted("127.0.0.1")} " +
             "localhost=${policy.isCleartextTrafficPermitted("localhost")} " +
-            "example.com=${policy.isCleartextTrafficPermitted("example.com")}"
+            "example.com=${policy.isCleartextTrafficPermitted("example.com")} " +
+            // A CA's CRL host (Google Trust Services): needed by the verifier's revocation check.
+            "c.pki.goog=${policy.isCleartextTrafficPermitted("c.pki.goog")}"
         )
         if (HuwaTorrentNative.isLinked) {
           HuwaTorrentNative.ensureTls(app)

@@ -236,8 +236,8 @@ jobs:
 
       - name: HTTPS du moteur torrent (rustls-platform-verifier), politique réseau
         # - La partie Kotlin du vérifieur doit être dans le dex (appelée seulement par JNI).
-        # - android:networkSecurityConfig = celui de l'app (cleartext loopback seul en release,
-        #   plugins/with-android-release.js), pas celui de l'AAR du vérifieur.
+        # - android:networkSecurityConfig = @xml/huwa_network_security_config (celui de l'AAR du
+        #   vérifieur + loopback, généré par modules/huwa-torrent/android/build.gradle).
         # - Le récepteur de test TLS (job smoke) est désactivé et non exporté.
         run: |
           BT="$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)"

@@ -19,10 +19,9 @@ if (huwaTorrentFlag && !huwaLinkRust) {
 }
 
 // Kotlin half of rustls-platform-verifier (HTTPS certificate checks of the Rust engine, initialized
-// by HuwaTorrentNative.initTls). Its version must equal rustls-platform-verifier-android in
+// by HuwaTorrentNative.ensureTls). Its version must equal rustls-platform-verifier-android in
 // Cargo.lock, so it is read from there. The Maven repository is added to every project through
-// `android.extraMavenRepos` (plugins/with-huwa-torrent.js), which also drops the library's
-// android:networkSecurityConfig from the app manifest.
+// `android.extraMavenRepos` (plugins/with-huwa-torrent.js).
 def rustlsVerifierVersion = { ->
   def lock = file("${projectDir}/../../../native/huwa-torrent-core/Cargo.lock")
   def lines = lock.readLines()
@@ -55,5 +54,70 @@ android {
 dependencies {
   if (huwaLinkRust) {
     implementation "org.rustls:rustls-platform-verifier:${rustlsVerifierVersion()}"
+  }
+}
+
+// The app's network security config, @xml/huwa_network_security_config (set on <application> by
+// plugins/with-android-release.js, with tools:replace over the verifier's own):
+//  - the verifier's config, as is: cleartext refused, except the CRL / OCSP hosts of the CAs. The
+//    verifier checks the leaf's revocation through Android, which fetches those over plain HTTP; when
+//    refused, Android's checker fails and the verifier reports the certificate as REVOKED
+//    (google.com, CRL on c.pki.goog, failed that way on the emulator);
+//  - plus loopback (127.0.0.1, localhost): the engine's stream server and HTTP proxy, read by the
+//    player (expo-video / OkHttp). Android's default since targetSdk 28 refuses cleartext there too.
+// Generated from the verifier's AAR, so its host list follows the pinned version. Without the Rust
+// engine: cleartext refused except loopback. The debug build overrides it (app src/debug: Metro).
+abstract class HuwaNetworkSecurityConfig extends DefaultTask {
+  @InputFiles
+  abstract ConfigurableFileCollection getVerifierAar()
+
+  @OutputDirectory
+  abstract DirectoryProperty getOutputDir()
+
+  @TaskAction
+  void generate() {
+    def loopback = '''  <!-- Huwa: loopback servers of the torrent engine (stream server, HTTP proxy), read by the player. -->
+  <domain-config cleartextTrafficPermitted="true">
+    <domain includeSubdomains="false">127.0.0.1</domain>
+    <domain includeSubdomains="false">localhost</domain>
+  </domain-config>
+'''
+    def xml
+    def aars = verifierAar.files.toList()
+    if (aars.isEmpty()) {
+      xml = '<?xml version="1.0" encoding="utf-8"?>\n<network-security-config>\n  <base-config cleartextTrafficPermitted="false" />\n</network-security-config>\n'
+    } else {
+      def zip = new java.util.zip.ZipFile(aars.first())
+      try {
+        def entry = zip.getEntry('res/xml/network_security_config.xml')
+        if (entry == null) throw new GradleException("[HuwaTorrent] no res/xml/network_security_config.xml in ${aars.first()}")
+        xml = zip.getInputStream(entry).getText('UTF-8')
+      } finally {
+        zip.close()
+      }
+      if (!xml.contains('<base-config cleartextTrafficPermitted="false"')) {
+        throw new GradleException('[HuwaTorrent] rustls-platform-verifier network_security_config changed shape (base-config), check it')
+      }
+    }
+    def end = xml.lastIndexOf('</network-security-config>')
+    if (end < 0) throw new GradleException('[HuwaTorrent] malformed network_security_config')
+    xml = xml.substring(0, end) + loopback + xml.substring(end)
+    def out = outputDir.get().dir('xml').asFile
+    out.mkdirs()
+    new File(out, 'huwa_network_security_config.xml').setText(xml, 'UTF-8')
+  }
+}
+
+def huwaNsc = tasks.register('huwaNetworkSecurityConfig', HuwaNetworkSecurityConfig) {
+  if (huwaLinkRust) {
+    verifierAar.from(configurations.detachedConfiguration(
+      dependencies.create("org.rustls:rustls-platform-verifier:${rustlsVerifierVersion()}@aar")
+    ).tap { transitive = false })
+  }
+}
+
+androidComponents {
+  onVariants(selector().all()) { variant ->
+    variant.sources.res?.addGeneratedSourceDirectory(huwaNsc) { it.outputDir }
   }
 }

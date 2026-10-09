@@ -5,7 +5,8 @@
 # Puis HTTPS du moteur torrent : le récepteur de test HuwaTorrentTlsCheckReceiver (désactivé et non
 # exporté dans l'APK, activé ici par adb root + pm enable) initialise le vérifieur TLS comme le
 # module, fait faire au moteur Rust un GET HTTPS valide (doit réussir) et un GET vers un certificat
-# expiré (doit échouer proprement), et journalise la politique cleartext (loopback seul).
+# expiré (doit échouer proprement), et journalise la politique cleartext (loopback et hôtes de
+# révocation des AC seulement).
 # Échec si une ligne attendue manque ou si le moteur a paniqué (tag logcat HuwaTorrentRust).
 # Sorties dans ./smoke/ : logcat complet, tampon crash, capture d'écran, tls.txt.
 #
@@ -75,13 +76,13 @@ if [ "$ok" = 1 ] && [ "$tls" = 1 ]; then
   elif ! echo "$badline" | grep -qi 'certificate'; then
     echo "WARN: $TLS_BAD_URL failed, but not on its certificate (site unreachable?): $badline"
   fi
-  if ! grep -q "tlsCheck cleartext 127.0.0.1=true localhost=true example.com=false" "$OUT/tls.txt"; then
-    echo "FAIL: cleartext policy is not loopback-only"; tls=0
+  if ! grep -q "tlsCheck cleartext 127.0.0.1=true localhost=true example.com=false c.pki.goog=true" "$OUT/tls.txt"; then
+    echo "FAIL: cleartext policy is not loopback + CA revocation hosts only"; tls=0
   fi
   if grep -q "HuwaTorrentRust" "$OUT/tls.txt"; then
     echo "FAIL: Rust panic in the engine"; tls=0
   fi
-  [ "$tls" = 1 ] && echo "OK: engine HTTPS (valid certificate accepted, expired one refused), cleartext loopback only"
+  [ "$tls" = 1 ] && echo "OK: engine HTTPS (valid certificate accepted, expired one refused), cleartext loopback + CA revocation hosts only"
 fi
 
 adb exec-out screencap -p > "$OUT/screen.png" || true
