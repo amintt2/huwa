@@ -2,7 +2,7 @@
   "expo": {
     "name": "Huwa",
     "slug": "huwa",
-    "version": "1.0.0",
+    "version": "1.0.1",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
     "scheme": "huwa",
@@ -45,7 +45,7 @@
       },
       "predictiveBackGestureEnabled": false,
       "package": "com.amintt2.huwa",
-      "versionCode": 2
+      "versionCode": 3
     },
     "web": {
       "output": "static",

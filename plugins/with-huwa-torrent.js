@@ -12,11 +12,10 @@
 // (org.rustls:rustls-platform-verifier, added by modules/huwa-torrent/android/build.gradle).
 //  - Its Maven repository goes into `android.extraMavenRepos`, which Expo autolinking adds to every
 //    Gradle project (the app resolves the module's dependencies too).
-//  - The library's manifest sets android:networkSecurityConfig (cleartext off, except certificate
-//    revocation hosts). Merged as is it would replace the app's policy, including the debug
-//    build's usesCleartextTraffic (Metro). It is removed: the app keeps its own policy and the
-//    verifier's revocation check is SOFT_FAIL.
-const { withAndroidManifest, withGradleProperties, withPodfileProperties } = require('expo/config-plugins');
+//  - The library's manifest sets android:networkSecurityConfig. The app declares its own
+//    (plugins/with-android-release.js: cleartext to loopback only in release) with tools:replace,
+//    so the library's never applies; the verifier's revocation check is SOFT_FAIL anyway.
+const { withGradleProperties, withPodfileProperties } = require('expo/config-plugins');
 
 const KEY = 'huwa.torrent';
 const MAVEN_REPOS_KEY = 'android.extraMavenRepos';
@@ -55,25 +54,4 @@ function withTorrentPodfileProperty(config) {
   });
 }
 
-function addToolsMarker(app, marker, attr) {
-  const attrs = (app.$[marker] || '').split(',').map((s) => s.trim()).filter(Boolean);
-  if (!attrs.includes(attr)) attrs.push(attr);
-  app.$[marker] = attrs.join(',');
-}
-
-function withoutLibraryNetworkSecurityConfig(config) {
-  return withAndroidManifest(config, (cfg) => {
-    if (!enabled()) return cfg;
-    const manifest = cfg.modResults.manifest;
-    manifest.$['xmlns:tools'] = manifest.$['xmlns:tools'] || 'http://schemas.android.com/tools';
-    const app = manifest.application?.[0];
-    if (!app) return cfg;
-    // An app that sets its own config keeps it over the library's; otherwise the attribute goes.
-    const attr = 'android:networkSecurityConfig';
-    addToolsMarker(app, app.$[attr] ? 'tools:replace' : 'tools:remove', attr);
-    return cfg;
-  });
-}
-
-module.exports = (config) =>
-  withoutLibraryNetworkSecurityConfig(withTorrentPodfileProperty(withTorrentGradleProperty(config)));
+module.exports = (config) => withTorrentPodfileProperty(withTorrentGradleProperty(config));

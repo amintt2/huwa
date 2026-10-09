@@ -25,7 +25,8 @@ Moteur torrent natif de Huwa (phase 7c du PLAN) : une session **librqbit 9.0.1**
 | `src/cache.rs` | Taille récursive du dossier de données. |
 | `src/api.rs` | Dispatch JSON `call(method, args)` commun aux deux FFI. |
 | `src/ffi.rs` | C-ABI (`include/huwa_torrent.h`), `catch_unwind` à chaque frontière. |
-| `src/jni_android.rs` | `Java_expo_modules_huwatorrent_HuwaTorrentNative_*`. `nativeInitTls(context)` initialise rustls-platform-verifier (HTTPS des trackers et des `.torrent` par URL) avant `nativeInit` ; sa partie Kotlin (`org.rustls:rustls-platform-verifier`, version lue dans `Cargo.lock`) est ajoutée par `modules/huwa-torrent/android/build.gradle`. |
+| `src/tls_check.rs` | `tlsCheck {url}` : un GET HTTPS par la pile TLS du moteur (diagnostic, test de fumée Android `scripts/android-smoke.sh`). |
+| `src/jni_android.rs` | `Java_expo_modules_huwatorrent_HuwaTorrentNative_*`. `nativeInitTls(context)` initialise rustls-platform-verifier (HTTPS des trackers et des `.torrent` par URL) avant `nativeInit` ; sa partie Kotlin (`org.rustls:rustls-platform-verifier`, version lue dans `Cargo.lock`) est ajoutée par `modules/huwa-torrent/android/build.gradle`. Les paniques Rust sont aussi écrites dans logcat (tag `HuwaTorrentRust`). |
 
 Données : `<dataDir>/torrents/` (fichiers), `<dataDir>/session/` (état librqbit), `<dataDir>/dht.json`,
 `<dataDir>/huwa-entries.json`.

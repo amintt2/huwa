@@ -9,6 +9,8 @@ import android.util.Log
  * `isLinked` is false when the .so is absent from the APK (build without HUWA_TORRENT=1).
  */
 object HuwaTorrentNative {
+  private const val TAG = "HuwaTorrent"
+
   val isLinked: Boolean = try {
     System.loadLibrary("huwa_torrent_core")
     true
@@ -25,8 +27,10 @@ object HuwaTorrentNative {
   @JvmStatic
   external fun nativeVersion(): String
 
+  /** Set once [ensureTls] has run (successfully or not); its lock is not the engine's. */
   @Volatile
-  private var tlsReady: Boolean = false
+  private var tlsDone: Boolean = false
+  private val tlsLock = Any()
 
   /** Gives the Rust HTTPS stack (rustls-platform-verifier) the app Context. Throws on failure. */
   @JvmStatic
@@ -42,17 +46,25 @@ object HuwaTorrentNative {
   external fun nativeShutdown()
 
   /**
-   * Once per process, before [initialize]. If it fails the engine still starts: UDP trackers and
-   * DHT work, only HTTPS requests (https trackers, torrents added by https URL) fail.
+   * Gives the app Context to the Rust HTTPS stack (rustls-platform-verifier), once per process and
+   * before anything that can reach the network: called by every entry point of [HuwaTorrentModule]
+   * (initialize, call: the HTTP proxy runs without [initialize]) and by the CI self-test receiver.
+   * A failure is logged and not retried (it would fail the same way): the engine still starts, UDP
+   * trackers and DHT work, HTTPS requests (https trackers, proxied https links) fail.
    */
-  @Synchronized
-  fun initTls(context: Context) {
-    if (tlsReady) return
-    try {
-      nativeInitTls(context.applicationContext)
-      tlsReady = true
-    } catch (e: Throwable) {
-      Log.w("HuwaTorrent", "TLS verifier init failed, HTTPS trackers unavailable", e)
+  fun ensureTls(context: Context) {
+    if (tlsDone || !isLinked) return
+    // Concurrent callers wait here until the first one is done: none goes on to the network early.
+    synchronized(tlsLock) {
+      if (tlsDone) return
+      try {
+        nativeInitTls(context.applicationContext)
+        Log.i(TAG, "TLS verifier initialised")
+      } catch (e: Throwable) {
+        Log.w(TAG, "TLS verifier init failed, HTTPS requests of the engine unavailable", e)
+      } finally {
+        tlsDone = true
+      }
     }
   }
 

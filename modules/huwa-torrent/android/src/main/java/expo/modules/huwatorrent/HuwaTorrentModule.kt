@@ -56,12 +56,13 @@ class HuwaTorrentModule : Module() {
     // AsyncFunction bodies run off the main thread (module queue), the JNI calls block.
     AsyncFunction("initialize") { configJson: String ->
       ensureLinked()
-      HuwaTorrentNative.initTls(context)
+      HuwaTorrentNative.ensureTls(context)
       HuwaTorrentNative.initialize(configJson)
     }
 
     AsyncFunction("call") { method: String, argsJson: String ->
       ensureLinked()
+      HuwaTorrentNative.ensureTls(context)
       HuwaTorrentNative.nativeCall(method, argsJson)
     }
 

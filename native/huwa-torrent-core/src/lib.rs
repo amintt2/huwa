@@ -16,6 +16,7 @@
 //! - `trackers`: public UDP/HTTPS trackers added to magnets that carry few.
 //! - `http_proxy`: loopback read-ahead proxy for remote HTTP streams (`/http/<id>`), independent
 //!   of the torrent session.
+//! - `tls_check`: one HTTPS GET through the engine's TLS stack (CI self-test, `tlsCheck`).
 //! - `api`: JSON dispatch used by both FFI flavours.
 //! - `ffi`: C ABI (iOS / static library). `jni_android`: JNI exports (Android).
 //!
@@ -33,6 +34,7 @@ pub mod range;
 pub mod server;
 pub mod streaming;
 pub mod timeline;
+pub mod tls_check;
 pub mod trackers;
 
 /// Start-path timeline simulation (fake swarms), see the module docs.

@@ -1,4 +1,12 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <uses-permission android:name="android.permission.INTERNET"/>
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE"/>
+    <application>
+        <!-- CI self-test of the engine's HTTPS stack (scripts/android-smoke.sh). Disabled and not
+             exported: unreachable in a normal install, see HuwaTorrentTlsCheckReceiver.kt. -->
+        <receiver
+            android:name="expo.modules.huwatorrent.HuwaTorrentTlsCheckReceiver"
+            android:enabled="false"
+            android:exported="false"/>
+    </application>
 </manifest>

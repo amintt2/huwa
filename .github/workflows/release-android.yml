@@ -234,17 +234,26 @@ jobs:
             for f in *.apk; do echo "| $f | $(du -h "$f" | cut -f1) |"; done
           } >> "$GITHUB_STEP_SUMMARY"
 
-      - name: HTTPS du moteur torrent (rustls-platform-verifier)
-        # La partie Kotlin du vérifieur doit être dans le dex (appelée seulement par JNI), et son
-        # android:networkSecurityConfig retiré du manifeste fusionné (plugins/with-huwa-torrent.js).
+      - name: HTTPS du moteur torrent (rustls-platform-verifier), politique réseau
+        # - La partie Kotlin du vérifieur doit être dans le dex (appelée seulement par JNI).
+        # - android:networkSecurityConfig = celui de l'app (cleartext loopback seul en release,
+        #   plugins/with-android-release.js), pas celui de l'AAR du vérifieur.
+        # - Le récepteur de test TLS (job smoke) est désactivé et non exporté.
         run: |
           BT="$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)"
           for f in dist-apk/*.apk; do
             n="$(unzip -p "$f" 'classes*.dex' | grep -a -c 'Lorg/rustls/platformverifier/CertificateVerifier;' || true)"
             [ "$n" -gt 0 ] || { echo "::error::org.rustls.platformverifier absent de $f"; exit 1; }
-            if "$BT/aapt2" dump xmltree --file AndroidManifest.xml "$f" | grep -q networkSecurityConfig; then
-              echo "::error::android:networkSecurityConfig présent dans le manifeste de $f"; exit 1
-            fi
+            "$BT/aapt2" dump xmltree --file AndroidManifest.xml "$f" > "$RUNNER_TEMP/manifest.txt"
+            nsc="$(grep -oE 'android:networkSecurityConfig\(0x[0-9a-f]+\)=@0x[0-9a-f]+' "$RUNNER_TEMP/manifest.txt" | sed 's/.*=@0x//')"
+            [ -n "$nsc" ] || { echo "::error::android:networkSecurityConfig absent du manifeste de $f"; exit 1; }
+            "$BT/aapt2" dump resources "$f" | grep -iE "resource 0x$nsc " | tee "$RUNNER_TEMP/nsc.txt"
+            grep -q 'xml/huwa_network_security_config' "$RUNNER_TEMP/nsc.txt" \
+              || { echo "::error::networkSecurityConfig de $f n'est pas @xml/huwa_network_security_config"; exit 1; }
+            grep -A3 'HuwaTorrentTlsCheckReceiver' "$RUNNER_TEMP/manifest.txt" | tee "$RUNNER_TEMP/receiver.txt"
+            grep -q 'android:enabled(0x0101000e)=false' "$RUNNER_TEMP/receiver.txt" \
+              && grep -q 'android:exported(0x01010010)=false' "$RUNNER_TEMP/receiver.txt" \
+              || { echo "::error::récepteur de test TLS activé ou exporté dans $f"; exit 1; }
             echo "OK: $f"
           done
 
@@ -270,7 +279,8 @@ jobs:
             `Huwa-<version>.apk` fonctionne partout ; `-arm64-v8a` est plus léger pour les téléphones récents.
             Vérifiez le SHA-256 fourni. Huwa ne contient et ne fournit aucun contenu.
 
-  # Test de fumée : l'APK x86_64 s'installe et démarre sans crash dans un émulateur.
+  # Test de fumée : l'APK x86_64 s'installe et démarre sans crash dans un émulateur, et le moteur
+  # torrent fait un GET HTTPS (certificat valide accepté, expiré refusé), voir scripts/android-smoke.sh.
   # Informatif (continue-on-error) : un émulateur capricieux ne bloque pas une release.
   smoke:
     name: smoke test (émulateur)

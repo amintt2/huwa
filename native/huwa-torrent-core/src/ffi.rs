@@ -74,6 +74,10 @@ pub fn call_json(method: &str, args_json: &str) -> Result<Value> {
     if method.starts_with("http") {
         return crate::http_proxy::dispatch_global(method, args);
     }
+    // Diagnostics (CI self-test of the HTTPS stack), no engine either.
+    if method == "tlsCheck" {
+        return crate::tls_check::check(&args);
+    }
     let engine = engine()?;
     api::dispatch(&engine, method, args)
 }

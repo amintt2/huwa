@@ -18,6 +18,8 @@
 //! - `probeCancel` `{id}` | `{ids}` → `true`
 //! - `httpOpen` / `httpPrefetch` / `httpRelease` / `httpStatus`: the HTTP read-ahead proxy, see
 //!   `http_proxy.rs` (dispatched by `ffi::call_json` before this, without the torrent engine)
+//! - `tlsCheck` `{url}` → `{url, status, bytes, ms}`: diagnostics, see `tls_check.rs` (same: no
+//!   engine needed)
 
 use std::sync::Arc;
 
