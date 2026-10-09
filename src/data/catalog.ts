@@ -70,6 +70,8 @@ export type Series = {
   chaptersKnown?: boolean;
   /** Where the bridge numbers come from, filled by data/mapping-overlay.ts. */
   mapping?: MappingInfo;
+  /** AniList country of origin of the anime (JP, KR, CN…): its original audio language. */
+  origin?: string;
 };
 
 export type MappingInfo = {

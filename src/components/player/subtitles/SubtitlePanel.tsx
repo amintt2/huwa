@@ -1,10 +1,11 @@
-// Player quick sheet: track list grouped by language, local file, sync offset and quick style.
-// In landscape it slides in from the right so the subtitles stay visible while adjusting.
+// "Sous-titres" page of the player settings sheet (PlayerSettings): track list grouped by language
+// (on-device translation included), local file, sync offset, quick style. The sheet is a side
+// panel in landscape, so the subtitles stay visible while adjusting.
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { FLAG } from '@/components/language-prefs';
-import { Sheet, SheetLabel } from '@/components/sheet';
+import { SheetLabel } from '@/components/sheet';
 import { haptic, Txt } from '@/components/ui';
 import { langName } from '@/subtitles/lang';
 import { useSubtitlePrefs } from '@/subtitles/prefs';
@@ -46,30 +47,12 @@ function Step({ label, onPress }: { label: string; onPress: () => void }) {
   );
 }
 
-export function SubtitleSheet({ visible, onClose, ctl }: { visible: boolean; onClose: () => void; ctl: SubtitleController }) {
+export function SubtitlePanel({ ctl }: { ctl: SubtitleController }) {
   const prefs = useSubtitlePrefs();
   const drawn = !!ctl.selected && ctl.selected.kind !== 'embedded';
 
   return (
-    <Sheet visible={visible} onClose={onClose} title="Sous-titres" detents={['medium', 'large']} side>
-      {drawn && ctl.canOffset && (
-        <View style={{ gap: S.sm }}>
-          <SheetLabel>Synchronisation</SheetLabel>
-          <View style={styles.syncRow}>
-            <Step label="−0,5" onPress={() => ctl.setOffset(ctl.offset - 0.5)} />
-            <Step label="−0,1" onPress={() => ctl.setOffset(ctl.offset - 0.1)} />
-            <Pressable onPress={() => ctl.setOffset(0)} accessibilityRole="button" accessibilityLabel="Remettre le décalage à zéro" style={styles.syncValue}>
-              <Text style={[styles.syncText, ctl.offset !== 0 && { color: C.accentText }]}>{fmtOffset(ctl.offset)}</Text>
-            </Pressable>
-            <Step label="+0,1" onPress={() => ctl.setOffset(ctl.offset + 0.1)} />
-            <Step label="+0,5" onPress={() => ctl.setOffset(ctl.offset + 0.5)} />
-          </View>
-          <Txt v="small" style={{ fontSize: 12 }}>
-            {ctl.offset === 0 ? '+ : les sous-titres arrivent plus tard. Mémorisé pour cet épisode.' : 'Mémorisé pour cet épisode. Touche la valeur pour revenir à 0.'}
-          </Txt>
-        </View>
-      )}
-
+    <>
       <View style={{ gap: S.sm }}>
         <SheetLabel>Piste</SheetLabel>
         <TrackRow track={null} on={ctl.selectedKey === 'off'} onPress={() => ctl.select('off')} />
@@ -107,11 +90,31 @@ export function SubtitleSheet({ visible, onClose, ctl }: { visible: boolean; onC
         )}
       </View>
 
-      <View style={{ gap: S.sm }}>
-        <SheetLabel>Style</SheetLabel>
-        <StyleControls prefs={prefs} compact />
-      </View>
-    </Sheet>
+      {drawn && ctl.canOffset && (
+        <View style={{ gap: S.sm }}>
+          <SheetLabel>Synchronisation</SheetLabel>
+          <View style={styles.syncRow}>
+            <Step label="−0,5" onPress={() => ctl.setOffset(ctl.offset - 0.5)} />
+            <Step label="−0,1" onPress={() => ctl.setOffset(ctl.offset - 0.1)} />
+            <Pressable onPress={() => ctl.setOffset(0)} accessibilityRole="button" accessibilityLabel="Remettre le décalage à zéro" style={styles.syncValue}>
+              <Text style={[styles.syncText, ctl.offset !== 0 && { color: C.accentText }]}>{fmtOffset(ctl.offset)}</Text>
+            </Pressable>
+            <Step label="+0,1" onPress={() => ctl.setOffset(ctl.offset + 0.1)} />
+            <Step label="+0,5" onPress={() => ctl.setOffset(ctl.offset + 0.5)} />
+          </View>
+          <Txt v="small" style={{ fontSize: 12 }}>
+            {ctl.offset === 0 ? '+ : les sous-titres arrivent plus tard. Mémorisé pour cet épisode.' : 'Mémorisé pour cet épisode. Touche la valeur pour revenir à 0.'}
+          </Txt>
+        </View>
+      )}
+
+      {drawn && (
+        <View style={{ gap: S.sm }}>
+          <SheetLabel>Apparence</SheetLabel>
+          <StyleControls prefs={prefs} compact />
+        </View>
+      )}
+    </>
   );
 }
 

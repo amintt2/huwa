@@ -42,6 +42,10 @@ public class HuwaMpvModule: Module {
       AsyncFunction("setAudioTrack") { (view: HuwaMpvView, id: Int) in
         view.setString("aid", id < 0 ? "no" : String(id))
       }
+      /// Preferred audio languages ("ja,jpn"): mpv opens every next file on that track (`alang`).
+      AsyncFunction("setAudioLanguages") { (view: HuwaMpvView, langs: String) in
+        view.setAudioLanguages(langs)
+      }
       AsyncFunction("setSubtitleTrack") { (view: HuwaMpvView, id: Int) in
         view.setString("sid", id < 0 ? "no" : String(id))
       }

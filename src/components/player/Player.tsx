@@ -7,6 +7,11 @@
 //   "Épisode suivant" during the ending + cancellable countdown (fallbacks: +85 s, last 90 s)
 // - landscape: rotating the phone (or the button) goes fullscreen; double-tap ±10 s, vertical drag
 //   = brightness (left) / volume (right), screen lock, comments panel over the video, live comments
+// - controls: play / ±10 s in the middle; audio and subtitles as one-tap chips (tap = next audio
+//   track / subtitles on-off, long-press = the list), everything else in one "Réglages de lecture"
+//   sheet (PlayerSettings.tsx). Portrait: chips + AirPlay / PiP / réglages at the top; landscape:
+//   title, AirPlay, PiP at the top, lock / comments / source / audio / subtitles / réglages under
+//   the scrubber.
 // - PiP, AirPlay, resume position (`startAt`), progress saved every 5 s (`onProgress`)
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -28,22 +33,24 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { traceInfo, traceMark } from '@/addons/timing';
 import { Txt, type IconName } from '@/components/ui';
 import { usePlayerTrace } from '@/stats/use-player-trace';
+import { langName } from '@/subtitles/lang';
 import { C, F, R, S } from '@/theme/tokens';
 
 import { useSkipTimes, type Segment } from './aniskip';
 import { SourceLoadingBar, type LoadPhase } from './SourceLoadingBar';
 import { EngineView, useEnginePlayer, type EnginePlayer as VideoPlayer } from './engines';
-import { pickAudioTrack } from './engines/tracks';
+import { AudioKeeper, type AudioPick, type AudioWish } from './audio-pick';
+import { langCode, langFromTitle } from './engines/tracks';
 import { useMpvSubtitles } from './engines/use-mpv-subtitles';
 import { GestureLayer, type Hud } from './GestureLayer';
 import { AUTO_NEXT_SECONDS, NextCard, Pill, type NextInfo } from './overlays';
-import { PlayerSettings, type Option } from './PlayerSettings';
+import { PlayerSettings, speedLabel, type Option, type SettingsPage } from './PlayerSettings';
 import type { PlaybackMonitor } from './playback-monitor';
 import { useSeamlessUpgrade, type UpgradeRequest } from './seamless-upgrade';
 import { usePlaybackMonitor } from './use-playback-monitor';
 import { getPrefs, setPrefs, usePrefs } from './prefs';
 import { formatTime, SeekBar } from './SeekBar';
-import { SubtitleOverlay, SubtitleSheet, useSubtitleController, type ExternalSubtitle } from './subtitles';
+import { SubtitleOverlay, useSubtitleController, type ExternalSubtitle } from './subtitles';
 import { takeWarm } from './warm-pool';
 
 export type { ExternalSubtitle } from './subtitles';
@@ -108,9 +115,13 @@ export type PlayerProps = {
   notice?: string;
   /** The parent should hide everything else and give the player the whole screen while `true`. */
   onFullscreenChange?: (full: boolean) => void;
-  /** Sources menu, reachable from the fullscreen controls. */
+  /** Sources menu, reachable from the fullscreen controls (when there is no `renderSources`). */
   onOpenSources?: () => void;
   sourceLabel?: string;
+  /** Source list shown in the settings sheet ("Qualité et source"); `done` closes the sheet. */
+  renderSources?: (done: () => void) => ReactNode;
+  /** Short value of the "Qualité et source" row ("720p · Auto"). */
+  sourceValue?: string;
   /** Content of the landscape comments panel. */
   renderComments?: () => ReactNode;
   commentCount?: number;
@@ -137,6 +148,14 @@ export type PlayerProps = {
   audioLangs?: string[] | null;
   /** Audio tracks of the loaded file (the source's real languages), per source URI. */
   onAudioTracks?: (uri: string, tracks: AudioTrack[]) => void;
+  /**
+   * Audio to play (audio-pick.ts: the user's pick for the series, the dub languages, else the
+   * original language). Kept through seeks, source switches and track events. Without it:
+   * `audioLangs`, else the file's default track.
+   */
+  audioPref?: AudioWish | null;
+  /** The user picked an audio track by hand (to remember for the series). */
+  onAudioPick?: (pick: AudioPick) => void;
 };
 
 const NEXT_WINDOW = 90;
@@ -206,6 +225,8 @@ export function Player({
   onFullscreenChange,
   onOpenSources,
   sourceLabel,
+  renderSources,
+  sourceValue,
   renderComments,
   commentCount,
   timedComments = [],
@@ -216,6 +237,8 @@ export function Player({
   sourceInfo,
   audioLangs,
   onAudioTracks,
+  audioPref,
+  onAudioPick,
 }: PlayerProps) {
   const insets = useSafeAreaInsets();
   const window = useWindowDimensions();
@@ -246,27 +269,29 @@ export function Player({
   const [audioTrack, setAudioTrack] = useState<AudioTrack | null>(null);
   const [embedded, setEmbedded] = useState<SubtitleTrack[]>([]);
   const [aspect, setAspect] = useState<number | undefined>();
-  const [subSheet, setSubSheet] = useState(false);
   const [controls, setControls] = useState(true);
   const [touch, setTouch] = useState(0);
-  const [settings, setSettings] = useState(false);
-  const subsAfterSettings = useRef(false);
+  // Settings sheet page (null = closed).
+  const [settingsPage, setSettingsPage] = useState<SettingsPage | null>(null);
+  const settings = settingsPage != null;
   const [locked, setLocked] = useState(false);
   const [unlockHint, setUnlockHint] = useState(false);
   const [commentsOpen, setCommentsOpen] = useState(false);
   const [hud, setHud] = useState<Hud | null>(null);
   // Pinch zoom (fullscreen): fill the screen, cropping the picture's edges, or show it whole.
   const [fill, setFill] = useState(false);
-  const [zoomNote, setZoomNote] = useState<string | null>(null);
+  // Short confirmation over the video ("Audio : japonais", "Zoom : plein écran").
+  const [note, setNote] = useState<{ text: string; n: number } | null>(null);
+  const flashNote = (text: string) => setNote((o) => ({ text, n: (o?.n ?? 0) + 1 }));
   const onPinch = (next: boolean) => {
     setFill(next);
-    setZoomNote(next ? 'Zoom : plein écran' : 'Image entière');
+    flashNote(next ? 'Zoom : plein écran' : 'Image entière');
   };
   useEffect(() => {
-    if (!zoomNote) return;
-    const id = setTimeout(() => setZoomNote(null), 1200);
+    if (!note) return;
+    const id = setTimeout(() => setNote(null), 1400);
     return () => clearTimeout(id);
-  }, [zoomNote]);
+  }, [note]);
   const [flash, setFlash] = useState<{ side: 'left' | 'right'; n: number } | null>(null);
   const [skipped, setSkipped] = useState<string[]>([]);
   const [ended, setEnded] = useState(false);
@@ -389,31 +414,45 @@ export function Player({
     onDeferred: (key, reason) => onUpgradeDeferred?.(key, reason),
   });
 
-  // ---------- audio track of a dubbed source ----------
-  // Once per source: the track in the dub language (a manual pick in the settings sheet stays).
-  const audioPicked = useRef<string | null>(null);
+  // ---------- audio track ----------
+  // The wished track (audioPref, else the dub languages) is put back whenever a track event shows
+  // another one: a reloaded source, AVPlayer's own media selection, mpv carrying a track id over.
+  // A manual pick becomes the wish at once (before the parent stores it for the series).
+  const propWish: AudioWish | null = audioPref ?? (audioLangs?.length ? { langs: audioLangs } : null);
+  const wishKey = propWish ? `${propWish.langs.join(',')}|${propWish.manual?.lang ?? ''}|${propWish.manual?.label ?? ''}` : '';
+  const wish = useRef<AudioWish | null>(propWish);
+  const [keeper] = useState(() => new AudioKeeper());
+  const keepAudio = (tracks: AudioTrack[], current: AudioTrack | null) => {
+    const i = keeper.check(sourceUri.current, tracks, current, wish.current);
+    if (i >= 0) setProp(player, 'audioTrack', tracks[i]);
+  };
   const onTracks = (tracks: AudioTrack[]) => {
     const uri = sourceUri.current;
     if (!uri) return;
     if (tracks.length) cb.current.onAudioTracks?.(uri, tracks);
-    const langs = cb.current.audioLangs;
-    if (!langs?.length || tracks.length < 1 || audioPicked.current === uri) return;
-    const i = pickAudioTrack(tracks, langs);
-    if (i < 0) return;
-    audioPicked.current = uri;
-    const want = tracks[i];
-    const cur = player.audioTrack;
-    if (!cur || cur.id !== want.id || cur.language !== want.language || cur.label !== want.label) setProp(player, 'audioTrack', want);
+    keepAudio(tracks, player.audioTrack);
   };
-  const onTracksRef = useRef(onTracks);
+  const keepAudioRef = useRef(keepAudio);
   useEffect(() => {
-    onTracksRef.current = onTracks;
+    keepAudioRef.current = keepAudio;
   });
-  // The source became dubbed after it loaded (a track check, the user's choice): pick now.
-  const dubAudioKey = (audioLangs ?? []).join(',');
+  // The wish changed (a dub confirmed after the load, a pick stored for the series): apply now.
   useEffect(() => {
-    if (dubAudioKey) onTracksRef.current(player.availableAudioTracks);
-  }, [dubAudioKey, player]);
+    wish.current = propWish;
+    player.setAudioPreference(propWish);
+    keepAudioRef.current(player.availableAudioTracks, player.audioTrack);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [wishKey, player]);
+  const pickAudio = (tr: AudioTrack) => {
+    const lang = langCode(tr.language);
+    const label = (tr.label || tr.name || '').trim();
+    const pick: AudioPick = { lang, ...(label ? { label } : null) };
+    const base = wish.current?.langs ?? [];
+    wish.current = { langs: [...new Set([...(lang !== 'und' ? [lang] : []), ...base])], manual: pick };
+    player.setAudioPreference(wish.current);
+    setProp(player, 'audioTrack', tr);
+    onAudioPick?.(pick);
+  };
 
   useEventListener(player, 'sourceLoad', (e) => {
     setDuration(e.duration);
@@ -436,7 +475,10 @@ export function Player({
     onTracks(e.availableAudioTracks);
   });
   useEventListener(player, 'availableSubtitleTracksChange', (e) => setEmbedded(e.availableSubtitleTracks));
-  useEventListener(player, 'audioTrackChange', (e) => setAudioTrack(e.audioTrack));
+  useEventListener(player, 'audioTrackChange', (e) => {
+    setAudioTrack(e.audioTrack);
+    keepAudio(player.availableAudioTracks, e.audioTrack);
+  });
 
   // ---------- AniSkip segments ----------
   const { segments } = useSkipTimes(malId, episodeNumber, duration);
@@ -549,8 +591,60 @@ export function Player({
     }
   }, [player, embedded, embIndex]);
 
-  const audioOptions: Option[] = audioTracks.map((a, i) => ({ key: String(i), label: a.label || a.name || a.language, hint: a.language?.toUpperCase() }));
-  const audioKey = String(Math.max(0, audioTracks.findIndex((a) => (a.id && a.id === audioTrack?.id) || (a.label === audioTrack?.label && a.language === audioTrack?.language))));
+  const audioIndex = Math.max(0, audioTracks.findIndex((a) => (a.id && a.id === audioTrack?.id) || (a.label === audioTrack?.label && a.language === audioTrack?.language)));
+  const audioKey = String(audioIndex);
+  /** Language of a track ("ja"), from its tag, else its title; null when unknown. */
+  const trackLang = (a: AudioTrack | undefined) => {
+    if (!a) return null;
+    const l = langCode(a.language);
+    return l !== 'und' ? l : langFromTitle(a.label || a.name);
+  };
+  const audioCode = (a: AudioTrack | undefined, i: number) => trackLang(a)?.toUpperCase() ?? `${i + 1}`;
+  const audioName = (a: AudioTrack | undefined) => {
+    const l = trackLang(a);
+    return l ? langName(l) : a?.label || a?.name || 'piste inconnue';
+  };
+  // The list says the language first ("Français"), the file's own title under it ("VF").
+  const audioOptions: Option[] = audioTracks.map((a, i) => {
+    const name = audioName(a);
+    const own = (a.label || a.name || '').trim();
+    return { key: String(i), label: name, hint: own && own.toLowerCase() !== name.toLowerCase() ? own : undefined };
+  });
+  /** Audio chip tap: the next track ("Audio : japonais"). Sticky like a pick in the list. */
+  const nextAudio = () => {
+    if (audioTracks.length < 2) return;
+    const i = (audioIndex + 1) % audioTracks.length;
+    pickAudio(audioTracks[i]);
+    flashNote(`Audio : ${audioName(audioTracks[i]).toLowerCase()}`);
+  };
+
+  // ---------- subtitles toggle ----------
+  const lastSubKey = useRef<string | null>(null);
+  const subsOn = subs.selectedKey !== 'off';
+  const subLang = subs.selected ? subs.selected.lang.split('-')[0] : null;
+  const subsValue = !subs.selected
+    ? 'Désactivés'
+    : subs.selected.kind === 'local'
+      ? subs.selected.source
+      : `${langName(subs.selected.lang)}${subs.selected.kind === 'translated' ? ' · traduits' : subs.selected.forced ? ' · panneaux' : ''}`;
+  const openSettings = (page: SettingsPage) => {
+    setSettingsPage(page);
+    wake();
+  };
+  /** CC chip tap: off ↔ the last track (or the best one). Nothing to show: the list. */
+  const toggleSubs = () => {
+    if (subsOn) {
+      lastSubKey.current = subs.selectedKey;
+      subs.select('off');
+      flashNote('Sous-titres désactivés');
+      return;
+    }
+    const back = lastSubKey.current && subs.tracks.some((x) => x.key === lastSubKey.current) ? lastSubKey.current : subs.onKey;
+    if (!back) return openSettings('subs');
+    subs.select(back);
+    const tr = subs.tracks.find((x) => x.key === back);
+    flashNote(tr ? `Sous-titres : ${langName(tr.lang).toLowerCase()}` : 'Sous-titres activés');
+  };
 
   // ---------- controls visibility ----------
   const wake = () => {
@@ -673,7 +767,44 @@ export function Player({
   const sideInset = full ? Math.max(insets.left, insets.right, S.lg) : S.md;
   const panelW = Math.min(420, window.width * 0.42);
   const panelLeft = prefs.commentsSide === 'left';
-  const bottomOffset = controls ? (full ? 76 + Math.max(insets.bottom - 8, 0) : 52) : full ? 24 : 12;
+  const bottomOffset = controls ? (full ? 112 + Math.max(insets.bottom - 8, 0) : 52) : full ? 24 : 12;
+  // Notices sit under the top controls while they show (never over the chips).
+  const noticeTop = controls && !locked ? (full ? Math.max(insets.top, S.md) + 56 : 56) : full ? S.lg : S.sm;
+
+  // Audio / subtitles chips and the settings button, side by side: in the top row (portrait) or
+  // under the scrubber (landscape).
+  const curAudio = audioTracks[audioIndex];
+  const langChips = (
+    <>
+      {audioTracks.length > 1 && (
+        <View style={styles.chipBtn}>
+          <Pressable onPress={() => { nextAudio(); wake(); }} onLongPress={() => openSettings('audio')} hitSlop={6}
+            style={styles.chipMain} accessibilityRole="button"
+            accessibilityLabel={`Audio : ${audioName(curAudio)}`}
+            accessibilityHint={`Touche pour passer à ${audioName(audioTracks[(audioIndex + 1) % audioTracks.length])}. Appui long : toutes les pistes`}>
+            <Ionicons name="volume-medium" size={16} color={C.white} />
+            <Text style={styles.chipText}>{audioCode(curAudio, audioIndex)}</Text>
+          </Pressable>
+          {audioTracks.length > 2 && (
+            <Pressable onPress={() => openSettings('audio')} hitSlop={6} style={styles.chipMore} accessibilityRole="button" accessibilityLabel="Toutes les pistes audio">
+              <Ionicons name="chevron-down" size={14} color="rgba(255,255,255,0.8)" />
+            </Pressable>
+          )}
+        </View>
+      )}
+      <Pressable onPress={() => { toggleSubs(); wake(); }} onLongPress={() => openSettings('subs')} hitSlop={6}
+        style={[styles.chipBtn, styles.ccChip, subsOn && styles.chipOn]} accessibilityRole="button"
+        accessibilityLabel={subsOn ? `Sous-titres : ${subsValue}` : 'Sous-titres désactivés'}
+        accessibilityHint={`Touche pour les ${subsOn ? 'désactiver' : 'activer'}. Appui long : pistes, synchro et style`}>
+        <View style={[styles.cc, !subsOn && styles.ccOff]}>
+          <Text style={[styles.ccText, !subsOn && { color: 'rgba(255,255,255,0.7)' }]} allowFontScaling={false}>CC</Text>
+          {!subsOn && <View style={styles.ccSlash} />}
+        </View>
+        {subsOn && !!subLang && subLang !== 'und' && <Text style={styles.chipText}>{subLang.toUpperCase()}</Text>}
+      </Pressable>
+    </>
+  );
+  const gear = <Ctl icon="settings-outline" label="Réglages de lecture" onPress={() => openSettings('root')} size={21} />;
 
   return (
     <View style={full ? styles.full : styles.inline}>
@@ -686,6 +817,8 @@ export function Player({
         contentFit={zoomed ? 'cover' : 'contain'}
         allowsPictureInPicture
         startsPictureInPictureAutomatically
+        // No system Live Text button on a paused frame: it lands over the player's own controls.
+        allowsVideoFrameAnalysis={false}
         onFirstFrameRender={() => {
           setFrameFor(uriRef.current);
           if (mediaKey) traceMark(mediaKey, 'first-frame');
@@ -774,13 +907,13 @@ export function Player({
         </View>
       )}
 
-      {!!zoomNote && (
-        <View pointerEvents="none" style={[styles.notice, { top: full ? S.lg : S.sm }]}>
-          <Txt v="small" color={C.white}>{zoomNote}</Txt>
+      {!!note && (
+        <View pointerEvents="none" style={[styles.notice, { top: noticeTop }]} accessibilityLiveRegion="polite">
+          <Txt v="small" color={C.white}>{note.text}</Txt>
         </View>
       )}
-      {!!shownNotice && !zoomNote && (
-        <View pointerEvents="none" style={[styles.notice, { top: full ? S.lg : S.sm }]} accessibilityLiveRegion="polite">
+      {!!shownNotice && !note && (
+        <View pointerEvents="none" style={[styles.notice, { top: noticeTop }]} accessibilityLiveRegion="polite">
           <Txt v="small" color={C.white}>{shownNotice}</Txt>
         </View>
       )}
@@ -821,32 +954,20 @@ export function Player({
                   <Txt v="headline" numberOfLines={1} style={styles.titleShadow}>{title}</Txt>
                   {!!subtitle && <Txt v="footnote" color="rgba(255,255,255,0.75)" numberOfLines={1} style={styles.titleShadow}>{subtitle}</Txt>}
                 </View>
-                {onOpenSources && (
-                  <Pressable onPress={onOpenSources} style={styles.chipBtn} accessibilityRole="button" accessibilityLabel="Sources">
-                    <Ionicons name="layers-outline" size={16} color={C.white} />
-                    <Text style={styles.chipText} numberOfLines={1}>{sourceLabel ?? 'Sources'}</Text>
-                  </Pressable>
-                )}
-                {renderComments && (
-                  <Pressable onPress={() => { setCommentsOpen((o) => !o); wake(); }} style={[styles.chipBtn, commentsOpen && { backgroundColor: C.accentSoft }]}
-                    accessibilityRole="button" accessibilityLabel="Commentaires">
-                    <Ionicons name="chatbubbles-outline" size={16} color={C.white} />
-                    {commentCount != null && <Text style={styles.chipText}>{commentCount}</Text>}
-                  </Pressable>
-                )}
-                <Ctl icon="lock-closed-outline" label="Verrouiller l’écran" onPress={() => { setLocked(true); setControls(false); setCommentsOpen(false); }} />
               </>
             ) : (
-              <View style={{ flex: 1 }} />
+              <>
+                <View style={{ flex: 1 }} />
+                {langChips}
+              </>
             )}
             {Platform.OS === 'ios' && (
               <View style={styles.airplay} accessibilityLabel="AirPlay">
-                <VideoAirPlayButton tint={C.white} activeTint={C.accentText} prioritizeVideoDevices style={{ width: 26, height: 26 }} />
+                <VideoAirPlayButton tint={C.white} activeTint={C.accentText} prioritizeVideoDevices style={{ width: 24, height: 24 }} />
               </View>
             )}
-            <Ctl icon="text" label="Sous-titres" active={subs.selectedKey !== 'off'} onPress={() => { if (!settings) setSubSheet(true); wake(); }} size={20} />
             {pipOk && <Ctl icon="albums-outline" label="Image dans l’image" onPress={() => view.current?.startPictureInPicture().catch(() => {})} />}
-            <Ctl icon="settings-outline" label="Réglages de lecture" onPress={() => { if (!subSheet) { subsAfterSettings.current = false; setSettings(true); } wake(); }} />
+            {!full && gear}
           </View>
 
           {/* Hidden while sources are searched and when nothing can play: the explanation and its
@@ -865,12 +986,37 @@ export function Player({
             <SkipCtl dir={1} label="Avancer de 10 secondes" onPress={() => { seekTo(t + 10); wake(); }} />
           </View>
 
-          <View pointerEvents="box-none" style={[styles.bottomRow, full && { paddingBottom: Math.max(insets.bottom, S.md), paddingHorizontal: sideInset }]}>
-            <Text style={styles.time}>{formatTime(t)}</Text>
-            <SeekBar position={t} duration={duration} buffered={time.buffered} markers={markers} commentMarks={prefs.liveComments ? commentMarks : undefined} onScrubStart={wake} onSeek={(x) => { seekTo(x); wake(); }} />
-            <Text style={styles.time}>{duration > 0 ? `-${formatTime(Math.max(0, remaining))}` : '--:--'}</Text>
-            {prefs.rate !== 1 && <Text style={[styles.time, { color: C.accentText }]}>{String(prefs.rate).replace('.', ',')}×</Text>}
-            <Ctl icon={full ? 'contract' : 'expand'} label={full ? 'Quitter le plein écran' : 'Plein écran'} onPress={() => (full ? exitFull() : enterFull())} size={20} />
+          <View pointerEvents="box-none" style={[styles.bottom, full && { paddingBottom: Math.max(insets.bottom, S.sm), paddingHorizontal: sideInset }]}>
+            <View pointerEvents="box-none" style={[styles.bottomRow, full && { paddingLeft: 0, paddingRight: 0 }]}>
+              <Text style={styles.time}>{formatTime(t)}</Text>
+              <SeekBar position={t} duration={duration} buffered={time.buffered} markers={markers} commentMarks={prefs.liveComments ? commentMarks : undefined} onScrubStart={wake} onSeek={(x) => { seekTo(x); wake(); }} />
+              <Text style={styles.time}>{duration > 0 ? `-${formatTime(Math.max(0, remaining))}` : '--:--'}</Text>
+              {!full && prefs.rate !== 1 && <Text style={[styles.time, styles.rate]}>{speedLabel(prefs.rate)}</Text>}
+              {!full && <Ctl icon="expand" label="Plein écran" onPress={enterFull} size={20} />}
+            </View>
+            {full && (
+              <View pointerEvents="box-none" style={styles.actionRow}>
+                <Ctl icon="lock-closed-outline" label="Verrouiller l’écran" onPress={() => { setLocked(true); setControls(false); setCommentsOpen(false); }} size={20} />
+                {renderComments && (
+                  <Pressable onPress={() => { setCommentsOpen((o) => !o); wake(); }} hitSlop={4} style={[styles.chipBtn, commentsOpen && styles.chipOn]}
+                    accessibilityRole="button" accessibilityLabel={`Commentaires${commentCount != null ? `, ${commentCount}` : ''}`} accessibilityState={{ selected: commentsOpen }}>
+                    <Ionicons name="chatbubbles-outline" size={16} color={C.white} />
+                    {commentCount != null && <Text style={styles.chipText}>{commentCount}</Text>}
+                  </Pressable>
+                )}
+                <View style={{ flex: 1 }} />
+                {prefs.rate !== 1 && <Text style={[styles.time, styles.rate]}>{speedLabel(prefs.rate)}</Text>}
+                {(renderSources || onOpenSources) && (
+                  <Pressable onPress={() => (renderSources ? openSettings('source') : onOpenSources?.())} hitSlop={4} style={styles.chipBtn}
+                    accessibilityRole="button" accessibilityLabel={`Source : ${sourceLabel ?? 'aucune'}. Changer de source ou de qualité`}>
+                    <Ionicons name="layers-outline" size={16} color={C.white} />
+                    <Text style={styles.chipText} numberOfLines={1}>{sourceLabel ?? 'Sources'}</Text>
+                  </Pressable>
+                )}
+                {langChips}
+                {gear}
+              </View>
+            )}
           </View>
         </View>
       ) : null}
@@ -887,7 +1033,7 @@ export function Player({
 
       {next && countdown !== null && (
         <NextCard label={next.label} countdown={countdown} onCancel={() => setCountdown(null)} onPlay={playNext} warning={next.warning}
-          style={{ right: sideInset, bottom: full ? Math.max(insets.bottom, S.lg) + 8 : S.md }} />
+          style={{ right: sideInset, bottom: full ? (controls && !locked ? bottomOffset : Math.max(insets.bottom, S.lg) + 8) : S.md }} />
       )}
 
       {/* Comments over the video (landscape) */}
@@ -911,36 +1057,31 @@ export function Player({
       )}
 
       <PlayerSettings
-        visible={settings}
-        onClose={() => { setSettings(false); wake(); }}
+        page={settingsPage}
+        onPage={setSettingsPage}
+        onClose={() => { setSettingsPage(null); wake(); }}
         rate={prefs.rate}
         onRate={(rate) => setPrefs({ rate })}
         audio={audioOptions}
         audioKey={audioKey}
         onAudio={(k) => {
           const tr = audioTracks[Number(k)];
-          if (!tr) return;
-          audioPicked.current = source?.uri ?? null;
-          setProp(player, 'audioTrack', tr);
+          if (tr) pickAudio(tr);
         }}
-        // One modal at a time: iOS does not present a modal while another one is still on screen
-        // (the subtitle sheet would never show and could not be closed), so it opens once the
-        // settings sheet is gone.
-        onOpenSubtitles={() => { subsAfterSettings.current = true; setSettings(false); }}
-        onClosed={() => {
-          if (!subsAfterSettings.current) return;
-          subsAfterSettings.current = false;
-          setSubSheet(true);
-        }}
+        subs={subs}
+        subsValue={subsValue}
+        sourceValue={sourceValue}
+        sourceInfo={sourceInfo}
+        renderSources={renderSources}
         autoNext={prefs.autoNext}
         onAutoNext={(autoNext) => setPrefs({ autoNext })}
         commentsSide={prefs.commentsSide}
         onCommentsSide={(commentsSide) => setPrefs({ commentsSide })}
         liveComments={prefs.liveComments}
         onLiveComments={(liveComments) => setPrefs({ liveComments })}
-        sourceInfo={sourceInfo}
+        fill={full ? fill : undefined}
+        onFill={setFill}
       />
-      <SubtitleSheet visible={subSheet} onClose={() => { setSubSheet(false); wake(); }} ctl={subs} />
     </View>
   );
 }
@@ -966,16 +1107,25 @@ const styles = StyleSheet.create({
   scrimTop: { position: 'absolute', left: 0, right: 0, top: 0 },
   scrimBottom: { position: 'absolute', left: 0, right: 0, bottom: 0 },
   titleShadow: { textShadowColor: 'rgba(0,0,0,0.5)', textShadowRadius: 6 },
-  bottomRow: {
-    position: 'absolute', left: 0, right: 0, bottom: 0, flexDirection: 'row', alignItems: 'center', gap: 10,
-    paddingLeft: S.md, paddingRight: S.xs, paddingBottom: 2,
-  },
+  bottom: { position: 'absolute', left: 0, right: 0, bottom: 0 },
+  bottomRow: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingLeft: S.md, paddingRight: S.xs, paddingBottom: 2 },
+  actionRow: { flexDirection: 'row', alignItems: 'center', gap: S.sm, marginTop: 2 },
+  rate: { color: C.accentText, minWidth: 0 },
   time: { color: C.white, fontSize: 13, fontVariant: ['tabular-nums'], ...F.semibold, minWidth: 38, textAlign: 'center', ...shadow },
   chipBtn: {
     flexDirection: 'row', alignItems: 'center', gap: 6, height: 36, maxWidth: 200, paddingHorizontal: 13,
     borderRadius: R.pill, backgroundColor: 'rgba(16,21,34,0.55)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.18)',
   },
-  chipText: { color: C.white, fontSize: 13, ...F.semibold },
+  chipText: { color: C.white, fontSize: 13, ...F.semibold, fontVariant: ['tabular-nums'] },
+  chipOn: { backgroundColor: 'rgba(47,107,235,0.42)', borderColor: C.accentLine },
+  // Same width on and off: the chips next to it do not jump when subtitles are toggled.
+  ccChip: { minWidth: 72, justifyContent: 'center' },
+  chipMain: { flexDirection: 'row', alignItems: 'center', gap: 6, alignSelf: 'stretch' },
+  chipMore: { alignSelf: 'stretch', justifyContent: 'center', paddingLeft: 6, marginRight: -6, borderLeftWidth: StyleSheet.hairlineWidth, borderLeftColor: 'rgba(255,255,255,0.3)' },
+  cc: { height: 15, paddingHorizontal: 3, borderRadius: 3, borderWidth: 1.5, borderColor: C.white, alignItems: 'center', justifyContent: 'center' },
+  ccOff: { borderColor: 'rgba(255,255,255,0.7)' },
+  ccText: { color: C.white, fontSize: 8.5, lineHeight: 10, ...F.heavy, letterSpacing: 0.3 },
+  ccSlash: { position: 'absolute', width: 26, height: 1.5, backgroundColor: 'rgba(255,255,255,0.9)', transform: [{ rotate: '-28deg' }] },
   pillWrap: { position: 'absolute', flexDirection: 'row', gap: S.sm },
   pillText: { color: C.bg, fontSize: 13, ...F.bold },
   unlock: {

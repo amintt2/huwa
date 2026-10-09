@@ -102,12 +102,22 @@ public final class HuwaMpvView: ExpoView {
         return
       }
       core = c
+      if let a = audioLangs { c.setString("alang", a) }
     }
     try? AVAudioSession.sharedInstance().setCategory(.playback, mode: .moviePlayback)
     try? AVAudioSession.sharedInstance().setActive(true)
     core?.load(url: url, headers: headers, start: start, autoplay: autoplay)
     #else
     onMpvError(["message": "mpv n'est pas inclus dans cette version de l'app"])
+    #endif
+  }
+
+  /// Kept for a core created later (the first `load` creates it).
+  private var audioLangs: String?
+  func setAudioLanguages(_ langs: String) {
+    audioLangs = langs
+    #if HUWA_MPV
+    core?.setString("alang", langs)
     #endif
   }
 

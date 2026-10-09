@@ -202,6 +202,9 @@ final class MpvCore {
       setAsync(ctx, "hr-seek", start > 1 ? "no" : "default")
       setAsync(ctx, "pause", autoplay ? "no" : "yes")
       setAsync(ctx, "sid", "no")
+      // A track picked at runtime (`aid=2`) is kept by mpv as an option for the next file, where
+      // id 2 may be another language: each file picks again from `alang` (set from JS).
+      setAsync(ctx, "aid", "auto")
       // The rotation nudge (refreshOutputSize) leaves an aspect override: never carry it to the next file.
       setAsync(ctx, "video-aspect-override", "no")
       // Built-in torrent engine (loopback URL): a read may legitimately wait for a piece (swarm

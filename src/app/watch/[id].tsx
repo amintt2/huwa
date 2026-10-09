@@ -10,6 +10,8 @@ import { nextDubState, recordSeriesDub, setDubChoice, showDubPrompt, useDubChoic
 import { releaseFamily, setTracks, verifiedAudio } from '@/addons/track-info';
 import { DubSheet } from '@/components/dub-sheet';
 import { audioVerdict, langCode, pickAudioTrack } from '@/components/player/engines/tracks';
+import { audioWish, originalLang } from '@/components/player/audio-pick';
+import { setAudioChoice, useAudioChoice } from '@/components/player/audio-choice';
 import type { NextDubReport } from '@/components/player/prefetch-next';
 import type { DubOutcome } from '@/stats/model';
 import { recordDub } from '@/stats/store';
@@ -32,7 +34,7 @@ import { getDebrid } from '@/debrid/store';
 import { Player, type ExternalSubtitle, type PlayerHandle } from '@/components/player/Player';
 import { PrefetchNext } from '@/components/player/prefetch-next';
 import { WebPlayer } from '@/components/player/WebPlayer';
-import { SourceButton, SourcesMenu } from '@/components/sources-menu';
+import { SourceButton, SourcesList, SourcesMenu } from '@/components/sources-menu';
 import { usePrewarm } from '@/settings/network';
 import { useWatchTrace } from '@/stats/use-watch-trace';
 import { useSettings } from '@/settings/settings';
@@ -292,6 +294,12 @@ function WatchScreen({ id, at }: { id: string; at?: number }) {
   // dub language is skipped like a broken one (before playback starts: the load has not played
   // yet), and what the file holds is remembered for its release (next episode).
   const [offlineDub, setOfflineDub] = useState(false);
+  // Audio heard: the user's own pick for this series (sticky), the dub when one plays, else the
+  // work's original language (Japanese for anime) — never the file's default English dub.
+  const manualAudio = useAudioChoice(series.id, langPrefs.watchMode);
+  const dubbedNow = offline ? offlineDub : dub.playing;
+  // A new object each render is fine: the Player compares its content.
+  const audioPref = audioWish({ dubbed: dubbedNow, dubLangs, original: originalLang(series.origin), manual: manualAudio });
   const onAudioTracks = (uri: string, tracks: AudioTrack[]) => {
     if (langPrefs.watchMode !== 'dub') return;
     if (offline) {
@@ -568,6 +576,8 @@ function WatchScreen({ id, at }: { id: string; at?: number }) {
             onFullscreenChange={setFull}
             onOpenSources={() => setMenuOpen(true)}
             sourceLabel={sourceLabel}
+            sourceValue={src.current ? `${qualityLabel(src.quality)} · ${src.auto ? 'Auto' : 'Manuel'}` : 'Aucune'}
+            renderSources={offline ? undefined : (done) => <SourcesList src={src} onDone={done} />}
             commentCount={count}
             timedComments={timed}
             renderComments={renderComments}
@@ -578,6 +588,8 @@ function WatchScreen({ id, at }: { id: string; at?: number }) {
             sourceInfo={sourceInfo}
             audioLangs={offline ? (offlineDub ? dubLangs : null) : dub.playing ? dubLangs : null}
             onAudioTracks={onAudioTracks}
+            audioPref={audioPref}
+            onAudioPick={(pick) => setAudioChoice(series.id, langPrefs.watchMode, pick)}
           />
         )}
       </View>

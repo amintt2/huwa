@@ -60,6 +60,10 @@ const SPLITS = `
     }
     packaging {
         jniLibs {
+            // Drops the x86 copies of prebuilt libraries (libbare-kit.so alone is ~20 MB compressed).
+            // React Native's own libs (libreactnative, libhermesvm, libjsi, libfbjni, libc++_shared)
+            // stay in lib/x86 of the universal APK: RN's Gradle plugin marks them pickFirst, which
+            // wins over excludes (~4 MB). 32-bit x86 devices are not supported either way.
             excludes += ['**/x86/*.so']
         }
         // minSdk >= 28 stores dex uncompressed by default (~60 MB here): compress it for download size.

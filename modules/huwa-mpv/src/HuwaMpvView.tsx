@@ -45,6 +45,11 @@ export type MpvViewHandle = {
   setSubtitleTrack(id: number): Promise<void>;
   setFill(fill: boolean): Promise<void>;
   stop(): Promise<void>;
+  /**
+   * Preferred audio languages (mpv `alang`, e.g. "ja,jpn"), applied to every file opened next.
+   * Missing on builds older than this API.
+   */
+  setAudioLanguages?(langs: string): Promise<void>;
   /** `sub-…` option (subtitle look and delay). Missing on builds older than this API. */
   setSubtitleOption?(name: string, value: string): Promise<void>;
   /** Adds and selects a local subtitle file (libass), for the current file only. */

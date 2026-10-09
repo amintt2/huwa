@@ -138,6 +138,9 @@ export function createVideoPlayer(source) {
 export const mpvViews = [];
 
 /** mpv view handle; `host` receives the file events (HybridPlayer.mpv), set by the surface. */
+/** mpv track list (MpvTrack[]) a file reports when it loads, by URL (default: none). */
+export const fileTracks = new Map();
+
 export class FakeMpvView {
   constructor() {
     this.file = null;
@@ -170,7 +173,7 @@ export class FakeMpvView {
     this.paused = !autoplay;
     setTimeout(() => {
       if (this.destroyed || seq !== this.loadSeq) return;
-      this.host?.onLoaded({ nativeEvent: { duration: 1440, tracks: '[]', videoCodec: 'hevc', hwdec: 'videotoolbox' } });
+      this.host?.onLoaded({ nativeEvent: { duration: 1440, tracks: JSON.stringify(fileTracks.get(url) ?? []), videoCodec: 'hevc', hwdec: 'videotoolbox' } });
       this.host?.onProgress({ nativeEvent: { time: 0, duration: 1440, buffered: 5, paused: this.paused } });
     }, delayOf(url));
     return this.call('load', url, autoplay);
@@ -195,6 +198,7 @@ export class FakeMpvView {
   setSpeed(v) { return this.call('setSpeed', v); }
   setVolume(v) { return this.call('setVolume', v); }
   setAudioTrack(id) { return this.call('setAudioTrack', id); }
+  setAudioLanguages(l) { return this.call('setAudioLanguages', l); }
   setSubtitleTrack(id) { return this.call('setSubtitleTrack', id); }
   setFill(f) { return this.call('setFill', f); }
   setSubtitleOption(k, v) { return this.call('setSubtitleOption', k, v); }
@@ -204,6 +208,7 @@ export class FakeMpvView {
 
 export function resetMedia() {
   loadDelays.clear();
+  fileTracks.clear();
   timing.clearMs = 1;
   videoPlayers.length = 0;
   mpvViews.length = 0;
