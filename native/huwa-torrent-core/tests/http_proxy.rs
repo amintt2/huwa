@@ -410,7 +410,10 @@ fn release_stops_every_download_and_memory_is_bounded() {
     std::thread::sleep(Duration::from_millis(600));
     let st = status(&px, id);
     let fetched = st["bytesFetched"].as_u64().unwrap();
-    assert!(fetched <= 3 * MIB + MIB + TAIL_BYTES + 512 * 1024, "fetched {fetched}");
+    // The reader's position is what the proxy wrote to its socket: the 3 MiB read plus what the
+    // kernel's loopback buffers absorbed before the close (several MiB on Linux CI runners).
+    let served = st["bytesServed"].as_u64().unwrap().max(3 * MIB);
+    assert!(fetched <= served + MIB + TAIL_BYTES + 512 * 1024, "fetched {fetched}, served {served}");
     assert!(st["retainedBytes"].as_u64().unwrap() <= 8 * MIB, "{st}");
     // Released: nothing more comes from upstream.
     px.dispatch("httpRelease", json!({ "id": id })).unwrap();
