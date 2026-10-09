@@ -337,7 +337,10 @@ fn resume_target_is_fetched_at_open() {
 #[test]
 fn server_without_range_falls_back_to_the_original_url() {
     let data = data_of((8 * MIB) as usize);
-    let up = Upstream::start(data.clone(), Mode { no_range: true, ..Default::default() });
+    // Paced (40 MB/s per answer): unpaced, `sent` also counts what the kernel's loopback socket
+    // buffers absorb before the cut is seen (several MiB on Linux CI runners). An answer that is
+    // not cut still sends its whole 8 MiB in ~0.2 s, far above the bound below.
+    let up = Upstream::start(data.clone(), Mode { no_range: true, rate: 40e6, ..Default::default() });
     let px = proxy();
     let original = url_of(&up, "n.mkv");
     let o = open(&px, json!({ "url": original, "prefetch": {} }));
