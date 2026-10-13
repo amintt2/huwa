@@ -295,6 +295,8 @@ export function Player({
   const [flash, setFlash] = useState<{ side: 'left' | 'right'; n: number } | null>(null);
   const [skipped, setSkipped] = useState<string[]>([]);
   const [ended, setEnded] = useState(false);
+  /** The current source has shown a picture (see `hasPicture`): ends and next-episode offers need one. */
+  const pictureRef = useRef(false);
   const [countdown, setCountdown] = useState<number | null>(null);
 
   const { isPlaying } = useEvent(player, 'playingChange', { isPlaying: player.playing });
@@ -501,7 +503,7 @@ export function Player({
     const o = segRef.current.outro;
     const armAt = o ? o.start : (player.duration || Infinity) - 30;
     if (segRef.current.countdownFired && currentTime < armAt - 5) segRef.current.countdownFired = false;
-    if (o && !segRef.current.countdownFired && currentTime >= o.start && currentTime < o.end && cb.current.next && getPrefs().autoNext) {
+    if (o && pictureRef.current && !segRef.current.countdownFired && currentTime >= o.start && currentTime < o.end && cb.current.next && getPrefs().autoNext) {
       segRef.current.countdownFired = true;
       setCountdown(AUTO_NEXT_SECONDS);
       setControls(false);
@@ -512,6 +514,11 @@ export function Player({
   });
 
   useEventListener(player, 'playToEnd', () => {
+    // Some engines (ExoPlayer on Android) report an end for a source that never played (failed or
+    // still opening): only a real end, near the duration after a picture, ends the episode.
+    const d = player.duration;
+    const at = lastPos.current.t;
+    if (!pictureRef.current || !(d > 60) || at < d - 120) return;
     setEnded(true);
     setControls(true);
     cb.current.onEnd?.();
@@ -705,6 +712,24 @@ export function Player({
     setFlash((f) => ({ side, n: f?.side === side ? f.n + 1 : 1 }));
   };
 
+  // ---------- subtitles only over a picture ----------
+  // Before the current file's first frame (loading, a source that never shows), cues timed from 0
+  // would read as nonsense over a black screen: subtitles wait for a picture of this source.
+  const uri = source?.uri ?? null;
+  const uriRef = useRef(uri);
+  useEffect(() => {
+    uriRef.current = uri;
+  }, [uri]);
+  const [frameFor, setFrameFor] = useState<string | null>(null);
+  useEffect(() => player.onMpvFirstFrame(() => setFrameFor(uriRef.current)), [player]);
+  // A handed-over source (warm hidden player) may have drawn its first frame before it became
+  // current: playback moving on it counts as a picture too.
+  if (uri && frameFor !== uri && isPlaying && time.t > 0.2 && status === 'readyToPlay') setFrameFor(uri);
+  const hasPicture = !!uri && frameFor === uri;
+  useEffect(() => {
+    pictureRef.current = hasPicture;
+  }, [hasPicture]);
+
   // ---------- skip buttons ----------
   const t = time.t;
   const inSeg = (s?: Segment) => !!s && t >= s.start && t < s.end - 1;
@@ -723,7 +748,7 @@ export function Player({
   // (state adjusted during render, React's "derive from changing input" pattern).
   if (skipId && (skipSeen?.id !== skipId || t < skipSeen.at - 1)) setSkipSeen({ id: skipId, at: t });
   const skipVisible = !!skipBtn && (controls || (skipSeen?.id === skipId && t - skipSeen.at < 5));
-  const showNext = !!next && !ended && countdown === null && duration > 60 && (outro ? t >= outro.start : duration - t <= NEXT_WINDOW);
+  const showNext = !!next && hasPicture && !ended && countdown === null && duration > 60 && (outro ? t >= outro.start : duration - t <= NEXT_WINDOW);
   const markers = segments.filter((s) => s.kind !== 'recap');
   const commentMarks = useMemo(() => timedComments.map((c) => ({ start: c.timestamp, end: c.end })), [timedComments]);
 
@@ -732,20 +757,6 @@ export function Player({
     ? timedComments.filter((c) => t >= c.timestamp && t < Math.max(c.end ?? 0, c.timestamp + LIVE_COMMENT_SECONDS)).slice(-3)
     : [];
 
-  // ---------- subtitles only over a picture ----------
-  // Before the current file's first frame (loading, a source that never shows), cues timed from 0
-  // would read as nonsense over a black screen: subtitles wait for a picture of this source.
-  const uri = source?.uri ?? null;
-  const uriRef = useRef(uri);
-  useEffect(() => {
-    uriRef.current = uri;
-  }, [uri]);
-  const [frameFor, setFrameFor] = useState<string | null>(null);
-  useEffect(() => player.onMpvFirstFrame(() => setFrameFor(uriRef.current)), [player]);
-  // A handed-over source (warm hidden player) may have drawn its first frame before it became
-  // current: playback moving on it counts as a picture too.
-  if (uri && frameFor !== uri && isPlaying && time.t > 0.2 && status === 'readyToPlay') setFrameFor(uri);
-  const hasPicture = !!uri && frameFor === uri;
 
   const pipOk = Platform.OS !== 'web' && isPictureInPictureSupported();
   const loading = !!source?.uri && (status === 'loading' || (status === 'idle' && !ended));
