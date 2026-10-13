@@ -2,7 +2,7 @@
   "expo": {
     "name": "Huwa",
     "slug": "huwa",
-    "version": "1.0.1",
+    "version": "1.0.2",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
     "scheme": "huwa",
@@ -34,7 +34,7 @@
         ]
       },
       "appleTeamId": "XPB668GFX4",
-      "buildNumber": "3"
+      "buildNumber": "4"
     },
     "android": {
       "adaptiveIcon": {
@@ -45,7 +45,7 @@
       },
       "predictiveBackGestureEnabled": false,
       "package": "com.amintt2.huwa",
-      "versionCode": 3
+      "versionCode": 4
     },
     "web": {
       "output": "static",

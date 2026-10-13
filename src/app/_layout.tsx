@@ -27,6 +27,7 @@ import { PaperbackHost } from '@/manga-ext/PaperbackHost';
 import { CloudflareSheet } from '@/components/cloudflare-sheet';
 import { hydrateMangaExt } from '@/manga-ext/registry';
 import { useEpisodeNotifications } from '@/notifications/episodes';
+import { useApkUpdateCheck } from '@/updates/check';
 import { useMe, useP2PStatus } from '@/p2p/hooks';
 import { canCarryAccount, consumePasskeyOffer, usePasskeyOfferPending, usePasskeyRecord } from '@/p2p/passkey';
 import { useJournalSync } from '@/p2p/sync';
@@ -245,5 +246,7 @@ function PendingLink() {
 /** Schedules new-episode notifications and handles taps (needs the navigator mounted). */
 function EpisodeNotifications() {
   useEpisodeNotifications();
+  // Android sideload: offer a newer APK from GitHub Releases.
+  useApkUpdateCheck(true);
   return null;
 }
