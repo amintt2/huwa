@@ -1,0 +1,42 @@
+# documentation: https://github.com/amintt2/huwa/blob/huwa-v1/docs/SELF_HOSTING.md
+# slogan: Self-hosted Huwa: web app, torrent streaming without seeding, HLS transcoding, P2P relay.
+# tags: anime,manga,streaming,torrent,stremio,p2p,transcoding
+# logo: svgs/huwa.svg
+# port: 8080
+#
+# Coolify one-click service template (docs/SELF_HOSTING.md § Coolify). Coolify generates
+# SERVICE_FQDN_HUWA_8080 (the public https URL routed to port 8080) and terminates TLS in
+# Traefik, which sets X-Forwarded-For: HUWA_TRUST_PROXY=1 is right here.
+
+services:
+  huwa:
+    image: ghcr.io/amintt2/huwa:latest
+    environment:
+      - SERVICE_FQDN_HUWA_8080
+      - HUWA_PUBLIC_URL=${SERVICE_FQDN_HUWA}
+      - HUWA_TRUST_PROXY=1
+      - HUWA_ALLOWED_ORIGINS=${HUWA_ALLOWED_ORIGINS:-self,https://huwa.mciut.fr}
+      - HUWA_CACHE_MAX_GB=${HUWA_CACHE_MAX_GB:-20}
+      - HUWA_INSTANCE_NAME=${HUWA_INSTANCE_NAME:-}
+      - HUWA_OPERATOR_CONTACT=${HUWA_OPERATOR_CONTACT:-}
+      - HUWA_STREMIO_COMPAT=${HUWA_STREMIO_COMPAT:-0}
+      - HUWA_HWACCEL=${HUWA_HWACCEL:-auto}
+      - HUWA_TRANSCODES_MAX=${HUWA_TRANSCODES_MAX:-1}
+      - HUWA_SESSIONS_PER_IP=${HUWA_SESSIONS_PER_IP:-5}
+      - HUWA_MAX_SESSIONS=${HUWA_MAX_SESSIONS:-50}
+      - HUWA_DOWNLOAD_LIMIT_MBPS=${HUWA_DOWNLOAD_LIMIT_MBPS:-0}
+      - HUWA_P2P_GATEWAY=${HUWA_P2P_GATEWAY:-1}
+      - HUWA_RELAY=${HUWA_RELAY:-1}
+      - HUWA_LOG=${HUWA_LOG:-info}
+    volumes:
+      - huwa-data:/data
+      - huwa-cache:/cache
+    ports:
+      # Optional: the blind-peer relay's DHT port (open it in the firewall to help the network).
+      - "49737:49737/udp"
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/huwa-server", "--healthcheck"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
