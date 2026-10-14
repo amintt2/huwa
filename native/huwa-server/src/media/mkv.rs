@@ -285,9 +285,13 @@ pub fn copy_segments(keyframes: &[f64], duration: f64, target: f64) -> Vec<(f64,
 }
 
 /// Fixed-length segments (transcode: keyframes are forced on the grid).
+/// A remainder under half a second joins the last segment (no near-empty final segment).
 pub fn grid_segments(duration: f64, target: f64) -> Vec<(f64, f64)> {
-    let n = (duration / target).ceil().max(1.0) as usize;
-    (0..n).map(|i| (i as f64 * target, (duration - i as f64 * target).min(target).max(0.001))).collect()
+    let mut n = (duration / target).ceil().max(1.0) as usize;
+    if n > 1 && duration - (n - 1) as f64 * target < 0.5 {
+        n -= 1;
+    }
+    (0..n).map(|i| (i as f64 * target, if i + 1 == n { (duration - i as f64 * target).max(0.001) } else { target })).collect()
 }
 
 #[cfg(test)]
@@ -364,6 +368,9 @@ mod tests {
         assert!((s.last().unwrap().1 - 10.0).abs() < 1e-9);
         let g = grid_segments(10.0, 4.0);
         assert_eq!(g, vec![(0.0, 4.0), (4.0, 4.0), (8.0, 2.0)]);
+        let g = grid_segments(240.02, 4.0);
+        assert_eq!(g.len(), 60);
+        assert!((g[59].1 - 4.02).abs() < 1e-9);
         assert!(parse_head(b"not mkv").is_none());
     }
 }

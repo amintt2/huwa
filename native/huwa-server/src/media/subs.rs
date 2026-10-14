@@ -209,7 +209,7 @@ impl Subs {
     }
 
     fn args(&self, run: u64, start: f64) -> Vec<String> {
-        let mut a: Vec<String> = ["-hide_banner", "-nostdin", "-nostats", "-loglevel", "error", "-y", "-protocol_whitelist", "http,tcp", "-rw_timeout", "120000000"].map(String::from).to_vec();
+        let mut a: Vec<String> = ["-hide_banner", "-nostdin", "-nostats", "-loglevel", "error", "-y", "-protocol_whitelist", "http,tcp", "-format_whitelist", crate::engine_api::FORMAT_WHITELIST, "-rw_timeout", "120000000"].map(String::from).to_vec();
         // Source timestamps as they are (absolute seek, no shift): sidecar times are the file's.
         a.extend(["-seek_timestamp".to_string(), "1".to_string(), "-ss".to_string(), format!("{start:.3}")]);
         a.extend(["-copyts", "-i"].map(String::from));

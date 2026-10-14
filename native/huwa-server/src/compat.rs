@@ -190,9 +190,13 @@ async fn ensure_started(st: &Arc<AppState>, eng: &Arc<EngineParts>, hex: &str, s
     if let Some(f) = file {
         args["fileIdx"] = json!(f);
     }
-    let req: huwa_torrent_core::engine::StartStreamRequest = serde_json::from_value(args).map_err(|e| ApiError::bad_request(e.to_string()))?;
-    let engine = eng.engine.clone();
-    engine_api::blocking(move || Ok(engine.start_stream_for(req, COMPAT_SESSION)?)).await?;
+    let mut req: huwa_torrent_core::engine::StartStreamRequest = serde_json::from_value(args).map_err(|e| ApiError::bad_request(e.to_string()))?;
+    let (engine, parts) = (eng.engine.clone(), eng.clone());
+    engine_api::blocking(move || {
+        req.sources = parts.filter_sources(std::mem::take(&mut req.sources));
+        Ok(engine.start_stream_for(req, COMPAT_SESSION)?)
+    })
+    .await?;
     st.sessions.hold(&s, hex);
     Ok(())
 }

@@ -1131,6 +1131,15 @@ impl Engine {
         self.focus.read().get(owner).cloned()
     }
 
+    /// `owner` no longer focuses `hex` (it released a torrent other owners still hold): the others'
+    /// focus is untouched.
+    pub fn drop_focus_of(&self, owner: &str, hex: &str) {
+        let mut f = self.focus.write();
+        if f.get(owner).map(String::as_str) == Some(hex) {
+            f.remove(owner);
+        }
+    }
+
     /// `owner` (a server session that went away) no longer focuses anything: its torrent is parked
     /// by the monitor once its responses are gone, unless another owner focuses it.
     pub fn drop_focus_owner(&self, owner: &str) {

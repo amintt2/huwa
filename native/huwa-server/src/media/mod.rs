@@ -59,6 +59,8 @@ pub const MEDIA_IDLE: Duration = Duration::from_secs(30 * 60);
 pub const SUBS_IDLE: Duration = Duration::from_secs(5 * 60);
 /// ffprobe results are reused this long (same torrent file or proxy session).
 pub const PROBE_CACHE: Duration = Duration::from_secs(15 * 60);
+/// ffprobe processes at a time, server-wide.
+pub const MAX_PROBES: usize = 4;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Source {
@@ -150,6 +152,12 @@ pub struct Media {
     pub encoder: RwLock<Encoder>,
     sessions: RwLock<HashMap<String, Arc<MediaSession>>>,
     cache: Mutex<HashMap<String, (Instant, MediaInfo, Option<Vec<f64>>)>>,
+    /// Running HLS jobs (transcode quotas).
+    pub jobs: Arc<hls::Jobs>,
+    /// One ffprobe per source at a time (concurrent probes of a source wait for the first).
+    probing: Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>,
+    /// ffprobe processes server-wide.
+    probe_slots: tokio::sync::Semaphore,
     pub transcodes_max: usize,
     pub transcodes_per_session: usize,
     http: reqwest::Client,
@@ -168,9 +176,13 @@ impl Media {
             encoder: RwLock::new(Encoder::Software),
             sessions: Default::default(),
             cache: Default::default(),
+            jobs: Default::default(),
+            probing: Default::default(),
+            probe_slots: tokio::sync::Semaphore::new(MAX_PROBES),
             transcodes_max: cfg.transcodes_max,
             transcodes_per_session: cfg.transcodes_per_session,
-            http: reqwest::Client::builder().no_proxy().timeout(Duration::from_secs(120)).build()?,
+            // Loopback only, never redirected (the proxy's 302 fallback is refused anyway).
+            http: reqwest::Client::builder().no_proxy().redirect(reqwest::redirect::Policy::none()).timeout(Duration::from_secs(120)).build()?,
         })
     }
 
@@ -180,37 +192,13 @@ impl Media {
 
     /// Running ffmpeg HLS jobs and, among them, video transcodes.
     pub fn running(&self) -> (usize, usize) {
-        let (mut jobs, mut tc) = (0, 0);
-        for ms in self.sessions.read().values() {
-            for v in ms.variants.lock().values() {
-                if v.running() {
-                    jobs += 1;
-                    if v.is_transcode() {
-                        tc += 1;
-                    }
-                }
-            }
-        }
-        (jobs, tc)
+        self.jobs.counts()
     }
 
-    /// Room for one more transcode for `owner` (the variants of `except` do not count: a
-    /// restart replaces its own job).
-    pub fn transcode_room(&self, owner: &str, except: &str) -> Result<(), ApiError> {
-        let (mut total, mut mine) = (0, 0);
-        for ms in self.sessions.read().values() {
-            if ms.id == except {
-                continue;
-            }
-            for v in ms.variants.lock().values() {
-                if v.is_transcode() && v.running() {
-                    total += 1;
-                    if ms.owner == owner {
-                        mine += 1;
-                    }
-                }
-            }
-        }
+    /// Room for one more transcode for `owner` (the job `except_uid` does not count: a restart
+    /// replaces its own job).
+    pub fn transcode_room(&self, owner: &str, except_uid: &str) -> Result<(), ApiError> {
+        let (total, mine) = self.jobs.transcodes(owner, except_uid);
         if self.transcodes_per_session > 0 && mine >= self.transcodes_per_session {
             return Err(ApiError::transcode_quota(self.transcodes_per_session, "session"));
         }
@@ -247,11 +235,27 @@ impl Media {
     }
 
     /// The media session of `session` for `source` (reused, or probed now).
+    fn existing(&self, session: &Session, source: &Source) -> Option<Arc<MediaSession>> {
+        self.sessions
+            .read()
+            .values()
+            .find(|m| m.owner == session.id && (&m.source == source || matches!((source, &m.source), (Source::Torrent { hex: a, file: None }, Source::Torrent { hex: b, .. }) if a == b)))
+            .cloned()
+    }
+
     pub async fn open(&self, st: &AppState, eng: &EngineParts, session: &Session, mut source: Source) -> ApiResult<Arc<MediaSession>> {
-        if let Some(ms) = self.sessions.read().values().find(|m| m.owner == session.id && (m.source == source || matches!((&source, &m.source), (Source::Torrent { hex: a, file: None }, Source::Torrent { hex: b, .. }) if a == b))).cloned() {
+        if let Some(ms) = self.existing(session, &source) {
             ms.touch();
             return Ok(ms);
         }
+        // One probe per source at a time; at most MAX_PROBES ffprobe processes.
+        let lock = self.probing.lock().entry(source.cache_key()).or_default().clone();
+        let _one = lock.lock().await;
+        if let Some(ms) = self.existing(session, &source) {
+            ms.touch();
+            return Ok(ms);
+        }
+        let _slot = self.probe_slots.acquire().await.map_err(|_| ApiError::internal("shutting down"))?;
         let input_for = |s: &Source| match s {
             Source::Torrent { hex, file } => eng.internal_torrent_url(hex, *file),
             Source::Http { id } => eng.internal_http_url(*id),
@@ -310,17 +314,23 @@ impl Media {
     pub fn variant_for(&self, ms: &MediaSession, plan: Plan, start: Option<f64>) -> Arc<Variant> {
         let key = plan.key();
         let mut vs = ms.variants.lock();
+        // One live variant per media: the others' jobs stop (their files stay until idle).
+        for (k, other) in vs.iter() {
+            if k != &key && other.running() {
+                other.stop(false);
+            }
+        }
         if let Some(v) = vs.get(&key) {
             return v.clone();
-        }
-        for other in vs.values() {
-            other.stop(false);
         }
         let segments = match (&plan.mode, &ms.keyframes) {
             (Mode::Remux, Some(k)) | (Mode::Direct, Some(k)) => mkv::copy_segments(k, ms.info.duration, hls::SEGMENT_SECS),
             _ => mkv::grid_segments(ms.info.duration, hls::SEGMENT_SECS),
         };
-        let v = Arc::new(Variant::new(key.clone(), plan, segments, ms.dir.join(&key), ms.input.clone(), ms.owner.clone(), start));
+        let copy = plan.mode != Mode::Transcode && plan.video_copy;
+        let first_key = if copy { ms.keyframes.as_ref().and_then(|k| k.first().copied()).unwrap_or(0.0) } else { 0.0 };
+        let uid = format!("{}/{key}", ms.id);
+        let v = Arc::new(Variant::new(uid, self.jobs.clone(), first_key, key.clone(), plan, segments, ms.dir.join(&key), ms.input.clone(), ms.owner.clone(), start));
         vs.insert(key, v.clone());
         v
     }
@@ -332,6 +342,7 @@ impl Media {
     /// Janitor pass: idle variants stopped (files deleted), idle subtitle runs stopped, idle or
     /// orphaned media sessions closed.
     pub fn sweep(&self, alive: &dyn Fn(&str) -> bool) {
+        self.probing.lock().retain(|_, l| Arc::strong_count(l) > 1);
         let all: Vec<Arc<MediaSession>> = self.sessions.read().values().cloned().collect();
         for ms in all {
             if !alive(&ms.owner) || ms.idle_for() >= MEDIA_IDLE {
@@ -384,7 +395,7 @@ impl Media {
         let atts: Vec<_> = ms.info.of_kind(Kind::Attachment).cloned().collect();
         let dir = ms.dir.join("fonts");
         let _ = std::fs::create_dir_all(&dir);
-        let mut args: Vec<String> = ["-hide_banner", "-nostdin", "-loglevel", "error", "-y", "-protocol_whitelist", "http,tcp", "-rw_timeout", "60000000"].map(String::from).to_vec();
+        let mut args: Vec<String> = ["-hide_banner", "-nostdin", "-loglevel", "error", "-y", "-protocol_whitelist", "http,tcp", "-format_whitelist", crate::engine_api::FORMAT_WHITELIST, "-rw_timeout", "60000000"].map(String::from).to_vec();
         for a in &atts {
             // Explicit output names: the attachment's own filename is never used as a path.
             args.extend([format!("-dump_attachment:{}", a.index), dir.join(format!("{}.bin", a.track)).display().to_string()]);
@@ -634,7 +645,7 @@ pub fn master(st: &AppState, media: &Media, session: &Session, ms: &MediaSession
         return Err(ApiError::new(StatusCode::CONFLICT, "transcode_disabled", "this server does not transcode"));
     }
     if plan.mode == Mode::Transcode && !ms.variant(&plan.key()).is_some_and(|v| v.running()) {
-        if let Err(e) = media.transcode_room(&ms.owner, &ms.id) {
+        if let Err(e) = media.transcode_room(&ms.owner, &format!("{}/{}", ms.id, plan.key())) {
             inc(&st.metrics.quota_refusals);
             return Err(e);
         }
@@ -655,8 +666,8 @@ pub async fn variant_file(st: &AppState, media: &Media, session: &Arc<Session>, 
     }
     let launch = media.launch(ms);
     let owner = ms.owner.clone();
-    let mid = ms.id.clone();
-    let quota = || media.transcode_room(&owner, &mid);
+    let uid = v.uid.clone();
+    let quota = || media.transcode_room(&owner, &uid);
     if file == "index.m3u8" {
         v.touch();
         return Ok(playlist_response(v.playlist()));
@@ -701,6 +712,10 @@ fn media_session(st: &AppState, token: &str, mid: &str) -> ApiResult<(Arc<Sessio
     let media = st.media.as_ref().ok_or_else(|| ApiError::not_found("no such route"))?;
     let session = st.sessions.verify_media(token, &format!("m-{mid}"))?;
     let ms = media.get(mid).filter(|m| m.owner == session.id).ok_or_else(|| ApiError::not_found("unknown media"))?;
+    // The session must still hold the source (not released / removed since the probe).
+    if !ms.source.owned_by(&session) {
+        return Err(ApiError::not_found("unknown media"));
+    }
     Ok((session, ms))
 }
 
@@ -769,8 +784,9 @@ fn font_type(name: Option<&str>, mime: Option<&str>) -> &'static str {
 }
 
 pub async fn fonts_list_route(State(st): State<Arc<AppState>>, Path((token, mid)): Path<(String, String)>) -> ApiResult<Response> {
-    let (session, ms) = media_session(&st, &token, &mid)?;
-    let base = media_prefix(&st, &session, &ms);
+    let (_, ms) = media_session(&st, &token, &mid)?;
+    // The presented token, not a fresh one: a media URL never renews itself.
+    let base = st.cfg.media_base(&token);
     let list: Vec<Value> = ms
         .info
         .of_kind(Kind::Attachment)

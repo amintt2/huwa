@@ -202,7 +202,8 @@ pub async fn run(ffprobe: &Path, url: &str) -> Result<MediaInfo> {
     let out = tokio::time::timeout(
         Duration::from_secs(150),
         tokio::process::Command::new(ffprobe)
-            .args(["-v", "error", "-hide_banner", "-protocol_whitelist", "http,tcp", "-rw_timeout", "120000000", "-probesize", "10000000", "-analyzeduration", "10000000"])
+            .args(["-v", "error", "-hide_banner", "-protocol_whitelist", "http,tcp", "-format_whitelist", crate::engine_api::FORMAT_WHITELIST])
+            .args(["-rw_timeout", "120000000", "-probesize", "10000000", "-analyzeduration", "10000000"])
             .args(["-show_format", "-show_streams", "-of", "json", "-i", url])
             .stdin(std::process::Stdio::null())
             .kill_on_drop(true)
@@ -216,8 +217,15 @@ pub async fn run(ffprobe: &Path, url: &str) -> Result<MediaInfo> {
         return Err(anyhow!("ffprobe failed: {}", err.lines().last().unwrap_or("no output").replace(url, "<media>")));
     }
     let v: Value = serde_json::from_slice(&out.stdout).context("ffprobe json")?;
-    parse(&v)
+    let info = parse(&v)?;
+    if info.duration > MAX_DURATION {
+        return Err(anyhow!("duration {:.0} s is beyond what this server plays ({MAX_DURATION} s)", info.duration));
+    }
+    Ok(info)
 }
+
+/// Longest media accepted (playlists are built up front: this bounds them).
+pub const MAX_DURATION: f64 = 12.0 * 3600.0;
 
 #[cfg(test)]
 mod tests {

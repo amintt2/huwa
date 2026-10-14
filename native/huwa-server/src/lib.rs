@@ -228,17 +228,27 @@ impl App {
                 n += 1;
                 let Some(st) = weak.upgrade() else { return };
                 if n % 6 == 0 {
-                    let (dropped, freed) = st.sessions.sweep();
+                    let dropped = st.sessions.sweep();
                     #[cfg(feature = "engine")]
-                    if let Some(e) = &st.eng {
-                        for sid in &dropped {
-                            e.engine.drop_focus_owner(sid);
-                        }
-                        for hex in &freed {
-                            let _ = e.engine.release(hex, None);
-                        }
+                    if let Some(e) = st.eng.clone() {
+                        // Blocking engine / proxy calls: off the async workers.
+                        let _ = tokio::task::spawn_blocking(move || {
+                            for d in &dropped {
+                                e.engine.drop_focus_owner(&d.sid);
+                                for hex in &d.freed {
+                                    let _ = e.engine.release(hex, None);
+                                }
+                                for (id, refs) in &d.http {
+                                    for _ in 0..*refs {
+                                        let _ = e.proxy.dispatch("httpRelease", serde_json::json!({ "id": id }));
+                                    }
+                                }
+                            }
+                        })
+                        .await;
                     }
-                    let _ = (&dropped, &freed);
+                    #[cfg(not(feature = "engine"))]
+                    let _ = dropped;
                 }
                 #[cfg(feature = "engine")]
                 if let Some(m) = &st.media {

@@ -136,7 +136,7 @@ pub fn ffmpeg_args(plan: &Plan, input: &str, start: f64, dir: &Path, run: u64, e
         a.extend(encoder.input_args());
     }
     // Input: the internal loopback listener only.
-    a.extend(["-protocol_whitelist", "http,tcp", "-rw_timeout", "120000000"].map(String::from));
+    a.extend(["-protocol_whitelist", "http,tcp", "-format_whitelist", crate::engine_api::FORMAT_WHITELIST, "-rw_timeout", "120000000"].map(String::from));
     // Always an explicit seek, as an absolute timestamp (`-seek_timestamp`: older ffmpeg adds the
     // file's start time, often slightly negative, and lands one GOP early). Copy: just past the
     // keyframe (rounding must never land on the previous one).
@@ -227,7 +227,49 @@ pub struct Launch {
     pub video_height: Option<u32>,
 }
 
+/// Running HLS jobs, server-wide: what the transcode quotas count. A leaf lock (never held while
+/// taking another), so quota checks cannot deadlock with variant state.
+#[derive(Default)]
+pub struct Jobs {
+    map: Mutex<HashMap<String, (String, bool)>>,
+}
+
+impl Jobs {
+    fn set(&self, uid: &str, owner: &str, transcode: bool) {
+        self.map.lock().insert(uid.to_string(), (owner.to_string(), transcode));
+    }
+
+    fn remove(&self, uid: &str) {
+        self.map.lock().remove(uid);
+    }
+
+    /// `(transcodes server-wide, transcodes of owner)`, the job `except` left out.
+    pub fn transcodes(&self, owner: &str, except: &str) -> (usize, usize) {
+        let map = self.map.lock();
+        let it = map.iter().filter(|(uid, (_, t))| *t && uid.as_str() != except);
+        let (mut total, mut mine) = (0, 0);
+        for (_, (o, _)) in it {
+            total += 1;
+            if o == owner {
+                mine += 1;
+            }
+        }
+        (total, mine)
+    }
+
+    /// `(jobs, transcodes)` running.
+    pub fn counts(&self) -> (usize, usize) {
+        let map = self.map.lock();
+        (map.len(), map.values().filter(|(_, t)| *t).count())
+    }
+}
+
 pub struct Variant {
+    /// `<media id>/<key>`: the job's name in `Jobs`.
+    pub uid: String,
+    jobs: Arc<Jobs>,
+    /// First keyframe (copy) or 0: where a run started at segment 0 begins.
+    pub first_key: f64,
     pub key: String,
     pub plan: Plan,
     pub segments: Vec<(f64, f64)>,
@@ -252,9 +294,13 @@ pub enum WaitError {
 }
 
 impl Variant {
-    pub fn new(key: String, plan: Plan, segments: Vec<(f64, f64)>, dir: PathBuf, input: String, owner: String, start: Option<f64>) -> Self {
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(uid: String, jobs: Arc<Jobs>, first_key: f64, key: String, plan: Plan, segments: Vec<(f64, f64)>, dir: PathBuf, input: String, owner: String, start: Option<f64>) -> Self {
         let hint = start.map(|s| segments.iter().rposition(|(st, _)| *st <= s + EPS).unwrap_or(0)).unwrap_or(0);
         Self {
+            uid,
+            jobs,
+            first_key,
             key,
             plan,
             segments,
@@ -310,6 +356,7 @@ impl Variant {
         if let Some(r) = s.run.take() {
             r.task.abort();
         }
+        self.jobs.remove(&self.uid);
         if delete {
             s.done.clear();
             s.init = None;
@@ -332,6 +379,17 @@ impl Variant {
             if had_run {
                 self.restarts.fetch_add(1, Ordering::Relaxed);
             }
+            // The killed run's files that no finished segment uses (seek churn).
+            let keep: std::collections::HashSet<&PathBuf> = s.done.values().flatten().collect();
+            let prefix = format!("r{}-", r.id);
+            if let Ok(rd) = std::fs::read_dir(&self.dir) {
+                for e in rd.flatten() {
+                    let p = e.path();
+                    if e.file_name().to_string_lossy().starts_with(&prefix) && !keep.contains(&p) {
+                        let _ = std::fs::remove_file(&p);
+                    }
+                }
+            }
         }
         std::fs::create_dir_all(&self.dir).map_err(|e| WaitError::Failed(format!("hls dir: {e}")))?;
         let id = s.next_run;
@@ -352,6 +410,7 @@ impl Variant {
         let pid = child.id().unwrap_or(0);
         self.jobs_started.fetch_add(1, Ordering::Relaxed);
         info!(variant = %self.key, run = id, seg = k, mode = ?self.plan.mode, "hls job started");
+        self.jobs.set(&self.uid, &self.owner, self.is_transcode());
         let task = tokio::spawn(watch(self.clone(), id, k, child));
         s.run = Some(Run { id, start_seg: k, frontier: k, pid, exited: false, paused: false, task });
         Ok(())
@@ -513,6 +572,7 @@ async fn watch(v: Arc<Variant>, run: u64, start_seg: usize, mut child: tokio::pr
                     if let Some(r) = s.run.as_mut() {
                         r.exited = true;
                     }
+                    v.jobs.remove(&v.uid);
                 }
                 drop(s);
                 v.notify.notify_waiters();
@@ -534,7 +594,8 @@ async fn watch(v: Arc<Variant>, run: u64, start_seg: usize, mut child: tokio::pr
         // audio priming delay, Cues rounding): measured on the run's first fragment, and only
         // when small (a seek that landed a GOP early keeps its extra fragment in the first
         // segment instead).
-        let shift = frags.first().map(|(t, _)| t - v.segments[start_seg].0).filter(|d| d.abs() < MAX_SHIFT).unwrap_or(0.0);
+        let expected = if start_seg == 0 { v.first_key } else { v.segments[start_seg].0 };
+        let shift = frags.first().map(|(t, _)| t - expected).filter(|d| d.abs() < MAX_SHIFT).unwrap_or(0.0);
         let mut newly = Vec::new();
         while frontier < v.segments.len() {
             let end = v.segments.get(frontier + 1).map_or(f64::INFINITY, |s| s.0 + shift);
@@ -575,6 +636,7 @@ async fn watch(v: Arc<Variant>, run: u64, start_seg: usize, mut child: tokio::pr
                 if let Some(r) = s.run.as_mut() {
                     r.exited = true;
                 }
+                v.jobs.remove(&v.uid);
             }
         }
         v.notify.notify_waiters();
@@ -626,7 +688,7 @@ mod tests {
 
     #[test]
     fn playlist_and_hint() {
-        let v = Variant::new("k".into(), plan(Mode::Remux, true), vec![(0.0, 4.2), (4.2, 5.0), (9.2, 3.0)], "/tmp/x".into(), "x".into(), "o".into(), Some(10.0));
+        let v = Variant::new("m/k".into(), Default::default(), 0.0, "k".into(), plan(Mode::Remux, true), vec![(0.0, 4.2), (4.2, 5.0), (9.2, 3.0)], "/tmp/x".into(), "x".into(), "o".into(), Some(10.0));
         let p = v.playlist();
         assert!(p.starts_with("#EXTM3U\n#EXT-X-VERSION:7\n#EXT-X-TARGETDURATION:5\n"));
         assert!(p.contains("#EXT-X-MAP:URI=\"init.mp4\"") && p.contains("#EXTINF:5.000000,\n1.m4s\n") && p.ends_with("#EXT-X-ENDLIST\n"));

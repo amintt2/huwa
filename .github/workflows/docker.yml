@@ -252,11 +252,15 @@ jobs:
       - name: Image complète
         run: |
           set -x
-          native/huwa-server/target/release/examples/seeder "$RUNNER_TEMP"/media/h264_aac.mkv "$RUNNER_TEMP"/media/hi10p_ac3.mkv "$RUNNER_TEMP"/media/hevc_ac3.mkv > "$RUNNER_TEMP/seeds.jsonl" 2> "$RUNNER_TEMP/seeder.log" &
+          # Tracker and peer on the runner's private address: the server refuses loopback
+          # trackers, and allows private ones only with HUWA_ALLOW_PRIVATE_UPSTREAMS=1.
+          ip=$(hostname -I | awk '{print $1}')
+          native/huwa-server/target/release/examples/seeder --host "$ip" "$RUNNER_TEMP"/media/h264_aac.mkv "$RUNNER_TEMP"/media/hi10p_ac3.mkv "$RUNNER_TEMP"/media/hevc_ac3.mkv > "$RUNNER_TEMP/seeds.jsonl" 2> "$RUNNER_TEMP/seeder.log" &
           for i in $(seq 1 120); do grep -q READY "$RUNNER_TEMP/seeds.jsonl" && break; sleep 1; done
           cat "$RUNNER_TEMP/seeds.jsonl"
           docker run -d --name huwa --network host \
             -e HUWA_TRUST_PROXY=1 -e HUWA_SESSIONS_PER_IP=5 -e HUWA_STREMIO_COMPAT=1 -e HUWA_HWACCEL=none \
+            -e HUWA_ALLOW_PRIVATE_UPSTREAMS=1 \
             -e HUWA_LOG=info,huwa_server=debug "$FULL"
           python3 docker/smoke/smoke.py full --base http://127.0.0.1:8080 --seeds "$RUNNER_TEMP/seeds.jsonl" --compat
           docker exec huwa /usr/local/bin/huwa-server --healthcheck

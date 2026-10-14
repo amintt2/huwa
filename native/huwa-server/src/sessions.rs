@@ -91,6 +91,8 @@ pub struct Session {
     slots: Mutex<HashMap<String, Slot>>,
     /// HTTP proxy session id → references taken by this session (`httpOpen`).
     pub http: Mutex<HashMap<u64, usize>>,
+    /// `httpOpen` calls in flight (the per-session cap counts them).
+    pub http_pending: std::sync::atomic::AtomicUsize,
     pub probes: Mutex<HashSet<u64>>,
     /// Media sessions (ffprobe / HLS) it opened.
     pub media: Mutex<HashSet<String>>,
@@ -107,6 +109,7 @@ impl Session {
             torrents: Default::default(),
             slots: Default::default(),
             http: Default::default(),
+            http_pending: Default::default(),
             probes: Default::default(),
             media: Default::default(),
         }
@@ -230,6 +233,16 @@ pub fn verify_proof(req: &SessionRequest, now: u64) -> Result<Option<String>, Ap
         .verify(msg.as_bytes(), &sig)
         .map_err(|_| bad("bad signature"))?;
     Ok(Some(pk_hex))
+}
+
+/// What a dropped session held.
+#[derive(Debug, Default)]
+pub struct Dropped {
+    pub sid: String,
+    /// Info hashes nobody holds any more.
+    pub freed: Vec<String>,
+    /// HTTP proxy sessions and the references this session had on them.
+    pub http: Vec<(u64, usize)>,
 }
 
 pub struct Sessions {
@@ -413,10 +426,7 @@ impl Sessions {
         let mac = hex::decode(mac).map_err(|_| bad())?;
         hmac::verify(&self.key, format!("{MAC_LABEL}|{sid}|{exp}").as_bytes(), &mac).map_err(|_| bad())?;
         if exp <= now_secs() {
-            // Another, newer token of the same session (re-issued for its key) may still be live.
-            if self.map.read().get(sid).is_none_or(|s| s.expires_at() <= now_secs()) {
-                self.drop_session(sid);
-            }
+            // The janitor tears the session down (torrents, proxy references, focus).
             return Err(ApiError::new(StatusCode::UNAUTHORIZED, "session_expired", "session expired"));
         }
         Ok(self.session_for(sid, exp))
@@ -510,7 +520,12 @@ impl Sessions {
 
     /// Forgets a session; returns the info hashes nobody holds any more.
     pub fn drop_session(&self, sid: &str) -> Vec<String> {
-        let Some(s) = self.map.write().remove(sid) else { return Vec::new() };
+        self.teardown(sid).map(|d| d.freed).unwrap_or_default()
+    }
+
+    /// Forgets a session and returns everything the server must let go of for it.
+    pub fn teardown(&self, sid: &str) -> Option<Dropped> {
+        let s = self.map.write().remove(sid)?;
         if let Some(pk) = s.public_key.lock().take() {
             let mut by_key = self.by_key.lock();
             if by_key.get(&pk).map(String::as_str) == Some(sid) {
@@ -518,15 +533,16 @@ impl Sessions {
             }
         }
         let held: Vec<String> = s.torrents.lock().iter().cloned().collect();
-        held.into_iter().filter(|h| self.unhold(&s, h) == Some(0)).collect()
+        let freed = held.into_iter().filter(|h| self.unhold(&s, h) == Some(0)).collect();
+        let http = std::mem::take(&mut *s.http.lock()).into_iter().collect();
+        Some(Dropped { sid: sid.to_string(), freed, http })
     }
 
-    /// Expired sessions (janitor). Returns `(dropped session ids, info hashes nobody holds)`.
-    pub fn sweep(&self) -> (Vec<String>, Vec<String>) {
+    /// Expired sessions (janitor).
+    pub fn sweep(&self) -> Vec<Dropped> {
         let now = now_secs();
         let expired: Vec<String> = self.map.read().values().filter(|s| s.expires_at() <= now).map(|s| s.id.clone()).collect();
-        let freed = expired.iter().flat_map(|sid| self.drop_session(sid)).collect();
-        (expired, freed)
+        expired.iter().filter_map(|sid| self.teardown(sid)).collect()
     }
 }
 
@@ -586,6 +602,7 @@ mod tests {
         let s = Sessions::with_random_key(Duration::from_secs(0));
         let (tok, _) = s.create();
         assert_eq!(s.verify(&tok).unwrap_err().code, "session_expired");
+        assert_eq!(s.sweep().len(), 1);
         assert_eq!(s.count(), 0);
     }
 

@@ -38,10 +38,16 @@ pub struct EngineParts {
     pub proxy: Arc<HttpProxy>,
     /// Upstream policy for anything the server fetches itself (compat `/subtitles.vtt`).
     pub guard: UpstreamGuard,
-    /// Internal loopback listener for ffmpeg / ffprobe.
+    /// Internal loopback listener for ffmpeg / ffprobe. Each URL carries a capability for its
+    /// own source only (HMAC of the source): a demuxer that follows a relative or absolute URL
+    /// found inside a file cannot reach another stream.
     pub internal_port: std::sync::atomic::AtomicU16,
-    pub internal_secret: String,
+    internal_key: ring::hmac::Key,
 }
+
+/// Demuxers ffmpeg / ffprobe may use: self-contained containers only. Playlist and manifest
+/// formats (hls, dash, concat, …) that open URLs found in the file are not in the list.
+pub const FORMAT_WHITELIST: &str = "matroska,webm,mov,mp4,m4a,3gp,3g2,mj2,mpegts,mpegtsraw,avi,flv,ogg,asf,wav,mp3,aac,flac,mpeg,mpegvideo,h264,hevc,m4v,ac3,eac3,dts,truehd,ass,srt,webvtt,ivf,obu,nut,rm,wtv,matroska_pipe";
 
 impl EngineParts {
     pub fn new(cfg: &ServerConfig) -> Result<EngineParts> {
@@ -72,7 +78,8 @@ impl EngineParts {
             ..Default::default()
         })
         .context("starting the http proxy")?;
-        Ok(EngineParts { engine, proxy, guard, internal_port: Default::default(), internal_secret: random_hex::<16>() })
+        let key = ring::hmac::Key::new(ring::hmac::HMAC_SHA256, random_hex::<32>().as_bytes());
+        Ok(EngineParts { engine, proxy, guard, internal_port: Default::default(), internal_key: key })
     }
 
     /// Binds the internal listener on `127.0.0.1:0` (engine runtime).
@@ -80,8 +87,8 @@ impl EngineParts {
         let listener = self.engine.runtime.block_on(tokio::net::TcpListener::bind(("127.0.0.1", 0)))?;
         self.internal_port.store(listener.local_addr()?.port(), std::sync::atomic::Ordering::Relaxed);
         let app = Router::new()
-            .route("/i/{secret}/t/{info_hash}/{file}", get(internal_torrent))
-            .route("/i/{secret}/http/{file}", get(internal_http))
+            .route("/i/{cap}/t/{info_hash}/{file}", get(internal_torrent))
+            .route("/i/{cap}/http/{file}", get(internal_http))
             .with_state(self.clone());
         self.engine.runtime.spawn(async move {
             if let Err(e) = axum::serve(listener, app).await {
@@ -91,18 +98,58 @@ impl EngineParts {
         Ok(())
     }
 
-    fn internal_base(&self) -> String {
-        format!("http://127.0.0.1:{}/i/{}", self.internal_port.load(std::sync::atomic::Ordering::Relaxed), self.internal_secret)
+    fn cap(&self, scope: &str) -> String {
+        hex::encode(&ring::hmac::sign(&self.internal_key, scope.as_bytes()).as_ref()[..16])
+    }
+
+    fn cap_ok(&self, cap: &str, scope: &str) -> bool {
+        let Ok(mac) = hex::decode(cap) else { return false };
+        let want = ring::hmac::sign(&self.internal_key, scope.as_bytes());
+        mac.len() == 16 && mac.iter().zip(want.as_ref()).fold(0u8, |acc, (x, y)| acc | (x ^ y)) == 0
+    }
+
+    fn internal_base(&self, scope: &str) -> String {
+        format!("http://127.0.0.1:{}/i/{}", self.internal_port.load(std::sync::atomic::Ordering::Relaxed), self.cap(scope))
     }
 
     /// Loopback URL of a torrent file for ffmpeg (`None`: the engine's pick, `auto`).
     pub fn internal_torrent_url(&self, hex: &str, file: Option<usize>) -> String {
-        format!("{}/t/{hex}/{}", self.internal_base(), file.map_or("auto".to_string(), |f| f.to_string()))
+        format!("{}/t/{hex}/{}", self.internal_base(&format!("t-{hex}")), file.map_or("auto".to_string(), |f| f.to_string()))
     }
 
     /// Loopback URL of an HTTP proxy session for ffmpeg.
     pub fn internal_http_url(&self, id: u64) -> String {
-        format!("{}/http/{id}", self.internal_base())
+        format!("{}/http/{id}", self.internal_base(&format!("h-{id}")))
+    }
+
+    /// Stremio-style sources with tracker URLs the upstream policy refuses removed (a tracker
+    /// announce is an HTTP / UDP request the server makes: no internal addresses). The check
+    /// resolves the name once; librqbit's tracker client resolves again on its own (rebinding is
+    /// out of reach of this check, see docs/server-api.md §8).
+    pub fn filter_sources(&self, sources: Vec<String>) -> Vec<String> {
+        sources
+            .into_iter()
+            .filter(|s| {
+                let Some(t) = s.strip_prefix("tracker:").or_else(|| (s.contains("://")).then_some(s.as_str())) else { return true };
+                let ok = url::Url::parse(t).ok().is_some_and(|u| {
+                    matches!(u.scheme(), "http" | "https" | "udp")
+                        && match u.host() {
+                            Some(url::Host::Ipv4(ip)) => self.guard.policy.allows(ip.into()),
+                            Some(url::Host::Ipv6(ip)) => self.guard.policy.allows(ip.into()),
+                            Some(url::Host::Domain(d)) => {
+                                !d.eq_ignore_ascii_case("localhost")
+                                    && !d.to_ascii_lowercase().ends_with(".localhost")
+                                    && self.guard.lookup.lookup(d).map_or(true, |addrs| addrs.iter().all(|a| self.guard.policy.allows(a.ip())))
+                            }
+                            None => false,
+                        }
+                });
+                if !ok {
+                    tracing::info!("tracker source refused by the upstream policy");
+                }
+                ok
+            })
+            .collect()
     }
 
     pub fn shutdown(&self) {
@@ -111,24 +158,26 @@ impl EngineParts {
     }
 }
 
-fn secret_ok(parts: &EngineParts, secret: &str) -> bool {
-    let (a, b) = (parts.internal_secret.as_bytes(), secret.as_bytes());
-    a.len() == b.len() && a.iter().zip(b).fold(0u8, |acc, (x, y)| acc | (x ^ y)) == 0
-}
-
-async fn internal_torrent(State(p): State<Arc<EngineParts>>, Path((secret, info_hash, file)): Path<(String, String, String)>, headers: HeaderMap) -> Response {
-    if !secret_ok(&p, &secret) {
+async fn internal_torrent(State(p): State<Arc<EngineParts>>, Path((cap, info_hash, file)): Path<(String, String, String)>, headers: HeaderMap) -> Response {
+    let Ok((_, hex)) = normalize_hash(&info_hash) else { return StatusCode::NOT_FOUND.into_response() };
+    if !p.cap_ok(&cap, &format!("t-{hex}")) {
         return StatusCode::NOT_FOUND.into_response();
     }
-    let Ok((_, hex)) = normalize_hash(&info_hash) else { return StatusCode::NOT_FOUND.into_response() };
     huwa_torrent_core::server::serve_file(p.engine.clone(), &hex, &file, &headers).await
 }
 
-async fn internal_http(State(p): State<Arc<EngineParts>>, Path((secret, file)): Path<(String, String)>, headers: HeaderMap) -> Response {
-    if !secret_ok(&p, &secret) {
+async fn internal_http(State(p): State<Arc<EngineParts>>, Path((cap, file)): Path<(String, String)>, headers: HeaderMap) -> Response {
+    let Some(id) = file.split('.').next().and_then(|i| i.parse::<u64>().ok()) else { return StatusCode::NOT_FOUND.into_response() };
+    if !p.cap_ok(&cap, &format!("h-{id}")) {
         return StatusCode::NOT_FOUND.into_response();
     }
-    http_proxy::serve_session(p.proxy.shared.clone(), file, headers).await
+    let resp = http_proxy::serve_session(p.proxy.shared.clone(), file, headers).await;
+    // The proxy answers 302 to the original URL when the upstream ignores Range: ffmpeg must
+    // never follow it (it would fetch outside the upstream policy).
+    if resp.status().is_redirection() {
+        return (StatusCode::BAD_GATEWAY, "upstream without Range support").into_response();
+    }
+    resp
 }
 
 // ------------------------------------------------------------------------------------------------
@@ -204,8 +253,31 @@ pub fn no_store(r: impl IntoResponse) -> Response {
 }
 
 /// Starts (or refreshes) a stream for `session`: slot, engine start as the session's focus, hold.
+/// Torrents one session may hold at a time (`startStream` / `prewarm`).
+pub const MAX_HELD_TORRENTS: usize = 32;
+/// Swarm probes one session may have running.
+pub const MAX_RUNNING_PROBES: usize = 16;
+
+fn filtered_args(eng: &EngineParts, mut args: Value) -> Value {
+    if let Some(src) = args.get("sources").and_then(Value::as_array) {
+        let list: Vec<String> = src.iter().filter_map(Value::as_str).map(str::to_string).collect();
+        args["sources"] = json!(eng.filter_sources(list));
+    }
+    args
+}
+
 pub async fn start_stream(st: &Arc<AppState>, eng: &Arc<EngineParts>, session: &Arc<Session>, args: Value, prewarm: bool) -> ApiResult<Value> {
     let hex = hash_arg(&args)?;
+    if !session.holds(&hex) && session.torrents.lock().len() >= MAX_HELD_TORRENTS {
+        inc(&st.metrics.quota_refusals);
+        return Err(ApiError::new(StatusCode::TOO_MANY_REQUESTS, "quota_exceeded", format!("too many torrents held ({MAX_HELD_TORRENTS}): remove some"))
+            .with("limit", json!(MAX_HELD_TORRENTS))
+            .with("kind", json!("torrents")));
+    }
+    let args = {
+        let eng = eng.clone();
+        tokio::task::spawn_blocking(move || filtered_args(&eng, args)).await.map_err(|e| ApiError::internal(e.to_string()))?
+    };
     if !prewarm {
         if let Err(e) = session.claim_slot(&hex, st.cfg.streams_per_session) {
             inc(&st.metrics.quota_refusals);
@@ -279,6 +351,9 @@ pub async fn engine_call(State(st): State<Arc<AppState>>, Path(method): Path<Str
             // A torrent shared with other sessions is only acted on by its last holder; the
             // others just let go of it (`remove`, `release`) or are no-ops (`pause`).
             let sole = st.sessions.holders_of(&hex) <= 1;
+            if !sole && matches!(method.as_str(), "remove" | "release") {
+                engine.drop_focus_of(&session.id, &hex);
+            }
             match method.as_str() {
                 "remove" => {
                     let left = st.sessions.unhold(&session, &hex).unwrap_or(0);
@@ -306,6 +381,18 @@ pub async fn engine_call(State(st): State<Arc<AppState>>, Path(method): Path<Str
         }
         "probeStart" => {
             let _ = hash_arg(&args)?;
+            {
+                let mut probes = session.probes.lock();
+                probes.retain(|id| engine.probes.get(*id).is_some_and(|p| !p.status().state.is_final()));
+                if probes.len() >= MAX_RUNNING_PROBES {
+                    inc(&st.metrics.quota_refusals);
+                    return Err(ApiError::new(StatusCode::TOO_MANY_REQUESTS, "quota_exceeded", format!("too many probes running ({MAX_RUNNING_PROBES})"))
+                        .with("limit", json!(MAX_RUNNING_PROBES))
+                        .with("kind", json!("probes")));
+                }
+            }
+            let e2 = eng.clone();
+            let args = tokio::task::spawn_blocking(move || filtered_args(&e2, args)).await.map_err(|e| ApiError::internal(e.to_string()))?;
             let v = blocking(move || api::dispatch(&engine, "probeStart", args)).await?;
             if let Some(id) = v.get("id").and_then(Value::as_u64) {
                 session.probes.lock().insert(id);
@@ -333,16 +420,24 @@ pub async fn engine_call(State(st): State<Arc<AppState>>, Path(method): Path<Str
         }
         "httpOpen" => {
             let cap = st.cfg.proxy_sessions_per_session;
-            if cap > 0 && session.http.lock().len() >= cap {
-                inc(&st.metrics.quota_refusals);
-                return Err(ApiError::new(StatusCode::TOO_MANY_REQUESTS, "quota_exceeded", format!("HTTP proxy quota exceeded ({cap} per session): httpRelease some"))
-                    .with("limit", json!(cap))
-                    .with("kind", json!("proxy")));
+            {
+                // Reserved under the lock: concurrent opens cannot overshoot the cap.
+                let http = session.http.lock();
+                if cap > 0 && http.len() + session.http_pending.load(std::sync::atomic::Ordering::Acquire) >= cap {
+                    inc(&st.metrics.quota_refusals);
+                    return Err(ApiError::new(StatusCode::TOO_MANY_REQUESTS, "quota_exceeded", format!("HTTP proxy quota exceeded ({cap} per session): httpRelease some"))
+                        .with("limit", json!(cap))
+                        .with("kind", json!("proxy")));
+                }
+                session.http_pending.fetch_add(1, std::sync::atomic::Ordering::AcqRel);
             }
             let proxy = eng.proxy.clone();
-            let v = blocking(move || proxy.dispatch("httpOpen", args)).await?;
+            let res = blocking(move || proxy.dispatch("httpOpen", args)).await;
+            let mut http = session.http.lock();
+            session.http_pending.fetch_sub(1, std::sync::atomic::Ordering::AcqRel);
+            let v = res?;
             if let Some(id) = v.get("id").and_then(Value::as_u64) {
-                *session.http.lock().entry(id).or_default() += 1;
+                *http.entry(id).or_default() += 1;
             }
             v
         }
@@ -352,13 +447,13 @@ pub async fn engine_call(State(st): State<Arc<AppState>>, Path(method): Path<Str
                 return Err(ApiError::not_found("unknown http session"));
             }
             if method == "httpRelease" {
+                // One proxy reference released per reference this session really gave up.
                 let mut http = session.http.lock();
-                if let Some(n) = http.get_mut(&id) {
-                    *n -= 1;
-                    if *n == 0 {
-                        http.remove(&id);
-                        session.free_slot(&format!("http:{id}"));
-                    }
+                let Some(n) = http.get_mut(&id) else { return Err(ApiError::not_found("unknown http session")) };
+                *n -= 1;
+                if *n == 0 {
+                    http.remove(&id);
+                    session.free_slot(&format!("http:{id}"));
                 }
             }
             let proxy = eng.proxy.clone();

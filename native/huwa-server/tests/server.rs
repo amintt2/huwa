@@ -334,3 +334,26 @@ fn session_creation_limits_and_proofs() {
     let r2 = required.send(required.client.post(format!("{}/api/v1/session", required.base)).body(body));
     assert_eq!(r1.json()["sessionId"], r2.json()["sessionId"], "same key, same session");
 }
+
+#[test]
+fn internal_urls_are_per_source_and_trackers_are_filtered() {
+    let s = Server::start("internal", |_| {});
+    let eng = s.app.state.eng.clone().unwrap();
+    // A capability for one source does not open another (a demuxer following a relative URL).
+    let mine = eng.internal_http_url(1);
+    let other = mine.replace("/http/1", "/http/2");
+    assert_eq!(s.get(&other, None).status, 404);
+    let h = "ab".repeat(20);
+    let t = eng.internal_torrent_url(&h, Some(0));
+    assert_eq!(s.get(&t.replace(&h, &"cd".repeat(20)), None).status, 404);
+    // Tracker sources pointing inside are dropped; public ones and dht: stay.
+    let kept = eng.filter_sources(vec![
+        "tracker:http://127.0.0.1:8080/announce".into(),
+        "tracker:udp://10.0.0.1:6969/announce".into(),
+        "tracker:http://169.254.169.254/latest".into(),
+        "tracker:http://localhost:1/announce".into(),
+        "tracker:udp://93.184.216.34:6969/announce".into(),
+        format!("dht:{h}"),
+    ]);
+    assert_eq!(kept, vec!["tracker:udp://93.184.216.34:6969/announce".to_string(), format!("dht:{h}")]);
+}
