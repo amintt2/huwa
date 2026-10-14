@@ -314,7 +314,8 @@ jobs:
           echo "ref=${{ needs.meta.outputs.image }}:${{ needs.meta.outputs.sha }}${suffix}" >> "$GITHUB_OUTPUT"
       # Rapport (tableau + artefact) ; non bloquant : les CVE de la base Debian sans correctif
       # sont ignorées, le reste est à trier avant une étiquette v*.
-      - uses: aquasecurity/trivy-action@0.28.0
+      # Épinglé par commit (v0.36.0) : les étiquettes de cette action ont été réécrites en 2026.
+      - uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25
         with:
           image-ref: ${{ steps.img.outputs.ref }}
           format: table

@@ -52,6 +52,14 @@ COPY services/huwa-gateway/ ./gateway/
 COPY services/blind-peer/package.json services/blind-peer/package-lock.json ./blind-peer/
 RUN --mount=type=cache,target=/root/.npm cd blind-peer && npm ci --omit=dev --no-audit --no-fund
 COPY services/blind-peer/server.js services/blind-peer/policy.js ./blind-peer/
+# Holepunch packages ship native prebuilds for every OS / arch (~ 70 % of node_modules): keep
+# this platform's (glibc) only.
+RUN plat="$(node -p 'process.platform + "-" + process.arch')" \
+ && find /opt/huwa -type d -name prebuilds -prune | while read -r d; do \
+      for p in "$d"/*; do case "$(basename "$p")" in "$plat"|"$plat"-*) ;; *) rm -rf "$p" ;; esac; done; \
+    done \
+ && find /opt/huwa -type f \( -name '*.md' -o -name '*.map' \) -path '*/node_modules/*' -delete \
+ && du -sh /opt/huwa/gateway /opt/huwa/blind-peer
 
 FROM node:${NODE_VERSION}-bookworm-slim AS node
 
