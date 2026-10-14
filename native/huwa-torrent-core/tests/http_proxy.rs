@@ -230,7 +230,7 @@ fn status(px: &HttpProxy, id: u64) -> Value {
 
 /// The upstream is on 127.0.0.1: allowed here (the app refuses loopback upstreams).
 fn proxy() -> Arc<HttpProxy> {
-    HttpProxy::start_with(ProxyOptions { allow_loopback: true }).unwrap()
+    HttpProxy::start_with(ProxyOptions { allow_loopback: true, ..Default::default() }).unwrap()
 }
 
 fn url_of(up: &Upstream, path: &str) -> String {

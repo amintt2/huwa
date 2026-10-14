@@ -76,6 +76,16 @@ pub struct Config {
     /// On by default (`"unverifiedStart": false` turns it off).
     #[serde(default = "default_true")]
     pub unverified_start: bool,
+    /// Server deployments: stream URLs are `{urlPrefix}/{hash}/{file}` (a path, or an absolute
+    /// public URL) instead of `http://127.0.0.1:{port}/…`. `None`: the loopback URL (see `url_of`).
+    #[cfg(feature = "server")]
+    #[serde(default)]
+    pub url_prefix: Option<String>,
+    /// Server deployments: worker threads of the engine runtime (the HTTP server runs on it too).
+    /// `None`: 2, as on mobile.
+    #[cfg(feature = "server")]
+    #[serde(default)]
+    pub worker_threads: Option<usize>,
 }
 
 fn default_cache_limit() -> u64 {
@@ -450,6 +460,18 @@ pub fn file_ext_of(handle: &ManagedTorrentHandle, idx: usize) -> Option<&'static
         .flatten()
 }
 
+/// `{prefix}/{hash}/{file}[.{ext}]` (feature `server`): the stream URL behind a public prefix,
+/// e.g. `/t` (made `/s/<token>/t/…` per session by huwa-server) or `https://host/t`.
+#[cfg(feature = "server")]
+pub fn prefixed_url_of(prefix: &str, hex: &str, file: Option<usize>, ext: Option<&str>) -> String {
+    let prefix = prefix.trim_end_matches('/');
+    let file = file.map_or_else(|| "auto".to_string(), |i| i.to_string());
+    match ext {
+        Some(e) => format!("{prefix}/{hex}/{file}.{e}"),
+        None => format!("{prefix}/{hex}/{file}"),
+    }
+}
+
 pub fn url_of(port: u16, hex: &str, file: Option<usize>, ext: Option<&str>) -> String {
     let file = file.map_or_else(|| "auto".to_string(), |i| i.to_string());
     match ext {
@@ -503,8 +525,12 @@ impl Engine {
         std::fs::create_dir_all(&torrents_dir)?;
         std::fs::create_dir_all(&session_dir)?;
 
+        #[cfg(not(feature = "server"))]
+        let workers = 2;
+        #[cfg(feature = "server")]
+        let workers = config.worker_threads.unwrap_or(2).max(1);
         let runtime = tokio::runtime::Builder::new_multi_thread()
-            .worker_threads(2)
+            .worker_threads(workers)
             .thread_name("huwa-torrent")
             .enable_all()
             .build()
@@ -604,6 +630,10 @@ impl Engine {
     /// `http://127.0.0.1:<port>/<hash>/<file>[.<ext>]`: the extension (when the file is known)
     /// tells the app's player policy the container without a request (see `server::parse_file`).
     pub fn url_for(&self, hex: &str, file: Option<usize>, ext: Option<&str>) -> String {
+        #[cfg(feature = "server")]
+        if let Some(prefix) = self.config.read().url_prefix.as_deref() {
+            return prefixed_url_of(prefix, hex, file, ext);
+        }
         url_of(self.port(), hex, file, ext)
     }
 

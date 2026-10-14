@@ -1,0 +1,57 @@
+[package]
+name = "huwa-server"
+version = "0.1.0"
+edition = "2021"
+# librqbit 9 (through huwa-torrent-core) is edition 2024 and uses let-chains.
+rust-version = "1.89"
+license = "MIT"
+description = "Huwa Server: self-hostable streaming server (torrent engine + read-ahead HTTP proxy) for Huwa Web. See docs/server-api.md."
+publish = false
+
+[[bin]]
+name = "huwa-server"
+path = "src/main.rs"
+
+[lib]
+name = "huwa_server"
+path = "src/lib.rs"
+
+[dependencies]
+# The engine, with the `server` feature: public URL prefix, configurable runtime, upstream IP
+# policy for the HTTP proxy. Seeding stays compiled out (`disable-upload`, set by the engine).
+huwa-torrent-core = { path = "../huwa-torrent-core", features = ["server"] }
+axum = { version = "0.8", default-features = false, features = ["http1", "tokio", "json"] }
+tower-http = { version = "0.6", default-features = false, features = ["cors"] }
+http = "1"
+bytes = "1"
+futures = "0.3"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "signal", "sync", "time"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+anyhow = "1"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", default-features = false, features = ["fmt", "env-filter", "ansi"] }
+parking_lot = "0.12"
+hex = "0.4"
+url = "2"
+# HMAC-SHA256 session tokens and the random session ids / key. Already in the tree (rustls).
+ring = "0.17"
+
+[dev-dependencies]
+# Local seeder for the end-to-end test (same pinned version and features as the engine: one copy).
+librqbit = { version = "=9.0.1", default-features = false, features = ["rust-tls", "disable-upload"] }
+reqwest = { version = "0.13", default-features = false, features = ["rustls"] }
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 4
+strip = "debuginfo"
+
+# Same patched sources as huwa-torrent-core (patches only apply at the root of a build).
+[patch.crates-io]
+librqbit-dualstack-sockets = { path = "../vendor/librqbit-dualstack-sockets" }
+librqbit = { path = "../vendor/librqbit" }
+
+# Standalone root (not part of a workspace).
+[workspace]

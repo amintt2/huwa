@@ -510,6 +510,12 @@ pub struct Shared {
     /// Origins seen ignoring Range: their links play directly from then on (no time lost
     /// finding out again).
     no_range_origins: Mutex<std::collections::HashSet<String>>,
+    /// Server: upstream IP policy (replaces the loopback-only check), see `net_policy.rs`.
+    #[cfg(feature = "server")]
+    guard: Option<crate::net_policy::UpstreamGuard>,
+    /// Server: session URLs are `{prefix}/http/<id>` instead of `http://127.0.0.1:<port>/http/<id>`.
+    #[cfg(feature = "server")]
+    url_prefix: Option<String>,
 }
 
 /// `HttpProxy::start_with` options (the app uses the defaults).
@@ -518,6 +524,23 @@ pub struct ProxyOptions {
     /// Upstream on 127.0.0.1 / localhost (tests and the offline bench; the app never proxies its
     /// own loopback servers).
     pub allow_loopback: bool,
+    /// Server: every upstream address goes through this policy (DNS resolver, redirects, open).
+    /// `allow_loopback` is then ignored (the policy has its own flag).
+    #[cfg(feature = "server")]
+    pub guard: Option<crate::net_policy::UpstreamGuard>,
+    /// Server: prefix of the session URLs (`""` → `/http/<id>`; huwa-server makes them
+    /// `/s/<token>/http/<id>`). `None`: the loopback URL.
+    #[cfg(feature = "server")]
+    pub url_prefix: Option<String>,
+    /// Server: no loopback listener; the host server mounts `serve_session` on its own route.
+    #[cfg(feature = "server")]
+    pub no_listener: bool,
+}
+
+/// The `GET /http/<id>[.<ext>]` handler, for a host server mounting it on its own route (after its
+/// own checks). Same behaviour as the loopback listener.
+pub async fn serve_session(shared: Arc<Shared>, file: String, headers: HeaderMap) -> Response {
+    serve(Ax(shared), Path(file), headers).await
 }
 
 pub struct HttpProxy {
@@ -536,7 +559,7 @@ impl Drop for HttpProxy {
     }
 }
 
-fn build_client() -> Result<reqwest::Client> {
+fn client_builder() -> reqwest::ClientBuilder {
     reqwest::Client::builder()
         .connect_timeout(CONNECT_TIMEOUT)
         .pool_idle_timeout(Duration::from_secs(30))
@@ -546,10 +569,21 @@ fn build_client() -> Result<reqwest::Client> {
         // paused in front of its reader keeps its unread bytes on it, which can stall the range
         // the player waits for. One pooled connection per range never couples them.
         .http1_only()
-        .redirect(reqwest::redirect::Policy::limited(10))
-        .build()
-        .context("http client")
 }
+
+fn build_client() -> Result<reqwest::Client> {
+    client_builder().redirect(reqwest::redirect::Policy::limited(10)).build().context("http client")
+}
+
+/// Server: the same client with the upstream policy in its DNS resolver and redirect policy.
+#[cfg(feature = "server")]
+fn build_guarded_client(guard: &crate::net_policy::UpstreamGuard) -> Result<reqwest::Client> {
+    guard.apply(client_builder(), 10).build().context("http client")
+}
+
+/// Marker message of a refused upstream (`send` → `fetch_inner`: fatal, not retried).
+#[cfg(feature = "server")]
+const BLOCKED: &str = "adresse amont interdite";
 
 impl HttpProxy {
     /// Its own runtime (2 workers) and loopback listener.
@@ -564,7 +598,13 @@ impl HttpProxy {
             .enable_all()
             .build()
             .context("tokio runtime")?;
+        #[cfg(not(feature = "server"))]
         let client = runtime.block_on(async { build_client() })?;
+        #[cfg(feature = "server")]
+        let client = match &opts.guard {
+            Some(g) => runtime.block_on(async { build_guarded_client(g) })?,
+            None => runtime.block_on(async { build_client() })?,
+        };
         let shared = Arc::new(Shared {
             client,
             sessions: RwLock::new(HashMap::new()),
@@ -573,19 +613,32 @@ impl HttpProxy {
             handle: runtime.handle().clone(),
             allow_loopback: opts.allow_loopback,
             no_range_origins: Mutex::new(Default::default()),
+            #[cfg(feature = "server")]
+            guard: opts.guard.clone(),
+            #[cfg(feature = "server")]
+            url_prefix: opts.url_prefix.clone(),
         });
-        let listener = runtime.block_on(tokio::net::TcpListener::bind(("127.0.0.1", 0)))?;
-        shared.port.store(listener.local_addr()?.port(), Ordering::Relaxed);
-        let app = router(shared.clone());
-        let (stop, stopped) = tokio::sync::oneshot::channel::<()>();
-        let server = runtime.spawn(async move {
-            let serve = axum::serve(listener, app).with_graceful_shutdown(async move {
-                let _ = stopped.await;
+        #[cfg(not(feature = "server"))]
+        let listen = true;
+        #[cfg(feature = "server")]
+        let listen = !opts.no_listener;
+        let server = if listen {
+            let listener = runtime.block_on(tokio::net::TcpListener::bind(("127.0.0.1", 0)))?;
+            shared.port.store(listener.local_addr()?.port(), Ordering::Relaxed);
+            let app = router(shared.clone());
+            let (stop, stopped) = tokio::sync::oneshot::channel::<()>();
+            let task = runtime.spawn(async move {
+                let serve = axum::serve(listener, app).with_graceful_shutdown(async move {
+                    let _ = stopped.await;
+                });
+                if let Err(e) = serve.await {
+                    warn!("http proxy stopped: {e:#}");
+                }
             });
-            if let Err(e) = serve.await {
-                warn!("http proxy stopped: {e:#}");
-            }
-        });
+            Some((stop, task))
+        } else {
+            None
+        };
         let weak = Arc::downgrade(&shared);
         let janitor = runtime.spawn(async move {
             let mut tick = tokio::time::interval(Duration::from_secs(5));
@@ -598,7 +651,7 @@ impl HttpProxy {
         Ok(Arc::new(HttpProxy {
             runtime: ManuallyDrop::new(runtime),
             shared,
-            server: Mutex::new(Some((stop, server))),
+            server: Mutex::new(server),
             janitor: Mutex::new(Some(janitor)),
         }))
     }
@@ -748,6 +801,14 @@ impl Shared {
     }
 
     fn loopback_url(&self, s: &Session) -> String {
+        #[cfg(feature = "server")]
+        if let Some(prefix) = self.url_prefix.as_deref() {
+            let prefix = prefix.trim_end_matches('/');
+            return match s.ext {
+                Some(e) => format!("{prefix}/http/{}.{e}", s.id),
+                None => format!("{prefix}/http/{}", s.id),
+            };
+        }
         let port = self.port.load(Ordering::Relaxed);
         match s.ext {
             Some(e) => format!("http://127.0.0.1:{port}/http/{}.{e}", s.id),
@@ -758,7 +819,17 @@ impl Shared {
     fn open(self: &Arc<Self>, req: OpenRequest) -> Result<OpenResponse> {
         let url = reqwest::Url::parse(req.url.trim()).map_err(|_| anyhow!("invalid url"))?;
         let unsupported = || OpenResponse { id: None, url: None, reused: false, fallback: Some("unsupported") };
-        if !matches!(url.scheme(), "http" | "https") || (is_loopback(&url) && !self.allow_loopback) {
+        // Server: the IP policy decides (an error, not a fallback: the caller must not be told to
+        // play an internal address directly). Re-enforced at every connection by the resolver.
+        #[cfg(feature = "server")]
+        if let Some(g) = &self.guard {
+            g.precheck(&url)?;
+        }
+        #[cfg(feature = "server")]
+        let loopback_refused = self.guard.is_none() && is_loopback(&url) && !self.allow_loopback;
+        #[cfg(not(feature = "server"))]
+        let loopback_refused = is_loopback(&url) && !self.allow_loopback;
+        if !matches!(url.scheme(), "http" | "https") || loopback_refused {
             return Ok(unsupported());
         }
         // Android: rustls-platform-verifier needs its JNI init, not wired: HTTPS plays directly.
@@ -1076,9 +1147,18 @@ impl Shared {
         if let Ok(v) = HeaderValue::from_str(range) {
             h.insert(header::RANGE, v);
         }
+        // Server: a remembered redirect target is an IP literal the resolver never sees.
+        #[cfg(feature = "server")]
+        if let Some(g) = &self.guard {
+            if g.policy.check_url(&url).is_err() {
+                return Err(BLOCKED.into());
+            }
+        }
         let req = self.client.get(url.clone()).headers(h).send();
         let resp = match tokio::time::timeout(RESPONSE_TIMEOUT, req).await {
             Ok(Ok(r)) => r,
+            #[cfg(feature = "server")]
+            Ok(Err(e)) if crate::net_policy::is_blocked(&e) => return Err(BLOCKED.into()),
             Ok(Err(e)) => return Err(net_error(e)),
             Err(_) => return Err("délai dépassé".into()),
         };
@@ -1154,6 +1234,16 @@ async fn fetch_inner(px: &Arc<Shared>, s: &Arc<Session>, seg_id: u64) -> Outcome
             Ok(r) => r,
             Err(msg) => {
                 debug!(session = s.id, host = %s.host, seg = seg_id, error = %msg, "http request failed");
+                // Server: a refused upstream address is final (no retry against it).
+                #[cfg(feature = "server")]
+                if msg == BLOCKED {
+                    let mut st = s.state.lock();
+                    if st.error.is_none() {
+                        warn!(session = s.id, host = %s.host, "upstream address refused by the policy");
+                        st.error = Some(HttpError { status: 403, message: BLOCKED.into() });
+                    }
+                    return Outcome::Done;
+                }
                 return Outcome::Failed;
             }
         };

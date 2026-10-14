@@ -56,6 +56,22 @@ HUWA_TORRENT=1 npx expo run:ios      # ou run:android
 Sans `HUWA_TORRENT=1` (ou sans binaires), le module Expo est compilé mais `isAvailable()` renvoie `false` :
 l'app se construit et tourne sans Rust.
 
+## Feature `server` (Huwa Server)
+
+`cargo build --features server` : utilisée seulement par `native/huwa-server` (API : `docs/server-api.md`),
+jamais par `scripts/build-torrent.sh` (les builds mobiles ne changent pas). Elle ajoute :
+
+- `Config.urlPrefix` (URL `{prefix}/{hash}/{file}` au lieu de `http://127.0.0.1:{port}/…`) et
+  `Config.workerThreads` ;
+- `server::start_on(engine, addr)` (adresse d'écoute configurable), `server::serve_file` et
+  `http_proxy::serve_session` pour monter les routes dans un autre routeur ;
+- `ProxyOptions { guard, url_prefix, no_listener }` et `src/net_policy.rs` : politique d'adresses amont
+  du proxy HTTP appliquée dans un résolveur DNS reqwest (anti-rebinding), dans la politique de
+  redirection et à l'ouverture (loopback, RFC 1918, CGNAT, link-local / métadonnées, ULA… refusés ;
+  `allow_private` pour un serveur multimédia sur le LAN).
+
+Le seeding reste désactivé à la compilation (`disable-upload`) dans tous les cas.
+
 ## Brancher dans le lecteur (point d'extension `resolveTorrent`)
 
 `src/torrent/index.ts` exporte `resolveTorrent(stream)`. Ordre attendu dans le résolveur de flux

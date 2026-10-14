@@ -434,7 +434,7 @@ pub fn http_profile(name: &str) -> Option<ServeCfg> {
 /// `behaviorHints.videoSize` (`--no-size`: an addon without it); unmetered read-ahead.
 pub fn open_through_proxy(b: &Bench, url: &str, file: &str, start: f64) -> (Arc<huwa_torrent_core::http_proxy::HttpProxy>, String) {
     use huwa_torrent_core::http_proxy::{HttpProxy, ProxyOptions};
-    let px = HttpProxy::start_with(ProxyOptions { allow_loopback: true }).expect("http proxy");
+    let px = HttpProxy::start_with(ProxyOptions { allow_loopback: true, ..Default::default() }).expect("http proxy");
     let size = (!b.args.no_size).then(|| std::fs::metadata(b.args.fixtures.join(file)).map(|m| m.len()).ok()).flatten();
     let prefetch = if start > 1.0 { json!({ "startAt": start, "duration": b.args.duration, "size": size }) } else { json!({ "size": size }) };
     let o = px.dispatch("httpOpen", json!({ "url": url, "prefetch": prefetch })).expect("httpOpen");
