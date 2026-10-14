@@ -1,11 +1,13 @@
 // Preload (`node -r`): makes `require('rocksdb-native')` load rocksdb-idb, over fake-indexeddb
 // (ROCKSDB_IDB_MEMORY=1: memory only). Used to run hypercore-storage's own test suite and the
-// Corestore/Autobase checks against the adapter in Node.
+// Corestore/Autobase checks against the adapter in Node. ROCKSDB_IDB_OPTS='{"cacheBytes":4096}' and
+// ROCKSDB_IDB_CIPHER=1 run them in other configurations (see env-adapter.cjs).
 const Module = require('module')
 const path = require('path')
 const here = path.dirname(require.resolve('./register.cjs'))
 
-const adapter = path.join(here, '..', 'index.js')
+const configured = process.env.ROCKSDB_IDB_OPTS || process.env.ROCKSDB_IDB_CIPHER === '1'
+const adapter = configured ? path.join(here, 'env-adapter.cjs') : path.join(here, '..', 'index.js')
 // SODIUM_SHIM=1: the browser's sodium (sodium-javascript + spike/shims/sodium.js) in Node too.
 const sodiumShim = process.env.SODIUM_SHIM === '1' ? path.join(here, '..', 'spike', 'shims', 'sodium.js') : null
 const resolve = Module._resolveFilename

@@ -2,7 +2,7 @@
   "name": "rocksdb-idb",
   "version": "0.0.1",
   "private": true,
-  "description": "Subset of rocksdb-native used by hypercore-storage 3.x, over an in-memory sorted map persisted in IndexedDB (Huwa web, spike S2).",
+  "description": "Subset of rocksdb-native used by hypercore-storage 3.x, over IndexedDB: in-memory key index, lazily loaded values (LRU), WAL + compaction, optional encryption at rest (Huwa web).",
   "main": "index.js",
   "license": "Apache-2.0",
   "scripts": {

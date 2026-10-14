@@ -1,9 +1,10 @@
-// One column family in memory: a sorted array of hex keys + a Map hex -> entry.
+// One column family in memory: the sorted array of its live hex keys (the key index, always fully
+// in memory) and its dirty values (written, not yet compacted into IndexedDB's `kv` store; pinned).
+// Clean values live in IndexedDB and in the shared LRU cache (see index.js).
+//
 // Hex (lowercase, 2 chars per byte) keeps the byte order of RocksDB's default bytewise comparator
 // under plain string comparison, prefixes included, so JS string compares are enough.
-//
-// Entries are immutable once stored ({ key, value } copies of what the caller passed): readers get
-// copies again, so a caller mutating a buffer (Hypercore bitfield pages do) never touches the store.
+// Stored values are immutable: writers store copies, readers get copies.
 
 function lowerBound(arr, x) {
   let lo = 0
@@ -30,60 +31,53 @@ function upperBound(arr, x) {
 class Table {
   constructor(name) {
     this.name = name
+    this.prefix = name + '/' // IndexedDB key prefix
     this.keys = [] // sorted hex
-    this.map = new Map() // hex -> { key: Uint8Array, value: Uint8Array }
+    this.dirty = new Map() // hex -> { value, seq } (seq: WAL record holding it, Infinity in memory mode)
   }
 
   get size() {
     return this.keys.length
   }
 
-  get(hex) {
-    return this.map.get(hex) || null
+  has(hex) {
+    const keys = this.keys
+    const n = keys.length
+    if (n === 0) return false
+    if (keys[n - 1] === hex) return true
+    const i = lowerBound(keys, hex)
+    return i < n && keys[i] === hex
   }
 
-  /** Bulk load of keys already sorted (IndexedDB returns them in order). */
-  load(hex, entry) {
-    this.keys.push(hex)
-    this.map.set(hex, entry)
-  }
-
-  /** Returns the previous entry (or null). */
-  put(hex, entry) {
-    const prev = this.map.get(hex)
-    this.map.set(hex, entry)
-    if (prev) return prev
+  /** Inserts a key known to be absent. */
+  insert(hex) {
     const n = this.keys.length
     // Appends at the end are the common case (block / tree indexes grow).
     if (n === 0 || this.keys[n - 1] < hex) this.keys.push(hex)
     else this.keys.splice(lowerBound(this.keys, hex), 0, hex)
-    return null
   }
 
-  /** Returns the previous entry (or null). */
-  delete(hex) {
-    const prev = this.map.get(hex)
-    if (!prev) return null
-    this.map.delete(hex)
+  /** Removes a key; returns whether it was there. */
+  remove(hex) {
     const i = lowerBound(this.keys, hex)
+    if (i >= this.keys.length || this.keys[i] !== hex) return false
     this.keys.splice(i, 1)
-    return prev
+    return true
   }
 
-  /** Deletes [start, end) and returns the removed [hex, entry] pairs. */
-  deleteRange(start, end) {
+  /** Keys in [start, end). */
+  range(start, end) {
+    if (!(start < end)) return []
+    return this.keys.slice(lowerBound(this.keys, start), lowerBound(this.keys, end))
+  }
+
+  /** Removes [start, end) and returns the removed keys. */
+  removeRange(start, end) {
     if (!(start < end)) return []
     const i = lowerBound(this.keys, start)
     const j = lowerBound(this.keys, end)
     if (i >= j) return []
-    const removed = this.keys.splice(i, j - i)
-    const out = new Array(removed.length)
-    for (let k = 0; k < removed.length; k++) {
-      const hex = removed[k]
-      out[k] = [hex, this.map.get(hex)]
-      this.map.delete(hex)
-    }
-    return out
+    return this.keys.splice(i, j - i)
   }
 
   /**
@@ -91,29 +85,7 @@ class Table {
    * within bounds; null when none. Bounds: { gt, gte, lt, lte } as hex or null.
    */
   next(after, b, reverse) {
-    const keys = this.keys
-    if (!reverse) {
-      let i
-      if (after !== null) i = upperBound(keys, after)
-      else if (b.gt !== null) i = upperBound(keys, b.gt)
-      else if (b.gte !== null) i = lowerBound(keys, b.gte)
-      else i = 0
-      if (i >= keys.length) return null
-      const k = keys[i]
-      if (!inUpper(k, b)) return null
-      if (!inLower(k, b)) return null
-      return k
-    }
-    let i
-    if (after !== null) i = lowerBound(keys, after) - 1
-    else if (b.lt !== null) i = lowerBound(keys, b.lt) - 1
-    else if (b.lte !== null) i = upperBound(keys, b.lte) - 1
-    else i = keys.length - 1
-    if (i < 0) return null
-    const k = keys[i]
-    if (!inLower(k, b)) return null
-    if (!inUpper(k, b)) return null
-    return k
+    return nextInSorted(this.keys, after, b, reverse)
   }
 }
 
@@ -131,8 +103,28 @@ function inUpper(k, b) {
 
 /** Next element of a sorted array strictly after `after` (or first in bounds), within bounds. */
 function nextInSorted(keys, after, b, reverse) {
-  const t = { keys }
-  return Table.prototype.next.call(t, after, b, reverse)
+  if (!reverse) {
+    let i
+    if (after !== null) i = upperBound(keys, after)
+    else if (b.gt !== null) i = upperBound(keys, b.gt)
+    else if (b.gte !== null) i = lowerBound(keys, b.gte)
+    else i = 0
+    if (i >= keys.length) return null
+    const k = keys[i]
+    if (!inUpper(k, b)) return null
+    if (!inLower(k, b)) return null
+    return k
+  }
+  let i
+  if (after !== null) i = lowerBound(keys, after) - 1
+  else if (b.lt !== null) i = lowerBound(keys, b.lt) - 1
+  else if (b.lte !== null) i = upperBound(keys, b.lte) - 1
+  else i = keys.length - 1
+  if (i < 0) return null
+  const k = keys[i]
+  if (!inLower(k, b)) return null
+  if (!inUpper(k, b)) return null
+  return k
 }
 
 module.exports = { Table, lowerBound, upperBound, inLower, inUpper, nextInSorted }
