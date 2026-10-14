@@ -89,6 +89,7 @@ LABEL org.opencontainers.image.title="Huwa Server" \
 # see /usr/share/doc/huwa/NOTICE) from the Jellyfin repository; VAAPI / QSV drivers come with it
 # on amd64.
 RUN apt-get update \
+ && apt-get upgrade -y --no-install-recommends \
  && apt-get install -y --no-install-recommends ca-certificates curl gnupg tini libatomic1 \
  && install -d -m 0755 /etc/apt/keyrings \
  && curl -fsSL https://repo.jellyfin.org/jellyfin_team.gpg.key | gpg --dearmor -o /etc/apt/keyrings/jellyfin.gpg \
