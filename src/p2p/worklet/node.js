@@ -843,6 +843,13 @@ class HuwaNode {
     const homeKey = fromHex(this.secret.home)
     const { invite, publicKey, discoveryKey, seed } = BlindPairing.createInvite(homeKey)
     const inviteKeyPair = crypto.keyPair(seed)
+    // blind-pairing allows one member per account: a new invite replaces the previous one (opening
+    // the pairing screen twice, or the phone answering a second browser QR, failed with
+    // "Active member already exist" while the first invite was still open).
+    for (const old of this.pairingMembers) {
+      this.pairingMembers.delete(old)
+      await old.close().catch(noop)
+    }
     const member = this._pairing().addMember({
       discoveryKey,
       onadd: async (candidate) => {

@@ -1,5 +1,6 @@
 // Entry point of the P2P layer for the UI: `getP2P()` returns the `bare` implementation when the
-// worklet starts, and falls back to the `local` one otherwise (web, Expo Go, worklet failure).
+// worklet starts (phones), the `web` one in a browser (the node in a SharedWorker, src/p2p/web/),
+// and falls back to the `local` one otherwise (Expo Go, worklet failure, browser without the APIs).
 import * as Device from 'expo-device';
 import { Paths } from 'expo-file-system';
 import { Platform } from 'react-native';
@@ -7,6 +8,7 @@ import { Platform } from 'react-native';
 import { HuwaKeychain } from '../../modules/huwa-keychain';
 
 import type { BareP2P } from './bare';
+import type { WebP2P } from './web/client';
 import type { P2P, P2PStatus, Unsubscribe } from './contract';
 import { isDemo } from '@/demo/flags';
 
@@ -15,7 +17,7 @@ import { onRelayConfig, relayConfig } from './relays';
 
 export type * from './contract';
 
-export type P2PBackend = 'bare' | 'local';
+export type P2PBackend = 'bare' | 'web' | 'local';
 
 /** Comma separated `host:port` list, e.g. a self-hosted `hyperdht --bootstrap` node. */
 const BOOTSTRAP = String(process.env.EXPO_PUBLIC_HUWA_BOOTSTRAP ?? '')
@@ -38,6 +40,12 @@ export function p2pBackend(): P2PBackend {
 /** Spike/diagnostic helpers, only available on the bare backend. */
 export function bareDiagnostics(): BareP2P | null {
   return instance?.bare ?? null;
+}
+
+/** Browser account session (login, lock, logout): only on the web backend. */
+export function webSession(): WebP2P | null {
+  if (!instance) getP2P();
+  return instance?.web ?? null;
 }
 
 /**
@@ -69,6 +77,7 @@ type Watch = { method: WatchKey; args: unknown[]; unsub: Unsubscribe };
 class SwitchingP2P implements P2P {
   backend: P2PBackend = 'local';
   bare: BareP2P | null = null;
+  web: WebP2P | null = null;
   private impl: P2P;
   private statusCbs = new Set<(s: P2PStatus) => void>();
   private statusUnsub: Unsubscribe = () => {};
@@ -81,7 +90,8 @@ class SwitchingP2P implements P2P {
 
   private pick(): P2P {
     // Demo mode (store screenshots): seeded single-device backend, no network.
-    if (Platform.OS === 'web' || isDemo) return createLocalP2P();
+    if (isDemo) return createLocalP2P();
+    if (Platform.OS === 'web') return this.pickWeb();
     try {
       // eslint-disable-next-line @typescript-eslint/no-require-imports
       const { createBareP2P } = require('./bare') as typeof import('./bare');
@@ -103,10 +113,28 @@ class SwitchingP2P implements P2P {
     }
   }
 
+  private pickWeb(): P2P {
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const { createWebP2P } = require('./web/client') as typeof import('./web/client');
+      const web = createWebP2P({
+        onBoot: (ok, info) => console.log('[huwa] nœud web', ok ? `prêt en ${info.readyMs} ms` : `échec: ${info.error}`),
+      });
+      web.ready.catch(() => this.fallback());
+      this.web = web;
+      this.backend = 'web';
+      return web;
+    } catch (err) {
+      console.warn('[huwa] nœud web indisponible, P2P local', err);
+      return createLocalP2P();
+    }
+  }
+
   private fallback() {
     if (this.backend === 'local') return;
     this.backend = 'local';
     this.bare = null;
+    this.web = null;
     this.impl = createLocalP2P();
     this.bindStatus();
     for (const w of this.watches) {

@@ -1,0 +1,23 @@
+{
+  "name": "huwa-p2p-web",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Build kit and tests of the Huwa browser node (src/p2p/web/): esbuild bundle -> public/p2p-worker.js, crypto shims checked against sodium-native, Playwright end-to-end tests and the real-network reliability bench.",
+  "license": "Apache-2.0",
+  "scripts": {
+    "build": "node build.mjs",
+    "test": "node --require ./test/register.cjs --test --test-timeout=300000 test/*.test.mjs",
+    "e2e": "node --test --test-concurrency=1 --test-timeout=900000 e2e/*.e2e.mjs",
+    "bench": "node bench/link-bench.mjs"
+  },
+  "devDependencies": {
+    "@huwa/dht-relay": "file:../dht-relay",
+    "buffer": "6.0.3",
+    "events": "3.3.0",
+    "fake-indexeddb": "6.2.5",
+    "playwright": "1.63.0",
+    "rocksdb-idb": "file:../rocksdb-idb",
+    "sodium-javascript": "0.8.0",
+    "ws": "8.18.3"
+  }
+}

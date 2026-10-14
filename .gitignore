@@ -72,3 +72,6 @@ src/manga-ext/runtime/runtime.bundle.js
 
 # libmpv dynamic framework (scripts/fetch-mpvkit.sh)
 modules/huwa-mpv/ios/Libmpv.xcframework/
+
+# Browser node bundle (npm run build:p2p-worker, before expo export -p web)
+public/p2p-worker.js

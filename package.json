@@ -98,6 +98,7 @@
     "build:worklet": "bare-pack --preset mobile --linked --out src/p2p/worklet.bundle.js src/p2p/worklet/index.js",
     "test:p2p": "node --experimental-strip-types --no-warnings --test \"test/p2p/*.test.mjs\"",
     "build:paperback": "node scripts/build-paperback-runtime.mjs",
+    "build:p2p-worker": "node packages/p2p-web/build.mjs",
     "test:paperback-live": "node --import ./scripts/test-register.mjs --experimental-strip-types --no-warnings test/paperback/live.mjs",
     "postinstall": "npm run build:worklet && npm run build:paperback",
     "test": "node --import ./scripts/test-register.mjs --test --experimental-strip-types --no-warnings \"src/**/__tests__/*.test.ts\""

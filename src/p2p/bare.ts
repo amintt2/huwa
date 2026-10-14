@@ -1,54 +1,17 @@
 // `bare` implementation of the P2P contract: a thin RPC client of the Bare worklet
 // (src/p2p/worklet/, bundled into src/p2p/worklet.bundle.js by `npm run build:worklet`).
 // The UI never touches cores: every method is one `bare-rpc` request {m, a} -> {ok, v | e}.
-import AsyncStorage from '@react-native-async-storage/async-storage';
+// Timeouts, errors, watches and the contract methods live in RpcP2P (./rpc-p2p.ts), shared with
+// the browser node client (./web/client.ts); this file is the bare-rpc transport and the worklet
+// lifecycle (start, restart with backoff, AppState check).
 import { AppState, type AppStateStatus } from 'react-native';
 
-import { migrateLegacy, type LegacyState } from '@/social/migrate';
-
-import type {
-  CommentFlag,
-  FlagReason,
-  BackupState,
-  Conversation,
-  Device,
-  DirectMessage,
-  JournalEntry,
-  Label,
-  MappingProposal,
-  MappingProposalInput,
-  P2P,
-  P2PComment,
-  P2PStatus,
-  CommunityStatsSums,
-  Profile,
-  PublicKey,
-  RestoreOptions,
-  StatsContribution,
-  Unsubscribe,
-} from './contract';
-import { P2PError } from './errors';
+import type { P2PStatus } from './contract';
 import type { RelayConfig } from './relays';
+import { RpcP2P, type RpcEvent, type RpcReply } from './rpc-p2p';
 
 const CMD = { CALL: 1, EVENT: 2 } as const;
-const DEFAULT_TIMEOUT = 30_000;
-/** PoW, pairing and restore can legitimately take long. */
-const TIMEOUTS: Record<string, number> = {
-  hello: 8_000,
-  status: 4_000,
-  restoreIdentity: 60_000,
-  acceptPairing: 130_000,
-  postComment: 60_000,
-  proposeMapping: 60_000,
-  flagComment: 60_000,
-  sendMessage: 60_000,
-  getProfile: 20_000,
-  contributeStats: 90_000,
-  communityStats: 30_000,
-};
 const MAX_RESTARTS = 5;
-const LEGACY_KEY = 'huwa/state/v1';
-const MIGRATED_KEY = 'huwa/p2p/bare/migrated';
 
 type Bytes = Uint8Array;
 type IncomingMessage = { command: number; data: Bytes | null };
@@ -74,23 +37,16 @@ export type BareConfig = {
   onBoot?: (ok: boolean, info: { readyMs?: number; error?: string }) => void;
 };
 
-type Sub = { kind: string; arg?: string; cb: (data: never) => void };
-
 /** What the worklet reports about its relays (src/p2p/worklet/relay.js). */
 export type RelayStatus = { enabled: boolean; relays: number; connected: number; cores: number; bases: number };
 
 const decoder = new TextDecoder();
 const encoder = new TextEncoder();
 
-export class BareP2P implements P2P {
+export class BareP2P extends RpcP2P {
   readonly ready: Promise<void>;
   private worklet: WorkletInstance | null = null;
   private rpc: RPCInstance | null = null;
-  private current: P2PStatus = { state: 'starting', peers: 0 };
-  private meValue: Profile | undefined;
-  private statusCbs = new Set<(s: P2PStatus) => void>();
-  private subs = new Map<number, Sub>();
-  private nextSid = 1;
   private restarts = 0;
   private restarting: Promise<void> | null = null;
   private generation = 0;
@@ -98,6 +54,7 @@ export class BareP2P implements P2P {
   private deadReason: string | null = null;
 
   constructor(private config: BareConfig) {
+    super();
     this.ready = this.boot();
     AppState.addEventListener('change', (s) => this.onAppState(s));
   }
@@ -137,21 +94,6 @@ export class BareP2P implements P2P {
       this.setStatus({ state: 'error', peers: 0, error });
       this.config.onBoot?.(false, { error });
       throw err;
-    }
-  }
-
-  private lastReadyMs: number | undefined;
-
-  private async handshake() {
-    const hello = await this.call<{ status: P2PStatus; me: Profile | null; readyMs: number }>('hello', []);
-    // Older worklets answered `hello` even after a failed start: not a successful boot.
-    if (hello.status?.state === 'error') throw new Error(hello.status.error ?? 'Démarrage P2P échoué');
-    this.lastReadyMs = hello.readyMs;
-    this.meValue = hello.me ?? undefined;
-    this.setStatus(hello.status);
-    // Re-subscribe watchers after a restart.
-    for (const [sid, sub] of this.subs) {
-      this.call('watch', [sid, sub.kind, sub.arg]).catch(() => {});
     }
   }
 
@@ -207,66 +149,25 @@ export class BareP2P implements P2P {
 
   private onMessage(req: IncomingMessage) {
     if (req.command !== CMD.EVENT || !req.data) return;
-    let msg: { ev: string; sid?: number; data?: unknown };
+    let msg: RpcEvent;
     try {
       msg = JSON.parse(decoder.decode(req.data));
     } catch {
       return;
     }
-    if (msg.ev === 'status') this.setStatus(msg.data as P2PStatus);
-    else if (msg.ev === 'me') {
-      this.meValue = (msg.data as Profile | null) ?? undefined;
-      // `useMe()` re-reads `me()` on status notifications.
-      this.setStatus(this.current);
-    }
-    else if (msg.ev === 'sub' && typeof msg.sid === 'number') this.subs.get(msg.sid)?.cb(msg.data as never);
+    this.onEvent(msg);
   }
 
-  private setStatus(s: P2PStatus) {
-    this.current = s;
-    for (const cb of this.statusCbs) cb(s);
+  protected beforeCall() {
+    return this.restarting ?? undefined;
   }
 
-  private async call<T>(m: string, a: unknown[]): Promise<T> {
-    if (this.restarting && m !== 'hello') await this.restarting;
+  protected async send(m: string, a: unknown[]): Promise<RpcReply> {
     const rpc = this.rpc;
     if (!rpc) throw new Error(this.deadReason ? `P2P arrêté après plusieurs plantages (${this.deadReason}) : relance l’app.` : 'Worklet P2P indisponible');
     const req = rpc.request(CMD.CALL);
     req.send(JSON.stringify({ m, a }));
-    const timeout = TIMEOUTS[m] ?? DEFAULT_TIMEOUT;
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    const raw = await Promise.race([
-      req.reply(),
-      new Promise<never>((_, reject) => {
-        timer = setTimeout(() => reject(new Error(`P2P: délai dépassé (${m})`)), timeout);
-      }),
-    ]).finally(() => clearTimeout(timer));
-    const res = JSON.parse(decoder.decode(raw)) as { ok: boolean; v?: T; e?: string; code?: string };
-    if (!res.ok) throw new P2PError(res.e ?? 'Erreur P2P', res.code);
-    return res.v as T;
-  }
-
-  private watch<T>(kind: string, arg: string | undefined, cb: (data: T) => void): Unsubscribe {
-    const sid = this.nextSid++;
-    this.subs.set(sid, { kind, arg, cb: cb as (data: never) => void });
-    this.call('watch', [sid, kind, arg]).catch(() => {});
-    return () => {
-      if (!this.subs.delete(sid)) return;
-      this.call('unwatch', [sid]).catch(() => {});
-    };
-  }
-
-  /** Import the pre-P2P local history (finished episodes/chapters, comments) into the journal once. */
-  private async migrate(profile: Profile) {
-    if (await AsyncStorage.getItem(MIGRATED_KEY)) return;
-    const raw = await AsyncStorage.getItem(LEGACY_KEY);
-    if (raw) {
-      const m = migrateLegacy(JSON.parse(raw) as LegacyState, { key: profile.key, name: profile.name });
-      // Legacy comments stay on this device: republishing them would hit the rooms' rate limit
-      // with backdated timestamps. Their activity still counts through the journal.
-      for (const e of m.journal) await this.appendJournal(e).catch(() => {});
-    }
-    await AsyncStorage.setItem(MIGRATED_KEY, String(Date.now()));
+    return JSON.parse(decoder.decode(await req.reply())) as RpcReply;
   }
 
   // ---- diagnostics (spike) ---------------------------------------------------
@@ -279,12 +180,6 @@ export class BareP2P implements P2P {
   crashTest() {
     return this.call<string>('crash', []);
   }
-  identityLog() {
-    return this.call<{ t: string; body: unknown; ts: number; dev: string }[]>('identityLog', []);
-  }
-  vouch(seriesId: string, key: PublicKey) {
-    return this.call<void>('vouch', [seriesId, key]);
-  }
 
   // ---- Huwa relays (not part of the contract: the local backend has no network) -------
 
@@ -295,134 +190,6 @@ export class BareP2P implements P2P {
   }
   relayStatus() {
     return this.call<RelayStatus>('relayStatus', []);
-  }
-
-  // ---- P2P contract ------------------------------------------------------------
-
-  status() {
-    return this.current;
-  }
-  onStatus(cb: (s: P2PStatus) => void): Unsubscribe {
-    this.statusCbs.add(cb);
-    return () => this.statusCbs.delete(cb);
-  }
-
-  me() {
-    return this.meValue;
-  }
-  async createIdentity(name: string) {
-    const r = await this.call<{ profile: Profile; phrase: string[] }>('createIdentity', [name]);
-    this.meValue = r.profile;
-    this.migrate(r.profile).catch((err) => console.warn('[huwa] migration', err));
-    return r;
-  }
-  async restoreIdentity(phrase: string[], opts?: RestoreOptions) {
-    this.meValue = await this.call<Profile>('restoreIdentity', opts ? [phrase, opts] : [phrase]);
-    return this.meValue;
-  }
-  async updateProfile(patch: Partial<Pick<Profile, 'name' | 'bio' | 'avatar'>>) {
-    this.meValue = await this.call<Profile>('updateProfile', [patch]);
-    return this.meValue;
-  }
-  async getProfile(key: PublicKey) {
-    return (await this.call<Profile | null>('getProfile', [key])) ?? undefined;
-  }
-  backupState() {
-    return this.call<BackupState>('backupState', []);
-  }
-  markPhraseVerified() {
-    return this.call<void>('markPhraseVerified', []);
-  }
-  devices() {
-    return this.call<Device[]>('devices', []);
-  }
-  pairingInvite() {
-    return this.call<string>('pairingInvite', []);
-  }
-  async acceptPairing(invite: string) {
-    this.meValue = await this.call<Profile>('acceptPairing', [invite]);
-    return this.meValue;
-  }
-  revokeDevice(deviceKey: string) {
-    return this.call<void>('revokeDevice', [deviceKey]);
-  }
-
-  watchComments(seriesId: string, cb: (all: P2PComment[]) => void) {
-    return this.watch('comments', seriesId, cb);
-  }
-  postComment(c: Pick<P2PComment, 'target' | 'parentId' | 'text' | 'spoiler' | 'timestamp'>) {
-    return this.call<P2PComment>('postComment', [c]);
-  }
-  toggleLike(seriesId: string, commentId: string) {
-    return this.call<void>('toggleLike', [seriesId, commentId]);
-  }
-  editComment(seriesId: string, commentId: string, patch: { text: string; spoiler: boolean }) {
-    return this.call<void>('editComment', [seriesId, commentId, patch]);
-  }
-  deleteComment(seriesId: string, commentId: string) {
-    return this.call<void>('deleteComment', [seriesId, commentId]);
-  }
-  watchFlags(seriesId: string, cb: (all: CommentFlag[]) => void) {
-    return this.watch('flags', seriesId, cb);
-  }
-  async flagComment(seriesId: string, commentId: string, reason: FlagReason | null) {
-    await this.call<void>('flagComment', [seriesId, commentId, reason]);
-  }
-
-  follow(key: PublicKey) {
-    return this.call<void>('follow', [key]);
-  }
-  unfollow(key: PublicKey) {
-    return this.call<void>('unfollow', [key]);
-  }
-  block(key: PublicKey) {
-    return this.call<void>('block', [key]);
-  }
-  unblock(key: PublicKey) {
-    return this.call<void>('unblock', [key]);
-  }
-  report(target: string, val: Label['val']) {
-    return this.call<void>('report', [target, val]);
-  }
-  watchLabels(cb: (labels: Label[]) => void) {
-    return this.watch('labels', undefined, cb);
-  }
-  subscribeLabeler(key: PublicKey) {
-    return this.call<void>('subscribeLabeler', [key]);
-  }
-
-  watchConversations(cb: (c: Conversation[]) => void) {
-    return this.watch('conversations', undefined, cb);
-  }
-  watchMessages(peer: PublicKey, cb: (m: DirectMessage[]) => void) {
-    return this.watch('messages', peer, cb);
-  }
-  sendMessage(peer: PublicKey, text: string) {
-    return this.call<DirectMessage>('sendMessage', [peer, text]);
-  }
-  markRead(peer: PublicKey) {
-    return this.call<void>('markRead', [peer]);
-  }
-
-  appendJournal(e: JournalEntry) {
-    return this.call<void>('appendJournal', [e]);
-  }
-  journal(key?: PublicKey) {
-    return this.call<JournalEntry[]>('journal', [key ?? null]);
-  }
-
-  watchMapping(room: string, cb: (all: MappingProposal[]) => void) {
-    return this.watch('mapping', room, cb);
-  }
-  async proposeMapping(p: MappingProposalInput) {
-    await this.call<void>('proposeMapping', [p]);
-  }
-
-  async contributeStats(c: StatsContribution) {
-    await this.call<boolean>('contributeStats', [c]);
-  }
-  communityStats() {
-    return this.call<CommunityStatsSums>('communityStats', []);
   }
 }
 
