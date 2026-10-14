@@ -41,7 +41,17 @@ pub fn router(engine: Arc<Engine>) -> Router {
 
 /// Binds the listener and serves on the engine runtime until `Engine::shutdown`. Returns the port.
 pub async fn start(engine: Arc<Engine>) -> anyhow::Result<u16> {
-    let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0)).await?;
+    start_at(engine, std::net::SocketAddr::from(([127, 0, 0, 1], 0))).await
+}
+
+/// `start` on another address (feature `server`; the app always uses `127.0.0.1:0`).
+#[cfg(feature = "server")]
+pub async fn start_on(engine: Arc<Engine>, addr: std::net::SocketAddr) -> anyhow::Result<u16> {
+    start_at(engine, addr).await
+}
+
+async fn start_at(engine: Arc<Engine>, addr: std::net::SocketAddr) -> anyhow::Result<u16> {
+    let listener = tokio::net::TcpListener::bind(addr).await?;
     let port = listener.local_addr()?.port();
     engine.set_port(port);
     let app = router(engine.clone());
@@ -152,6 +162,12 @@ async fn stream_file(
     Path((info_hash, file)): Path<(String, String)>,
     headers: HeaderMap,
 ) -> Response {
+    serve_file(engine, &info_hash, &file, &headers).await
+}
+
+/// `GET /{infoHash}/{file}` for a host server mounting the route under its own path (huwa-server's
+/// `/s/<token>/t/…`, after its own checks): same behaviour as the loopback route.
+pub async fn serve_file(engine: Arc<Engine>, info_hash: &str, file: &str, headers: &HeaderMap) -> Response {
     let hex = info_hash.to_lowercase();
     let Some(entry) = engine.entry(&hex) else {
         return text(StatusCode::NOT_FOUND, "unknown torrent");
@@ -177,7 +193,7 @@ async fn stream_file(
     }
 
     // Resolve the file index.
-    let file_idx = match parse_file(&file) {
+    let file_idx = match parse_file(file) {
         Some(Some(i)) => i,
         Some(None) => match *entry.selected_file.read() {
             Some(i) => i,
@@ -345,6 +361,16 @@ mod tests {
         assert_eq!(parse_file("auto.mp4"), Some(None));
         assert_eq!(parse_file("x.mkv"), None);
         assert_eq!(parse_file(""), None);
+    }
+
+    #[cfg(feature = "server")]
+    #[test]
+    fn prefixed_stream_urls() {
+        let h = "0123456789abcdef0123456789abcdef01234567";
+        assert_eq!(crate::engine::prefixed_url_of("/t", h, Some(2), Some("mkv")), format!("/t/{h}/2.mkv"));
+        assert_eq!(crate::engine::prefixed_url_of("https://x.example/t/", h, None, None), format!("https://x.example/t/{h}/auto"));
+        let url = crate::engine::prefixed_url_of("/t", h, Some(0), Some("mp4"));
+        assert_eq!(parse_file(url.rsplit('/').next().unwrap()), Some(Some(0)));
     }
 
     #[test]

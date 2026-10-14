@@ -28,6 +28,9 @@ pub mod cache;
 pub mod engine;
 pub mod ffi;
 pub mod http_proxy;
+/// Upstream IP policy for the HTTP proxy on a server (feature `server`).
+#[cfg(feature = "server")]
+pub mod net_policy;
 pub mod priorities;
 pub mod probe;
 pub mod range;

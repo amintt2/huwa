@@ -12,6 +12,14 @@ publish = false
 name = "huwa_torrent_core"
 crate-type = ["cdylib", "staticlib", "rlib"]
 
+[features]
+default = []
+# Server deployments (native/huwa-server): public URL prefix instead of 127.0.0.1, configurable
+# bind address and runtime size, upstream IP policy for the HTTP proxy (src/net_policy.rs). The
+# mobile builds (scripts/build-torrent.sh) never enable it: their behaviour is unchanged.
+# Seeding stays compiled out: `disable-upload` is set below for every build.
+server = []
+
 [dependencies]
 # Pinned exactly: the API used here was read from the v9.0.1 sources.
 # - default-features = false drops the native TLS (OpenSSL) path, which does not cross-compile to mobile.
