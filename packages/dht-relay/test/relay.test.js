@@ -231,3 +231,47 @@ test('per-client query limit', async (t) => {
   assert.ok(events.limits.includes('queries'))
   a.destroy()
 })
+
+test('a duplicate Noise reply (hyperdht races several DHT nodes) is denied, not thrown', () => {
+  const { Handshake } = require('../lib/handshake')
+  const sent = []
+  const protocol = { noiseReply: { send: (m) => sent.push(m) } }
+  const node = { _handshakes: new Map() }
+  const server = DHT.keyPair()
+  const client = DHT.keyPair()
+  const ini = new Handshake(node, protocol, null, 1, true, client, server.publicKey)
+  const res = new Handshake(node, protocol, null, 2, false, server, null)
+  ini._onNoiseSend({ payload: b4a.alloc(0) })
+  res._onNoiseReceive({ payload: sent.at(-1).payload })
+  res._onNoiseSend({ payload: b4a.alloc(0) })
+  const reply = sent.at(-1).payload
+  ini._onNoiseReceive({ payload: reply })
+  assert.equal(sent.at(-1).complete, true)
+  // The same reply again (from a second DHT node): no exception, a denied (empty) answer.
+  assert.doesNotThrow(() => ini._onNoiseReceive({ payload: reply }))
+  assert.equal(sent.at(-1).payload, null)
+})
+
+test('a throwing message handler does not freeze the relay protocol', async (t) => {
+  const { client } = await rig(t)
+  const node = client()
+  await node.ready()
+  node._protocol.once('finished', () => {
+    throw new Error('boom')
+  })
+  const topic = hash('huwa/test/handler-error')
+  await within(node.lookup(topic).finished(), 20000, 'first lookup (its handler throws)')
+  await within(node.announce(topic, RelayNode.keyPair()).finished(), 20000, 'announce after a handler error')
+  await within(node.lookup(topic).finished(), 20000, 'lookup after a handler error')
+})
+
+test('listening twice with one key pair: the relay retries, then reports listenError instead of hanging', async (t) => {
+  const { client } = await rig(t)
+  const a = client()
+  const b = client()
+  const keyPair = RelayNode.keyPair()
+  await within(a.createServer().listen(keyPair), 20000, 'first listen')
+  const second = b.createServer()
+  await assert.rejects(within(second.listen(keyPair), 20000, 'second listen'), /KEYPAIR_ALREADY_USED/)
+  await within(second.close(), 5000, 'close after listenError')
+})

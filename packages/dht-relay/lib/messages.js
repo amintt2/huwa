@@ -721,6 +721,24 @@ const mutableGetReply = {
   }
 }
 
+// HUWA FORK: the relay could not listen for the client's server (`remoteAlias` = client alias).
+const listenError = {
+  preencode (state, m) {
+    id.preencode(state, m.remoteAlias)
+    string.preencode(state, m.error || '')
+  },
+  encode (state, m) {
+    id.encode(state, m.remoteAlias)
+    string.encode(state, m.error || '')
+  },
+  decode (state) {
+    return {
+      remoteAlias: id.decode(state),
+      error: string.decode(state)
+    }
+  }
+}
+
 module.exports = {
   handshake,
   ping,
@@ -753,5 +771,6 @@ module.exports = {
   mutablePut,
   mutablePutReply,
   mutableGet,
-  mutableGetReply
+  mutableGetReply,
+  listenError
 }

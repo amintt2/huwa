@@ -34,6 +34,7 @@ class Server extends EventEmitter {
     this._onClosed = onClosed.bind(this)
     this._onListening = onListening.bind(this)
     this._onConnection = onConnection.bind(this)
+    this._onListenError = onListenError.bind(this)
 
     this.ready = async function ready () {
       await this._protocol.ready()
@@ -65,8 +66,10 @@ class Server extends EventEmitter {
       secretKey: keyPair.secretKey
     })
 
-    this._listening = new Promise((resolve) => {
+    // HUWA FORK: rejects when the relay reports it could not listen (listenError).
+    this._listening = new Promise((resolve, reject) => {
       this.once('listening', () => resolve())
+      this.once('listen-error', reject)
     })
 
     return this._listening
@@ -84,8 +87,16 @@ class Server extends EventEmitter {
   async close () {
     if (this._closing) return this._closing
 
-    if (this._listening) await this._listening
-    else {
+    if (this._listening) {
+      try {
+        await this._listening
+      } catch {
+        // never listened (listenError): nothing to close on the relay
+        this._closing = Promise.resolve()
+        if (!this._closed) this._onClosed()
+        return this._closing
+      }
+    } else {
       this._closing = Promise.resolve()
       return this._closing
     }
@@ -113,6 +124,12 @@ function onClosed () {
   this._closing = Promise.resolve()
 
   this.emit('close')
+}
+
+function onListenError (message) {
+  const err = new Error('Relay could not listen: ' + message.error)
+  err.code = message.error
+  this.emit('listen-error', err)
 }
 
 function onListening (message) {

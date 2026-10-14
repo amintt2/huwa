@@ -32,6 +32,9 @@ function sign (kind, target, token, peerId, ann) {
   // A refresh token is part of what hyperdht signs; the browser signs the plain announce, so a
   // refreshing announce cannot be relayed (hyperdht never sets it for a first announce).
   if (ann && ann.refresh) return Promise.reject(new Error('refresh announces cannot be relayed'))
+  // The client is gone: nobody will ever sign. Without this the unannounce of its servers waited
+  // forever, so they never closed and the key pair stayed "in use" on this DHT node.
+  if (this._node._closed || this._protocol._stream.destroyed) return Promise.reject(new Error('Relay client gone'))
 
   const id = nextId()
 

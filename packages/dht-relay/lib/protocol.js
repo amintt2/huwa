@@ -193,7 +193,7 @@ class Protocol extends EventEmitter {
     })
 
     // HUWA FORK: appended last, so the upstream message ids above do not move.
-    for (const name of ['mutablePut', 'mutablePutReply', 'mutableGet', 'mutableGetReply']) {
+    for (const name of ['mutablePut', 'mutablePutReply', 'mutableGet', 'mutableGetReply', 'listenError']) {
       this[name] = channel.addMessage({
         encoding: m[name],
         onmessage: this._dispatch.bind(this, name)
@@ -205,7 +205,15 @@ class Protocol extends EventEmitter {
 
   _dispatch (name, message) {
     if (this._guard !== null && this._guard(name, message) === false) return
-    this.emit(name, message)
+    // HUWA FORK: a throwing handler used to escape into the transport's push() and leave the
+    // stream's read loop broken: every later message was silently dropped (a relay client that
+    // stopped answering signature requests, so its servers never closed).
+    try {
+      this.emit(name, message)
+    } catch (err) {
+      if (typeof process !== 'undefined' && process.env && process.env.HUWA_RELAY_DEBUG) console.log('[proto ' + (this._debugName || 'relay') + '] handler error', name, err && err.stack)
+      this.emit('handler-error', err, name)
+    }
   }
 
   heartbeat () {

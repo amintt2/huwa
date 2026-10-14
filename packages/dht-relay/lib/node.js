@@ -18,6 +18,7 @@ class Node extends EventEmitter {
     super()
 
     this._protocol = new Protocol(stream)
+    this._protocol._debugName = 'client'
     // HUWA FORK: non-custodial by default. Custodial mode sends secret keys to the relay; it must
     // be asked for explicitly (and the Huwa gateway refuses it anyway).
     this._custodial = options.custodial === true
@@ -58,6 +59,7 @@ class Node extends EventEmitter {
     this._onNoiseSend = onNoiseSend.bind(this)
     this._onNoiseReceive = onNoiseReceive.bind(this)
     this._onMutableReply = onMutableReply.bind(this)
+    this._onListenError = onListenError.bind(this)
 
     this._protocol
       .on('listening', this._onListening)
@@ -76,6 +78,7 @@ class Node extends EventEmitter {
       .on('noiseReceive', this._onNoiseReceive)
       .on('mutablePutReply', this._onMutableReply)
       .on('mutableGetReply', this._onMutableReply)
+      .on('listenError', this._onListenError)
       .alive()
       .handshake.send({
         custodial: this._custodial,
@@ -376,6 +379,13 @@ function onStreamClose () {
     .off('noiseReceive', this._onNoiseReceive)
     .off('mutablePutReply', this._onMutableReply)
     .off('mutableGetReply', this._onMutableReply)
+    .off('listenError', this._onListenError)
+}
+
+function onListenError (message) {
+  const server = this._opening.get(message.remoteAlias)
+
+  if (server) server._onListenError(message)
 }
 
 function onMutableReply (message) {

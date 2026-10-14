@@ -96,14 +96,39 @@ function onNoise (payload) {
     complete: this.complete,
     remoteId: this.remoteId,
     holepunchSecret: this.holepunchSecret,
-    remotePublicKey: this.remotePublicKey
+    remotePublicKey: this.remotePublicKey || buffer.alloc(32)
   })
 }
 
+// HUWA FORK: hyperdht's connect runs the Noise exchange through several DHT nodes in parallel and
+// can hand the same server reply to `recv` twice. Upstream threw on the second one (the handshake
+// was complete); the exception escaped into the relay transport and froze the whole relay stream:
+// every connection, announce and signature request of that browser died ("connection timed out"
+// on the relay's side). Answer with a denial instead: the relay rejects that duplicate only.
 function onNoiseSend (message) {
-  this._onNoise(this._handshake.send(message.payload))
+  let payload
+  try {
+    payload = this._handshake.send(message.payload)
+  } catch {
+    return deny.call(this)
+  }
+  this._onNoise(payload)
 }
 
 function onNoiseReceive (message) {
-  this._onNoise(this._handshake.recv(message.payload))
+  let payload
+  try {
+    payload = this._handshake.recv(message.payload)
+  } catch {
+    return deny.call(this)
+  }
+  this._onNoise(payload)
+}
+
+function deny () {
+  this._protocol.noiseReply.send({
+    id: this._id,
+    payload: null,
+    remotePublicKey: this.remotePublicKey || buffer.alloc(32)
+  })
 }
