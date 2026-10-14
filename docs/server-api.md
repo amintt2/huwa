@@ -252,6 +252,10 @@ every `url` field of a result into a media URL carrying a **media token** for th
   `master.m3u8` creates the job's variant and when a job (re)starts: `429 quota_exceeded`,
   `kind: "transcode_session" | "transcode_server"`. A seek restarts the session's own job and is
   never refused. Remux jobs (copy video, AAC audio) are not counted.
+- **Background work.** A session holds at most 32 torrents (`startStream` / `prewarm`) and runs
+  at most 16 swarm probes (`429`, `kind: "torrents" | "probes"`). Media probes: one ffprobe per
+  source at a time, 4 server-wide (others wait); files longer than 12 h are refused
+  (`502 probe_failed`).
 - **Deduplication.** One engine torrent per info hash, whatever the number of sessions. A
   per-hash holder count decides who may `pause` / `release` / delete it (the last holder).
 - **Cache.** `HUWA_CACHE_MAX_GB` is a global LRU over idle torrents. A janitor drops expired
@@ -289,9 +293,17 @@ HTTP proxy and for everything the server fetches itself (compat `/subtitles.vtt`
 
   Environment proxies are ignored (`no_proxy`).
 - **ffmpeg never gets a user URL.** ffprobe / ffmpeg only read the server's internal loopback
-  listener (`http://127.0.0.1:<random port>/i/<per-process secret>/t|http/…`), with
-  `-protocol_whitelist http,tcp`. A remote file reaches ffmpeg only through an HTTP proxy session,
-  i.e. after the policy above.
+  listener (`http://127.0.0.1:<random port>/i/<capability>/t|http/…`), with
+  `-protocol_whitelist http,tcp` and `-format_whitelist` (self-contained containers only: no
+  `hls`, `dash`, `concat` or other demuxer that opens URLs found in a file). The capability is an
+  HMAC of the one source the URL reads (per-process key): a URL found inside a crafted file cannot
+  reach another stream. A remote file reaches ffmpeg only through an HTTP proxy session, i.e.
+  after the policy above; the proxy's `302` fallback (upstream without Range) is refused on the
+  internal listener, so ffmpeg never follows it.
+- **Tracker sources.** `tracker:` URLs in `sources` (`startStream`, `prewarm`, `probeStart`,
+  compat `create`) pointing at a refused address (IP literal, `localhost`, or a name resolving to
+  one) are dropped before the engine sees them. librqbit's tracker client resolves names again on
+  its own: a tracker name that rebinds after the check is not covered (open issue).
 - **`HUWA_ALLOW_PRIVATE_UPSTREAMS=1`** allows RFC 1918, CGNAT and ULA, for a media server on the
   LAN. Loopback, link-local (metadata) and the special ranges stay denied.
 
