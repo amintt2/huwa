@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "huwa-web-dist",
+      "runtimeExecutable": "node",
+      "runtimeArgs": ["test/web/serve.mjs", "dist", "8130"],
+      "port": 8130
+    }
+  ]
+}

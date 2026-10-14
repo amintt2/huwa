@@ -1,8 +1,15 @@
-// Web root layout (docs/WEB_DOCKER_PLAN.md D1, D16). Same providers and boot sequence as
+// Web root layout (docs/WEB_DOCKER_PLAN.md D1, D16, P1). Same providers and boot sequence as
 // _layout.tsx, minus what only exists on a phone (Bare worklet, torrent engine, downloads,
 // Paperback WebView, notifications, APK updates, iCloud Keychain backup), and with no onboarding
-// wall: the catalog is browsable logged out; everything tied to an account stays behind `me`.
-// Phase 0 (spike S1): boots and renders. Phase 1 brings the Stremio-like shell and sign-in UI.
+// wall: the catalog is browsable logged out.
+//
+// · Shell: Stremio-like rail + top bar from 768 px around the whole stack (src/web/shell.tsx).
+// · Signed out, the routes that need an account fall in two groups:
+//   - "gated" (play, read, comment, extensions): reachable, but they only show the sign-in sheet
+//     over the page they were opened from (transparent presentation + src/web/sign-in.tsx);
+//   - the rest of the account screens stay behind Stack.Protected.
+// · Runtime config (/huwa-config.json), `?streamingServer=` confirmation, service-worker update
+//   prompt, persistent storage request.
 import { DarkTheme, Stack, ThemeProvider } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
 import { StatusBar } from 'expo-status-bar';
@@ -21,8 +28,16 @@ import { useSettingsHydrated } from '@/settings/settings';
 import { useListsHydrated } from '@/store/lists';
 import { useHydrated } from '@/store/store';
 import { C } from '@/theme/tokens';
+import { loadWebConfig, useWebConfig } from '@/web/config';
+import { ServerParamPrompt, UpdatePrompt } from '@/web/prompts';
+import { isStandalone, requestPersistence } from '@/web/pwa';
+import { WebShell } from '@/web/shell';
+import { takeServerParam } from '@/web/streaming-server';
 
 SplashScreen.preventAutoHideAsync();
+void loadWebConfig();
+// Read (and strip) ?streamingServer= before the router settles on the URL.
+takeServerParam();
 
 export { ErrorScreen as ErrorBoundary } from '@/components/error-screen';
 
@@ -33,12 +48,16 @@ const theme = {
 
 // No detent form sheets in a browser: plain modals.
 const SHEET = { presentation: 'modal' as const, contentStyle: { backgroundColor: C.surface } };
+// Signed out, a gated route is only its sign-in sheet: the page underneath stays visible.
+const GATE = { presentation: 'transparentModal' as const, animation: 'none' as const, contentStyle: { backgroundColor: 'transparent' } };
+const BLACK = { contentStyle: { backgroundColor: C.black } };
 
 export default function RootLayout() {
   const hydrated = useHydrated();
   const settingsReady = useSettingsHydrated();
   const listsReady = useListsHydrated();
   const [catalogReady, setCatalogReady] = useState(false);
+  const config = useWebConfig();
   useEffect(() => {
     hydrateAddons();
   }, []);
@@ -59,70 +78,87 @@ export default function RootLayout() {
     if (ready) SplashScreen.hideAsync();
   }, [ready]);
 
+  // Account keys and progress live in IndexedDB: ask the browser to keep them, once there is
+  // something to keep (Firefox shows a prompt for this).
+  useEffect(() => {
+    if (me || isStandalone()) void requestPersistence();
+  }, [me]);
+
+  useEffect(() => {
+    if (config.instanceName !== 'Huwa' && typeof document !== 'undefined') document.title = `${config.instanceName} · Huwa`;
+  }, [config.instanceName]);
+
   if (!ready) return null;
+
+  const gate = (opts?: object) => (me ? opts : GATE);
 
   return (
     <ThemeProvider value={theme}>
       <StatusBar style="light" />
-      <Stack screenOptions={{ headerShown: false, contentStyle: { backgroundColor: C.bg } }}>
-        {/* Public: catalog, details, search, calendar (D16). */}
-        <Stack.Screen name="(tabs)" />
-        <Stack.Screen name="anime/[id]" />
-        <Stack.Screen name="manhwa/[id]" />
-        <Stack.Screen name="search" />
-        <Stack.Screen name="calendar" />
-        <Stack.Screen name="browse" />
-        <Stack.Screen name="about" />
-        <Stack.Protected guard={!!me}>
-          <Stack.Screen name="watch/[id]" options={{ contentStyle: { backgroundColor: C.black } }} />
-          <Stack.Screen name="read/[id]" options={{ contentStyle: { backgroundColor: C.black } }} />
-          <Stack.Screen name="comments" options={SHEET} />
-          <Stack.Screen name="u/[key]" />
-          <Stack.Screen name="profile-edit" options={SHEET} />
-          <Stack.Screen name="messages" />
-          <Stack.Screen name="dm/[key]" />
-          <Stack.Screen name="rank" />
+      <WebShell>
+        <Stack screenOptions={{ headerShown: false, contentStyle: { backgroundColor: C.bg } }}>
+          {/* Public: catalog, details, search, calendar, settings (D16). */}
+          <Stack.Screen name="(tabs)" />
+          <Stack.Screen name="anime/[id]" />
+          <Stack.Screen name="manhwa/[id]" />
+          <Stack.Screen name="search" />
+          <Stack.Screen name="calendar" />
+          <Stack.Screen name="browse" />
+          <Stack.Screen name="about" />
           <Stack.Screen name="settings/index" />
-          <Stack.Screen name="settings/general" />
-          <Stack.Screen name="settings/subtitles" />
-          <Stack.Screen name="settings/security" />
-          <Stack.Screen name="settings/relays" />
-          <Stack.Screen name="settings/phrase" />
-          <Stack.Screen name="settings/pair" options={SHEET} />
-          <Stack.Screen name="passkey" options={SHEET} />
-          <Stack.Screen name="settings/moderation" />
-          <Stack.Screen name="settings/notifications" />
-          <Stack.Screen name="settings/stats" />
-          <Stack.Screen name="settings/delete-account" />
-          <Stack.Screen name="addons" />
-          <Stack.Screen name="manga-sources" />
-          <Stack.Screen name="paperback" options={{ animation: 'none' }} />
-          <Stack.Screen name="source-section" />
-          <Stack.Screen name="extension" />
-          <Stack.Screen name="extension-add" options={SHEET} />
-          <Stack.Screen name="addon" options={SHEET} />
-          <Stack.Screen name="install" options={SHEET} />
-          <Stack.Screen name="pack" options={SHEET} />
-          <Stack.Screen name="pack-create" />
-          <Stack.Screen name="addon-catalog" />
-          <Stack.Screen name="debrid" />
-          <Stack.Screen name="discover" />
-          <Stack.Screen name="meta/[id]" />
-          <Stack.Screen name="downloads" />
-          <Stack.Screen name="import" />
-          <Stack.Screen name="offline" />
-          <Stack.Screen name="lists" />
-          <Stack.Screen name="list/[id]" />
-          <Stack.Screen name="list-picker" options={SHEET} />
-          <Stack.Screen name="mapping" options={SHEET} />
-          <Stack.Screen name="anilist-auth" options={{ animation: 'none' }} />
-        </Stack.Protected>
-        <Stack.Protected guard={!me}>
-          <Stack.Screen name="onboarding" options={{ animation: 'fade' }} />
-        </Stack.Protected>
-      </Stack>
+          {/* Gated: the sign-in sheet when signed out. */}
+          <Stack.Screen name="watch/[id]" options={gate(BLACK)} />
+          <Stack.Screen name="read/[id]" options={gate(BLACK)} />
+          <Stack.Screen name="comments" options={gate(SHEET)} />
+          <Stack.Screen name="addons" options={gate()} />
+          <Stack.Screen name="addon" options={gate(SHEET)} />
+          <Stack.Screen name="install" options={gate(SHEET)} />
+          <Stack.Screen name="extension-add" options={gate(SHEET)} />
+          <Stack.Screen name="pack" options={gate(SHEET)} />
+          <Stack.Screen name="manga-sources" options={gate()} />
+          <Stack.Protected guard={!!me}>
+            <Stack.Screen name="u/[key]" />
+            <Stack.Screen name="profile-edit" options={SHEET} />
+            <Stack.Screen name="messages" />
+            <Stack.Screen name="dm/[key]" />
+            <Stack.Screen name="rank" />
+            <Stack.Screen name="settings/general" />
+            <Stack.Screen name="settings/subtitles" />
+            <Stack.Screen name="settings/security" />
+            <Stack.Screen name="settings/relays" />
+            <Stack.Screen name="settings/phrase" />
+            <Stack.Screen name="settings/pair" options={SHEET} />
+            <Stack.Screen name="passkey" options={SHEET} />
+            <Stack.Screen name="settings/moderation" />
+            <Stack.Screen name="settings/notifications" />
+            <Stack.Screen name="settings/stats" />
+            <Stack.Screen name="settings/delete-account" />
+            <Stack.Screen name="paperback" options={{ animation: 'none' }} />
+            <Stack.Screen name="source-section" />
+            <Stack.Screen name="extension" />
+            <Stack.Screen name="pack-create" />
+            <Stack.Screen name="addon-catalog" />
+            <Stack.Screen name="debrid" />
+            <Stack.Screen name="discover" />
+            <Stack.Screen name="meta/[id]" />
+            <Stack.Screen name="downloads" />
+            <Stack.Screen name="import" />
+            <Stack.Screen name="offline" />
+            <Stack.Screen name="lists" />
+            <Stack.Screen name="list/[id]" />
+            <Stack.Screen name="list-picker" options={SHEET} />
+            <Stack.Screen name="mapping" options={SHEET} />
+            <Stack.Screen name="anilist-auth" options={{ animation: 'none' }} />
+          </Stack.Protected>
+          <Stack.Protected guard={!me}>
+            <Stack.Screen name="onboarding" options={{ animation: 'fade' }} />
+          </Stack.Protected>
+        </Stack>
+      </WebShell>
       <OfflineBanner />
       <ToastHost />
+      <ServerParamPrompt />
+      <UpdatePrompt />
     </ThemeProvider>
   );
 }
