@@ -28,7 +28,10 @@ const params = new URL(scope.location.href).searchParams;
 const gateway = params.get('gw') || scope.location.origin.replace(/^http/, 'ws') + '/p2p';
 const debug = params.get('debug') === '1';
 const log = (...a: unknown[]) => {
-  if (debug) console.log('[huwa-node]', ...a);
+  if (!debug) return;
+  console.log('[huwa-node]', ...a);
+  // SharedWorker consoles are hard to reach from tests: mirror to the tabs.
+  host?.broadcast({ t: 'event', ev: 'log', data: a.map(String).join(' ') });
 };
 
 // Held while a node runs: a tab opened later finds a "public computer" session through

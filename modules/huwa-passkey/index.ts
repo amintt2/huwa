@@ -32,3 +32,6 @@ type Native = {
 
 /** null on Android / web / builds without the module. */
 export const HuwaPasskey = requireOptionalNativeModule<Native>('HuwaPasskey');
+
+/** WebAuthn relying party of the iOS module (index.web.ts: this page's host). */
+export const PASSKEY_RP_ID = 'huwa.mciut.fr';

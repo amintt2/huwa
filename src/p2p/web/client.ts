@@ -9,7 +9,7 @@ import { RpcP2P, type RpcEvent, type RpcReply } from '../rpc-p2p';
 import type { P2PStatus } from '../contract';
 import { P2PError } from '../errors';
 
-import { openNodeChannel, supportsBrowserNode, type NodeChannel, type NodeMessage } from './channel';
+import { openDedicatedChannel, openNodeChannel, supportsBrowserNode, type NodeChannel, type NodeMessage } from './channel';
 
 export type WebStorageMode = 'device' | 'passkey' | 'memory';
 
@@ -25,11 +25,15 @@ export type WebSessionInfo = {
   online: boolean;
   error: { code: string; message: string } | null;
   storageError: { code: string; message: string } | null;
+  /** false when the worker cannot keep the at-rest key (WebKit SharedWorker). */
+  keyStore?: boolean;
 };
 
 export type WebP2PConfig = {
   /** Worker script (default /p2p-worker.js, built by `npm run build:p2p-worker`). */
   workerUrl?: string;
+  /** Force a channel kind (tests, diagnostics). */
+  channel?: 'dedicated';
   /** Gateway WebSocket (default: this origin's /p2p). */
   gateway?: string;
   onBoot?: (ok: boolean, info: { readyMs?: number; error?: string }) => void;
@@ -38,6 +42,8 @@ export type WebP2PConfig = {
 const HINT = 'huwa/web/account';
 /** Methods that may start the worker (login flows); others fail fast while no node runs. */
 const STARTS_WORKER = /^session\.|^(createIdentity|restoreIdentity|acceptPairing)$/;
+/** Login methods: they start a node (session.begin) when none runs yet. */
+const LOGIN = new Set(['createIdentity', 'restoreIdentity', 'acceptPairing']);
 const IDLE: WebSessionInfo = { state: 'idle', mode: null, hasAccount: false, me: null, gateway: '', deviceName: '', passkey: null, online: false, error: null, storageError: null };
 
 function storage(kind: 'local' | 'session'): Storage | null {
@@ -80,6 +86,7 @@ export class WebP2P extends RpcP2P {
   private nextId = 1;
   private sessionValue: WebSessionInfo = IDLE;
   private sessionCbs = new Set<(s: WebSessionInfo) => void>();
+  private loginMode: 'device' | 'memory' = 'device';
 
   constructor(private config: WebP2PConfig = {}) {
     super();
@@ -113,12 +120,15 @@ export class WebP2P extends RpcP2P {
   connect(): Promise<void> {
     if (!this.connecting) {
       this.connecting = (async () => {
-        const ch = await openNodeChannel(this.workerUrl());
-        ch.onmessage = (msg) => this.onNodeMessage(msg);
-        ch.onreset = () => this.onReset();
-        this.channel = ch;
-        if (typeof addEventListener === 'function') addEventListener('pagehide', () => ch.close(), { once: true });
-        await this.handshake();
+        await this.open(this.config.channel === 'dedicated' ? openDedicatedChannel(this.workerUrl()) : await openNodeChannel(this.workerUrl()));
+        if (this.channel?.kind === 'shared' && this.sessionValue.keyStore === false) {
+          // WebKit: a SharedWorker cannot keep CryptoKeys in IndexedDB; one tab runs the node
+          // in a dedicated worker instead (leader election).
+          this.channel.close();
+          this.channel = null;
+          const { openLeaderChannel } = await import('./leader');
+          await this.open(typeof BroadcastChannel !== 'undefined' && navigator.locks ? openLeaderChannel(this.workerUrl()) : openDedicatedChannel(this.workerUrl()));
+        }
       })();
       this.connecting.catch(() => {
         this.connecting = null;
@@ -127,6 +137,14 @@ export class WebP2P extends RpcP2P {
       });
     }
     return this.connecting;
+  }
+
+  private async open(ch: NodeChannel) {
+    ch.onmessage = (msg) => this.onNodeMessage(msg);
+    ch.onreset = () => this.onReset();
+    this.channel = ch;
+    if (typeof addEventListener === 'function') addEventListener('pagehide', () => ch.close(), { once: true });
+    await this.handshake();
   }
 
   private onReset() {
@@ -147,6 +165,7 @@ export class WebP2P extends RpcP2P {
     if (msg.t !== 'event') return;
     const ev = msg as unknown as RpcEvent;
     if (ev.ev === 'session') return this.setSession(ev.data as WebSessionInfo);
+    if (ev.ev === 'log') return console.log('[huwa-node]', ev.data);
     this.onEvent(ev);
   }
 
@@ -173,9 +192,14 @@ export class WebP2P extends RpcP2P {
   protected override async beforeCall(m: string) {
     if (this.channel || this.connecting) {
       if (this.connecting && m !== 'session.info') await this.connecting.catch(() => {});
-      return;
-    }
-    if (STARTS_WORKER.test(m)) await this.connect();
+    } else if (STARTS_WORKER.test(m)) await this.connect();
+    // A login starts the node first, on the storage chosen on the login screen.
+    if (LOGIN.has(m) && this.sessionValue.state === 'idle') await this.begin({ mode: this.loginMode });
+  }
+
+  /** Storage of the next login: 'memory' = "public computer" (nothing written to disk). */
+  setLoginMode(mode: 'device' | 'memory') {
+    this.loginMode = mode;
   }
 
   protected send(m: string, a: unknown[]): Promise<RpcReply> {

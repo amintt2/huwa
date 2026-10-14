@@ -1,0 +1,82 @@
+{
+  "bundle": {
+    "bytes": 1111177,
+    "gzip": 315552,
+    "brotli": 260339,
+    "top": [
+      [
+        "hypercore",
+        "181 KiB"
+      ],
+      [
+        "autobase",
+        "138 KiB"
+      ],
+      [
+        "src/p2p (Huwa)",
+        "86 KiB"
+      ],
+      [
+        "other",
+        "83 KiB"
+      ],
+      [
+        "hypercore-storage",
+        "76 KiB"
+      ],
+      [
+        "@noble/curves",
+        "61 KiB"
+      ],
+      [
+        "hyperbee",
+        "49 KiB"
+      ],
+      [
+        "sodium-javascript",
+        "44 KiB"
+      ],
+      [
+        "buffer",
+        "25 KiB"
+      ],
+      [
+        "compact-encoding",
+        "19 KiB"
+      ],
+      [
+        "bip39-mnemonic",
+        "19 KiB"
+      ],
+      [
+        "hyperswarm",
+        "19 KiB"
+      ]
+    ]
+  },
+  "firefox": {
+    "version": "155.0",
+    "qrLink": {
+      "totalMs": 16892,
+      "phoneMs": 27,
+      "inviteSeenMs": 30,
+      "pairingMs": 16795
+    },
+    "commentWebToPhoneMs": 187,
+    "commentPhoneToWebMs": 100,
+    "logout": {
+      "revoked": true,
+      "replicated": true,
+      "phoneSawRevocationMs": 1
+    }
+  },
+  "webkit": {
+    "version": "26.6",
+    "qrLink": {
+      "totalMs": 21220,
+      "phoneMs": 9,
+      "inviteSeenMs": 27,
+      "pairingMs": 21044
+    }
+  }
+}

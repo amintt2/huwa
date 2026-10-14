@@ -1,7 +1,7 @@
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { router } from 'expo-router';
 import { useEffect, useState } from 'react';
-import { Alert, StyleSheet, Switch, View } from 'react-native';
+import { Alert, Platform, StyleSheet, Switch, View } from 'react-native';
 
 import { Group, Loading, PillAction, Row, WARN } from '@/components/social';
 import { Screen } from '@/components/screen';
@@ -181,7 +181,10 @@ export default function Security() {
               }
             />
           ))}
-          <Row icon="add-circle-outline" label="Lier un appareil" detail="Affiche un QR code à scanner" onPress={() => router.push('/settings/pair')} last />
+          <Row icon="add-circle-outline" label="Lier un appareil" detail="Affiche un QR code à scanner" onPress={() => router.push('/settings/pair')} last={Platform.OS === 'web'} />
+          {Platform.OS !== 'web' && (
+            <Row icon="desktop-outline" label="Lier un navigateur" detail="Scanne le QR code affiché par Huwa Web" onPress={() => router.push('/settings/link-web')} last />
+          )}
         </Group>
 
         <Group

@@ -64,6 +64,11 @@ export function sitePath(url: string): string | undefined {
 /** What `redirectSystemPath` returns for an incoming link. */
 export function redirectLink(url: string, opts: { store: boolean }): string {
   const target = sitePath(url) ?? url;
+  // QR code of Huwa Web ("Lier avec mon téléphone", src/p2p/link-web.ts): the phone screen answering it.
+  if (routeOf(target) === 'link-web') {
+    const q = target.indexOf('?');
+    return '/settings/link-web' + (q === -1 ? '' : target.slice(q).replace(/#.*$/, ''));
+  }
   if (opts.store && isFullOnlyRoute(target)) return '/';
   return target;
 }

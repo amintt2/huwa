@@ -49,3 +49,11 @@ test('route of a path or link', () => {
   assert.equal(isFullOnlyRoute('/meta/tt1'), true);
   assert.equal(isFullOnlyRoute('/watch/x'), false);
 });
+
+test('huwa://link-web (QR of Huwa Web) opens the phone screen that answers it, in both flavors', () => {
+  const qr = 'huwa://link-web?k=AbC_-1&r=https%3A%2F%2Fhuwa.example.org%2Fp2p&t=' + 'a'.repeat(64) + '&n=Chrome%20sur%20macOS';
+  const expected = '/settings/link-web?k=AbC_-1&r=https%3A%2F%2Fhuwa.example.org%2Fp2p&t=' + 'a'.repeat(64) + '&n=Chrome%20sur%20macOS';
+  assert.equal(redirectLink(qr, full), expected);
+  assert.equal(redirectLink(qr, store), expected);
+  assert.equal(redirectLink('huwa://link-web', full), '/settings/link-web');
+});

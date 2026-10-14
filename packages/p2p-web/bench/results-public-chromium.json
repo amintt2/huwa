@@ -1,0 +1,421 @@
+{
+  "date": "2026-10-14T19:21:45.026Z",
+  "network": "public HyperDHT",
+  "runs": [
+    {
+      "i": 0,
+      "ok": true,
+      "phoneMs": 41,
+      "linkMs": 10449,
+      "pairingMs": 10336,
+      "commentWebToPhoneMs": 167,
+      "commentPhoneToWebMs": 112,
+      "logout": {
+        "revoked": true,
+        "replicated": true,
+        "ms": 726
+      },
+      "revokeSeenMs": 728
+    },
+    {
+      "i": 1,
+      "ok": true,
+      "phoneMs": 9,
+      "linkMs": 2086,
+      "pairingMs": 1995,
+      "commentWebToPhoneMs": 228,
+      "commentPhoneToWebMs": 88,
+      "logout": {
+        "revoked": true,
+        "replicated": true,
+        "ms": 2133
+      },
+      "revokeSeenMs": 2137
+    },
+    {
+      "i": 2,
+      "ok": true,
+      "phoneMs": 6,
+      "linkMs": 1068,
+      "pairingMs": 986,
+      "commentWebToPhoneMs": 221,
+      "commentPhoneToWebMs": 106,
+      "logout": {
+        "revoked": true,
+        "replicated": true,
+        "ms": 2130
+      },
+      "revokeSeenMs": 2132
+    },
+    {
+      "i": 3,
+      "ok": true,
+      "phoneMs": 5,
+      "linkMs": 1797,
+      "pairingMs": 1716,
+      "commentWebToPhoneMs": 276,
+      "commentPhoneToWebMs": 158,
+      "logout": {
+        "revoked": true,
+        "replicated": true,
+        "ms": 2196
+      },
+      "revokeSeenMs": 2198
+    },
+    {
+      "i": 4,
+      "ok": true,
+      "phoneMs": 6,
+      "linkMs": 1354,
+      "pairingMs": 1272,
+      "commentWebToPhoneMs": 159,
+      "commentPhoneToWebMs": 122,
+      "logout": {
+        "revoked": true,
+        "replicated": true,
+        "ms": 1624
+      },
+      "revokeSeenMs": 1626
+    },
+    {
+      "i": 5,
+      "ok": true,
+      "phoneMs": 7,
+      "linkMs": 1975,
+      "pairingMs": 1887,
+      "commentWebToPhoneMs": 158,
+      "commentPhoneToWebMs": 66,
+      "logout": {
+        "revoked": true,
+        "replicated": true,
+        "ms": 2689
+      },
+      "revokeSeenMs": 2691
+    },
+    {
+      "i": 6,
+      "ok": true,
+      "phoneMs": 6,
+      "linkMs": 1586,
+      "pairingMs": 1507,
+      "commentWebToPhoneMs": 196,
+      "commentPhoneToWebMs": 112,
+      "logout": {
+        "revoked": true,
+        "replicated": true,
+        "ms": 2946
+      },
+      "revokeSeenMs": 2949
+    },
+    {
+      "i": 7,
+      "ok": true,
+      "phoneMs": 6,
+      "linkMs": 2093,
+      "pairingMs": 2011,
+      "commentWebToPhoneMs": 172,
+      "commentPhoneToWebMs": 90,
+      "logout": {
+        "revoked": true,
+        "replicated": true,
+        "ms": 2063
+      },
+      "revokeSeenMs": 2065
+    },
+    {
+      "i": 8,
+      "ok": true,
+      "phoneMs": 10,
+      "linkMs": 1687,
+      "pairingMs": 1602,
+      "commentWebToPhoneMs": 171,
+      "commentPhoneToWebMs": 76,
+      "logout": {
+        "revoked": true,
+        "replicated": true,
+        "ms": 2282
+      },
+      "revokeSeenMs": 2286
+    },
+    {
+      "i": 9,
+      "ok": true,
+      "phoneMs": 6,
+      "linkMs": 1695,
+      "pairingMs": 1613,
+      "commentWebToPhoneMs": 172,
+      "commentPhoneToWebMs": 74,
+      "logout": {
+        "revoked": true,
+        "replicated": true,
+        "ms": 1180
+      },
+      "revokeSeenMs": 1182
+    },
+    {
+      "i": 10,
+      "ok": true,
+      "phoneMs": 6,
+      "linkMs": 1458,
+      "pairingMs": 1377,
+      "commentWebToPhoneMs": 178,
+      "commentPhoneToWebMs": 78,
+      "logout": {
+        "revoked": true,
+        "replicated": true,
+        "ms": 2602
+      },
+      "revokeSeenMs": 2604
+    },
+    {
+      "i": 11,
+      "ok": true,
+      "phoneMs": 4,
+      "linkMs": 1736,
+      "pairingMs": 1653,
+      "commentWebToPhoneMs": 163,
+      "commentPhoneToWebMs": 97,
+      "logout": {
+        "revoked": true,
+        "replicated": true,
+        "ms": 1287
+      },
+      "revokeSeenMs": 1289
+    },
+    {
+      "i": 12,
+      "ok": true,
+      "phoneMs": 4,
+      "linkMs": 1831,
+      "pairingMs": 1752,
+      "commentWebToPhoneMs": 169,
+      "commentPhoneToWebMs": 73,
+      "logout": {
+        "revoked": true,
+        "replicated": true,
+        "ms": 1510
+      },
+      "revokeSeenMs": 1511
+    },
+    {
+      "i": 13,
+      "ok": true,
+      "phoneMs": 4,
+      "linkMs": 1928,
+      "pairingMs": 1845,
+      "commentWebToPhoneMs": 220,
+      "commentPhoneToWebMs": 121,
+      "logout": {
+        "revoked": true,
+        "replicated": true,
+        "ms": 1838
+      },
+      "revokeSeenMs": 1840
+    },
+    {
+      "i": 14,
+      "ok": true,
+      "phoneMs": 4,
+      "linkMs": 2027,
+      "pairingMs": 1945,
+      "commentWebToPhoneMs": 179,
+      "commentPhoneToWebMs": 127,
+      "logout": {
+        "revoked": true,
+        "replicated": true,
+        "ms": 2061
+      },
+      "revokeSeenMs": 2063
+    },
+    {
+      "i": 15,
+      "ok": true,
+      "phoneMs": 4,
+      "linkMs": 1840,
+      "pairingMs": 1757,
+      "commentWebToPhoneMs": 178,
+      "commentPhoneToWebMs": 77,
+      "logout": {
+        "revoked": true,
+        "replicated": true,
+        "ms": 3567
+      },
+      "revokeSeenMs": 3570
+    },
+    {
+      "i": 16,
+      "ok": true,
+      "phoneMs": 5,
+      "linkMs": 1389,
+      "pairingMs": 1306,
+      "commentWebToPhoneMs": 155,
+      "commentPhoneToWebMs": 122,
+      "logout": {
+        "revoked": true,
+        "replicated": true,
+        "ms": 2171
+      },
+      "revokeSeenMs": 2172
+    },
+    {
+      "i": 17,
+      "ok": true,
+      "phoneMs": 5,
+      "linkMs": 1548,
+      "pairingMs": 1466,
+      "commentWebToPhoneMs": 155,
+      "commentPhoneToWebMs": 69,
+      "logout": {
+        "revoked": true,
+        "replicated": true,
+        "ms": 3331
+      },
+      "revokeSeenMs": 3334
+    },
+    {
+      "i": 18,
+      "ok": true,
+      "phoneMs": 5,
+      "linkMs": 2049,
+      "pairingMs": 1968,
+      "commentWebToPhoneMs": 193,
+      "commentPhoneToWebMs": 111,
+      "logout": {
+        "revoked": true,
+        "replicated": true,
+        "ms": 1749
+      },
+      "revokeSeenMs": 1751
+    },
+    {
+      "i": 19,
+      "ok": true,
+      "phoneMs": 4,
+      "linkMs": 1564,
+      "pairingMs": 1482,
+      "commentWebToPhoneMs": 267,
+      "commentPhoneToWebMs": 114,
+      "logout": {
+        "revoked": true,
+        "replicated": true,
+        "ms": 2723
+      },
+      "revokeSeenMs": 2726
+    }
+  ],
+  "bundle": {
+    "bytes": 1110875,
+    "gzip": 315485,
+    "brotli": 259950,
+    "top": [
+      [
+        "hypercore",
+        "181 KiB"
+      ],
+      [
+        "autobase",
+        "138 KiB"
+      ],
+      [
+        "src/p2p (Huwa)",
+        "85 KiB"
+      ],
+      [
+        "other",
+        "83 KiB"
+      ],
+      [
+        "hypercore-storage",
+        "76 KiB"
+      ],
+      [
+        "@noble/curves",
+        "61 KiB"
+      ],
+      [
+        "hyperbee",
+        "49 KiB"
+      ],
+      [
+        "sodium-javascript",
+        "44 KiB"
+      ],
+      [
+        "buffer",
+        "25 KiB"
+      ],
+      [
+        "compact-encoding",
+        "19 KiB"
+      ],
+      [
+        "bip39-mnemonic",
+        "19 KiB"
+      ],
+      [
+        "hyperswarm",
+        "19 KiB"
+      ]
+    ]
+  },
+  "gateway": {
+    "dht": {
+      "host": "82.65.30.59",
+      "port": 51251,
+      "firewalled": true,
+      "ephemeral": true,
+      "online": true
+    }
+  },
+  "phone": {
+    "me": {
+      "key": "e3e897bd1b5085b8d5d9f609522b677fb65afd1adfa1c2f5693b5457181199ca",
+      "name": "Bench",
+      "createdAt": 1792005712596,
+      "fingerprint": "bjkqw4xx"
+    },
+    "peers": 0,
+    "firewalled": true,
+    "host": "82.65.30.59"
+  },
+  "browser": "chromium 153.0.8010.12",
+  "summary": {
+    "runs": 20,
+    "fullSuccess": 20,
+    "linked": 20,
+    "linkUnder20s": 20,
+    "linkMs": {
+      "min": 1068,
+      "p50": 1797,
+      "p95": 10449,
+      "max": 10449
+    },
+    "commentWebToPhoneMs": {
+      "p50": 178,
+      "max": 276
+    },
+    "commentPhoneToWebMs": {
+      "p50": 106,
+      "max": 158
+    },
+    "gatewayStats": {
+      "connections": 20,
+      "open": 0,
+      "handshakes": 20,
+      "refusedOrigin": 0,
+      "refusedCapacity": 0,
+      "refusedPerIp": 0,
+      "custodialRefused": 0,
+      "limits": 0,
+      "idleClosed": 0,
+      "inboundBytes": 359475,
+      "outboundBytes": 1271611,
+      "rendezvous": {
+        "posts": 20,
+        "gets": 20,
+        "expired": 0,
+        "refused": 0
+      }
+    }
+  }
+}

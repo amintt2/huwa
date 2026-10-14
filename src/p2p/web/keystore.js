@@ -72,6 +72,22 @@ class KeyStore {
     })
   }
 
+  /**
+   * Can this context keep a CryptoKey in IndexedDB? Not a WebKit SharedWorker ("The object can
+   * not be cloned": WebKit wraps stored keys with a key only documents and dedicated workers get).
+   * The client then runs the node in a dedicated worker instead (src/p2p/web/channel.ts).
+   */
+  async canStoreKeys() {
+    try {
+      const key = await this.subtle.generateKey(AES, false, ['encrypt'])
+      await this._put([['probe', key]])
+      await this._put([], ['probe'])
+      return true
+    } catch {
+      return false
+    }
+  }
+
   /** null when this browser holds no account, else { v, mode, credentialId?, createdAt, ... }. */
   async load() {
     const meta = await this._get(META)

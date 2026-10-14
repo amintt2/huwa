@@ -50,6 +50,7 @@ class WebSession {
     this.dhts = []
     this.error = null
     this.storageError = null
+    this.keyStore = null
     this._busy = Promise.resolve()
     this._inited = null
   }
@@ -73,7 +74,9 @@ class WebSession {
       passkey: this.meta && this.meta.mode === 'passkey' ? { credentialId: this.meta.credentialId, prfSalt: this.meta.prfSalt } : null,
       online: this.dhts.some((d) => d.online),
       error: this.error,
-      storageError: this.storageError
+      storageError: this.storageError,
+      // false: this context cannot keep the at-rest key (WebKit SharedWorker): use a dedicated worker
+      keyStore: this.keyStore !== false
     }
   }
 
@@ -84,6 +87,8 @@ class WebSession {
   init() {
     if (!this._inited) {
       this._inited = this._serial(async () => {
+        this.keyStore = await this.keys.canStoreKeys()
+        if (!this.keyStore) return this._set('idle')
         this.meta = await this.keys.load()
         if (!this.meta) return this._set('idle')
         this.mode = this.meta.mode
@@ -171,8 +176,15 @@ class WebSession {
    * @param {{ mode?: 'device' | 'memory', deviceName?: string }} o
    */
   begin({ mode = 'device', deviceName } = {}) {
-    return this._serial(async () => {
-      if (this.node) return this.info()
+    return this.init().catch(() => {}).then(() => this._serial(async () => {
+      if (this.node) {
+        // A node from an abandoned login (no identity) on the other kind of storage: start over.
+        if (this.node.me() || this.node.secret || mode === this.mode || (mode === 'device' && this.mode === 'passkey')) return this.info()
+        await this._stop()
+        await this._wipeAll()
+        this.meta = null
+      }
+      if (this.state === 'error') throw codedError((this.error && this.error.message) || 'Le nœud P2P n’a pas démarré', (this.error && this.error.code) || 'START_FAILED')
       if (this.state === 'locked') throw codedError('Session verrouillée', 'LOCKED')
       if (deviceName) this.deviceName = String(deviceName).slice(0, 40)
       if (mode === 'memory') {
@@ -185,7 +197,7 @@ class WebSession {
         await this._start(dek, 'device')
       }
       return this.info()
-    })
+    }))
   }
 
   /** Abandons a login flow: a node without identity is stopped and its storage wiped. */
