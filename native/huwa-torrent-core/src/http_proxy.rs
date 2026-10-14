@@ -516,6 +516,10 @@ pub struct Shared {
     /// Server: session URLs are `{prefix}/http/<id>` instead of `http://127.0.0.1:<port>/http/<id>`.
     #[cfg(feature = "server")]
     url_prefix: Option<String>,
+    /// Live sessions kept (`MAX_SESSIONS` in the app; a server option).
+    max_sessions: usize,
+    /// Read-ahead bytes retained per session (`SESSION_BUDGET` in the app; a server option).
+    session_budget: u64,
 }
 
 /// `HttpProxy::start_with` options (the app uses the defaults).
@@ -535,6 +539,12 @@ pub struct ProxyOptions {
     /// Server: no loopback listener; the host server mounts `serve_session` on its own route.
     #[cfg(feature = "server")]
     pub no_listener: bool,
+    /// Server: live sessions kept server-wide (default `MAX_SESSIONS`).
+    #[cfg(feature = "server")]
+    pub max_sessions: Option<usize>,
+    /// Server: read-ahead bytes retained per session (default `SESSION_BUDGET`).
+    #[cfg(feature = "server")]
+    pub session_budget: Option<u64>,
 }
 
 /// The `GET /http/<id>[.<ext>]` handler, for a host server mounting it on its own route (after its
@@ -617,6 +627,14 @@ impl HttpProxy {
             guard: opts.guard.clone(),
             #[cfg(feature = "server")]
             url_prefix: opts.url_prefix.clone(),
+            #[cfg(not(feature = "server"))]
+            max_sessions: MAX_SESSIONS,
+            #[cfg(feature = "server")]
+            max_sessions: opts.max_sessions.unwrap_or(MAX_SESSIONS).max(1),
+            #[cfg(not(feature = "server"))]
+            session_budget: SESSION_BUDGET,
+            #[cfg(feature = "server")]
+            session_budget: opts.session_budget.unwrap_or(SESSION_BUDGET).max(4 * MIB),
         });
         #[cfg(not(feature = "server"))]
         let listen = true;
@@ -796,6 +814,11 @@ fn ext_of(u: &reqwest::Url) -> Option<&'static str> {
 }
 
 impl Shared {
+    /// Live sessions (server metrics).
+    pub fn session_count(&self) -> usize {
+        self.sessions.read().len()
+    }
+
     fn session(&self, id: u64) -> Option<Arc<Session>> {
         self.sessions.read().get(&id).cloned()
     }
@@ -900,7 +923,7 @@ impl Shared {
         loop {
             let victim = {
                 let map = self.sessions.read();
-                if map.len() < MAX_SESSIONS {
+                if map.len() < self.max_sessions {
                     return;
                 }
                 let last = |s: &Arc<Session>| s.state.lock().last_activity;
@@ -1451,8 +1474,8 @@ async fn fetch_inner(px: &Arc<Shared>, s: &Arc<Session>, seg_id: u64) -> Outcome
         }
         // Another segment already holds what comes next: this request has done its part.
         let merged = !reached_end && st.segments.iter().any(|o| o.id != seg_id && o.has(next));
-        if st.retained() > SESSION_BUDGET {
-            trim_for_budget(&mut st, seg_id);
+        if st.retained() > px.session_budget {
+            trim_for_budget(&mut st, seg_id, px.session_budget);
         }
         drop(st);
         s.notify.notify_waiters();
@@ -1463,11 +1486,11 @@ async fn fetch_inner(px: &Arc<Shared>, s: &Arc<Session>, seg_id: u64) -> Outcome
 }
 
 /// Over budget: unpinned bytes of the segments read least recently go first.
-fn trim_for_budget(st: &mut State, keep: u64) {
+fn trim_for_budget(st: &mut State, keep: u64, budget: u64) {
     let mut order: Vec<(Instant, u64)> = st.segments.iter().filter(|g| g.id != keep).map(|g| (g.last_read, g.id)).collect();
     order.sort();
     for (_, id) in order {
-        if st.retained() <= SESSION_BUDGET {
+        if st.retained() <= budget {
             return;
         }
         if let Some(g) = st.seg(id) {
