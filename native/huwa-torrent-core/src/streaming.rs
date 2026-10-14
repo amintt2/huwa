@@ -1050,10 +1050,9 @@ fn monitor_once(engine: &Arc<Engine>) {
     }
     streaming.health.lock().retain(|hex, _| entries.iter().any(|e| &e.hex == hex));
 
-    let focus = engine.focus();
     for entry in entries {
         let Some(handle) = entry.handle() else { continue };
-        let focused = focus.as_deref() == Some(entry.hex.as_str());
+        let focused = engine.is_focused(&entry.hex);
         // Left behind by another start (switching episode / series): once its player responses are
         // gone for `RELEASE_GRACE`, everything it runs stops and the torrent is paused (peers,
         // tracker / DHT announces, downloads): nothing of it competes with the new start.

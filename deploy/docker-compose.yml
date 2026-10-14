@@ -1,0 +1,53 @@
+# Huwa Server with Docker Compose. Docs: docs/SELF_HOSTING.md.
+#
+#   docker compose -f deploy/docker-compose.yml up -d
+#
+# Put it behind a reverse proxy that terminates HTTPS (Caddy, Traefik, nginx): browsers need a
+# secure context for the PWA, the service worker and passkeys. Without one, set HUWA_TLS_CERT /
+# HUWA_TLS_KEY to serve HTTPS directly.
+services:
+  huwa:
+    image: ghcr.io/amintt2/huwa:latest
+    container_name: huwa
+    restart: unless-stopped
+    ports:
+      - "8080:8080"          # web app, API, media, /p2p (one port)
+      - "49737:49737/udp"    # optional: DHT of the blind-peer relay
+    environment:
+      HUWA_PUBLIC_URL: https://huwa.example.org
+      # The reverse proxy sets X-Forwarded-For: per-IP session limits see the real client.
+      HUWA_TRUST_PROXY: "1"
+      HUWA_CACHE_MAX_GB: "30"
+      # Who may use this server from another origin (the public web app is allowed by default).
+      # HUWA_ALLOWED_ORIGINS: "self,https://huwa.mciut.fr"
+      # HUWA_INSTANCE_NAME: "Chez moi"
+      # HUWA_OPERATOR_CONTACT: "admin@example.org"
+      # HUWA_STREMIO_COMPAT: "1"         # Stremio streaming-server routes (shared anonymous bucket)
+      # HUWA_HWACCEL: "vaapi"            # with the devices below (auto probes them)
+      # HUWA_TRANSCODES_MAX: "2"
+      # HUWA_DOWNLOAD_LIMIT_MBPS: "100"
+    volumes:
+      - ./data:/data     # keys (token.key, relay identity), relay store: keep it
+      - ./cache:/cache   # torrents, HLS segments: disposable
+    # Hardware transcoding (Intel / AMD VAAPI or QSV): pass the render node and the group that
+    # owns it on the host (`stat -c %g /dev/dri/renderD128`).
+    # devices:
+    #   - /dev/dri:/dev/dri
+    # group_add:
+    #   - "993"
+    # NVIDIA (nvidia-container-toolkit):
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: 1
+    #           capabilities: [gpu, video]
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/huwa-server", "--healthcheck"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    # The image runs as uid 1000 (`huwa`): `sudo chown -R 1000:1000 ./data ./cache` if the
+    # directories already exist with another owner.

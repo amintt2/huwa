@@ -5,7 +5,7 @@ edition = "2021"
 # librqbit 9 (through huwa-torrent-core) is edition 2024 and uses let-chains.
 rust-version = "1.89"
 license = "MIT"
-description = "Huwa Server: self-hostable streaming server (torrent engine + read-ahead HTTP proxy) for Huwa Web. See docs/server-api.md."
+description = "Huwa Server: self-hostable front door for Huwa Web (web app, sessions, torrent engine, read-ahead HTTP proxy, HLS remux / transcode, P2P gateway supervisor). See docs/server-api.md."
 publish = false
 
 [[bin]]
@@ -16,16 +16,30 @@ path = "src/main.rs"
 name = "huwa_server"
 path = "src/lib.rs"
 
+[features]
+default = ["engine"]
+# Torrent engine, HTTP proxy, media (ffprobe / ffmpeg HLS) and the Stremio-compatible routes.
+# Off for the `-web` image (huwa.mciut.fr): `--no-default-features` builds the web app server,
+# sessions, /huwa-config.json, /metrics and the P2P gateway supervisor only.
+engine = ["dep:huwa-torrent-core", "dep:librqbit", "dep:reqwest"]
+
 [dependencies]
 # The engine, with the `server` feature: public URL prefix, configurable runtime, upstream IP
 # policy for the HTTP proxy. Seeding stays compiled out (`disable-upload`, set by the engine).
-huwa-torrent-core = { path = "../huwa-torrent-core", features = ["server"] }
-axum = { version = "0.8", default-features = false, features = ["http1", "tokio", "json"] }
-tower-http = { version = "0.6", default-features = false, features = ["cors"] }
+huwa-torrent-core = { path = "../huwa-torrent-core", features = ["server"], optional = true }
+# Same pinned version and features as the engine (one copy): `.torrent` parsing for the Stremio
+# `create {blob}` body. Upload stays off: the engine never enables it.
+librqbit = { version = "=9.0.1", default-features = false, features = ["rust-tls", "disable-upload"], optional = true }
+reqwest = { version = "0.13", default-features = false, features = ["rustls", "stream"], optional = true }
+axum = { version = "0.8", default-features = false, features = ["http1", "tokio", "json", "query", "original-uri"] }
+tower = { version = "0.5", default-features = false, features = ["util"] }
+tower-http = { version = "0.6", default-features = false, features = ["cors", "fs"] }
+hyper = { version = "1", default-features = false, features = ["http1", "client", "server"] }
+hyper-util = { version = "0.1", default-features = false, features = ["tokio", "service"] }
 http = "1"
 bytes = "1"
 futures = "0.3"
-tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "signal", "sync", "time"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "signal", "sync", "time", "process", "fs", "io-util"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 anyhow = "1"
@@ -34,13 +48,19 @@ tracing-subscriber = { version = "0.3", default-features = false, features = ["f
 parking_lot = "0.12"
 hex = "0.4"
 url = "2"
-# HMAC-SHA256 session tokens and the random session ids / key. Already in the tree (rustls).
+base64 = "0.22"
+libc = "0.2"
+# HMAC-SHA256 session tokens, Ed25519 session proofs, random ids / key. Already in the tree.
 ring = "0.17"
+# Optional built-in TLS (HUWA_TLS_CERT / HUWA_TLS_KEY). Same rustls (aws-lc-rs) as reqwest.
+rustls = { version = "0.23", default-features = false, features = ["aws_lc_rs", "std", "tls12"] }
+tokio-rustls = { version = "0.26", default-features = false, features = ["aws_lc_rs", "tls12"] }
 
 [dev-dependencies]
-# Local seeder for the end-to-end test (same pinned version and features as the engine: one copy).
+# Local seeder for the end-to-end tests (same pinned version and features as the engine: one copy).
 librqbit = { version = "=9.0.1", default-features = false, features = ["rust-tls", "disable-upload"] }
-reqwest = { version = "0.13", default-features = false, features = ["rustls"] }
+reqwest = { version = "0.13", default-features = false, features = ["rustls", "stream"] }
+tokio = { version = "1", features = ["full"] }
 
 [profile.release]
 opt-level = 3

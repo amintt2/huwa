@@ -1,0 +1,100 @@
+# syntax=docker/dockerfile:1.7
+#
+# Huwa Web image (ghcr.io/amintt2/huwa:<version>-web), what huwa.mciut.fr runs (D15): the web
+# app, per-browser sessions, /huwa-config.json and the P2P gateway (+ blind-peer relay) for
+# browsers. Built WITHOUT the torrent engine, the HTTP / fetch proxy and ffmpeg
+# (`--no-default-features`: /api/v1/engine is a 404). huwa.mciut.fr never streams torrents.
+#
+#   docker build -f docker/Dockerfile.web -t huwa:web .
+
+ARG NODE_VERSION=22
+ARG RUST_IMAGE=rust:1-bookworm
+
+# ---- 1. Web export (once, on the build machine; CI passes --build-context web=<dir>) ----------
+FROM --platform=$BUILDPLATFORM node:${NODE_VERSION}-bookworm AS web-build
+WORKDIR /src
+ENV EXPO_NO_TELEMETRY=1 CI=1
+COPY . .
+RUN --mount=type=cache,target=/root/.npm \
+    npm ci --no-audit --no-fund
+RUN if node -e "process.exit(require('./package.json').scripts['build:web'] ? 0 : 1)"; then \
+      npm run build:web; \
+    else \
+      npx expo export -p web --output-dir dist; \
+    fi \
+ && test -f dist/index.html
+
+FROM scratch AS web
+COPY --from=web-build /src/dist/ /
+
+# ---- 2. huwa-server without the engine --------------------------------------------------------
+FROM ${RUST_IMAGE} AS rust
+WORKDIR /src/native
+COPY native/huwa-server/Cargo.toml native/huwa-server/Cargo.lock ./huwa-server/
+# The manifest names the engine (optional, off here) and the vendored patches: cargo reads them.
+COPY native/vendor ./vendor
+COPY native/huwa-torrent-core ./huwa-torrent-core
+RUN mkdir -p huwa-server/src && echo "" > huwa-server/src/lib.rs && echo "fn main() {}" > huwa-server/src/main.rs \
+ && cd huwa-server && cargo build --locked --release --no-default-features || true
+COPY native/huwa-server ./huwa-server
+RUN cd huwa-server \
+ && touch src/lib.rs src/main.rs \
+ && cargo build --locked --release --no-default-features \
+ && cp target/release/huwa-server /usr/local/bin/huwa-server \
+ && /usr/local/bin/huwa-server --version
+
+# ---- 3. Node children --------------------------------------------------------------------------
+FROM node:${NODE_VERSION}-bookworm AS gateway
+WORKDIR /opt/huwa
+COPY services/huwa-gateway/package.json services/huwa-gateway/package-lock.json ./gateway/
+RUN --mount=type=cache,target=/root/.npm cd gateway && npm ci --omit=dev --no-audit --no-fund
+COPY services/huwa-gateway/ ./gateway/
+COPY services/blind-peer/package.json services/blind-peer/package-lock.json ./blind-peer/
+RUN --mount=type=cache,target=/root/.npm cd blind-peer && npm ci --omit=dev --no-audit --no-fund
+COPY services/blind-peer/server.js services/blind-peer/policy.js ./blind-peer/
+# Holepunch packages ship native prebuilds for every OS / arch (~ 70 % of node_modules): keep
+# this platform's (glibc) only.
+RUN plat="$(node -p 'process.platform + "-" + process.arch')" \
+ && find /opt/huwa -type d -name prebuilds -prune | while read -r d; do \
+      for p in "$d"/*; do case "$(basename "$p")" in "$plat"|"$plat"-*) ;; *) rm -rf "$p" ;; esac; done; \
+    done \
+ && find /opt/huwa -type f \( -name '*.md' -o -name '*.map' \) -path '*/node_modules/*' -delete \
+ && du -sh /opt/huwa/gateway /opt/huwa/blind-peer
+
+FROM node:${NODE_VERSION}-bookworm-slim AS node
+
+# ---- 4. Runtime (no ffmpeg) ----------------------------------------------------------------------
+FROM debian:bookworm-slim AS web-runtime
+ARG VERSION=dev
+LABEL org.opencontainers.image.title="Huwa Web" \
+      org.opencontainers.image.description="Huwa web app + P2P gateway (no torrent engine, no ffmpeg, no fetch proxy)" \
+      org.opencontainers.image.source="https://github.com/amintt2/huwa" \
+      org.opencontainers.image.version="${VERSION}" \
+      org.opencontainers.image.licenses="MIT AND Apache-2.0"
+RUN apt-get update \
+ && apt-get upgrade -y --no-install-recommends \
+ && apt-get install -y --no-install-recommends ca-certificates tini libatomic1 \
+ && rm -rf /var/lib/apt/lists/*
+COPY --from=node /usr/local/bin/node /usr/local/bin/node
+RUN groupadd --system --gid 1000 huwa \
+ && useradd --system --uid 1000 --gid huwa --home-dir /home/huwa --create-home --shell /usr/sbin/nologin huwa \
+ && mkdir -p /data /cache /opt/huwa \
+ && chown huwa:huwa /data /cache
+COPY --from=rust /usr/local/bin/huwa-server /usr/local/bin/huwa-server
+COPY --from=gateway /opt/huwa/gateway /opt/huwa/gateway
+COPY --from=gateway /opt/huwa/blind-peer /opt/huwa/blind-peer
+COPY --from=web / /opt/huwa/web/
+COPY LICENSE /usr/share/doc/huwa/LICENSE
+ENV HUWA_PORT=8080 \
+    HUWA_DATA_DIR=/data \
+    HUWA_CACHE_DIR=/cache \
+    HUWA_WEB_DIR=/opt/huwa/web \
+    HUWA_TORRENT=0 \
+    HUWA_TRANSCODE=0 \
+    NODE_ENV=production
+USER huwa
+WORKDIR /home/huwa
+VOLUME ["/data", "/cache"]
+EXPOSE 8080 49737/udp
+HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=3 CMD ["/usr/local/bin/huwa-server", "--healthcheck"]
+ENTRYPOINT ["/usr/bin/tini", "--", "/usr/local/bin/huwa-server"]

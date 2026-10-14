@@ -55,10 +55,21 @@ jobs:
         working-directory: native/huwa-torrent-core
         run: cargo test --locked --features server
 
-      # Serveur : sessions, quotas, isolation, SSRF, flux 206 depuis un seeder local hors ligne.
+      # ffmpeg / ffprobe pour les tests du module média (remux, transcodage, seek, sidecar ASS) ;
+      # sans eux ces tests sont sautés.
+      - name: ffmpeg
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg > /dev/null
+
+      # Serveur : sessions, quotas, isolation, SSRF, flux 206 depuis un seeder local hors ligne,
+      # média de bout en bout, compat Stremio, web, TLS, supervision.
       - name: Tests huwa-server
         working-directory: native/huwa-server
         run: cargo test --locked
+
+      # Build -web (sans moteur ni ffmpeg) : /api/v1/engine en 404.
+      - name: Tests huwa-server (sans moteur)
+        working-directory: native/huwa-server
+        run: cargo test --locked --no-default-features --test web --lib
 
       - name: Build release
         working-directory: native/huwa-server

@@ -1,0 +1,337 @@
+name: Docker
+
+# Images Huwa Server (docs/WEB_DOCKER_PLAN.md §5, D20 ; docs/SELF_HOSTING.md) :
+#   ghcr.io/<owner>/huwa:<v>        image complète (moteur torrent, proxy HTTP, jellyfin-ffmpeg)
+#   ghcr.io/<owner>/huwa:<v>-web    huwa.mciut.fr : appli web + passerelle P2P, sans moteur ni ffmpeg
+#   :latest (complète) et :<v> seulement sur une étiquette v* ; :sha-<court>[-web] sinon.
+# Export web construit une fois ; Rust compilé sur des runners natifs amd64 et arm64 ; push par
+# digest puis fusion du manifeste multi-arch ; SBOM + provenance ; fumée ; Trivy.
+
+# Sur une autre branche que huwa-v1, seul un commit dont le message contient « [docker] » lance
+# la construction (images :sha-… uniquement) : les branches de travail peuvent tester l'image
+# sans publier de version ni :latest.
+on:
+  push:
+    tags: ["v*"]
+    branches: ["**"]
+    paths:
+      - docker/**
+      - deploy/**
+      - native/huwa-server/**
+      - native/huwa-torrent-core/**
+      - native/vendor/**
+      - services/huwa-gateway/**
+      - services/blind-peer/**
+      - src/**
+      - package.json
+      - package-lock.json
+      - app.json
+      - .github/workflows/docker.yml
+  workflow_dispatch:
+
+concurrency:
+  group: docker-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  REGISTRY: ghcr.io
+
+jobs:
+  meta:
+    name: Tags
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      startsWith(github.ref, 'refs/tags/v') ||
+      github.ref == 'refs/heads/huwa-v1' ||
+      contains(github.event.head_commit.message, '[docker]')
+    runs-on: ubuntu-latest
+    outputs:
+      image: ${{ steps.m.outputs.image }}
+      version: ${{ steps.m.outputs.version }}
+      sha: ${{ steps.m.outputs.sha }}
+      release: ${{ steps.m.outputs.release }}
+    steps:
+      - id: m
+        shell: bash
+        run: |
+          owner="${GITHUB_REPOSITORY_OWNER,,}"
+          echo "image=${REGISTRY}/${owner}/huwa" >> "$GITHUB_OUTPUT"
+          echo "sha=sha-${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+            echo "release=1" >> "$GITHUB_OUTPUT"
+          else
+            echo "version=0.0.0-${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+            echo "release=0" >> "$GITHUB_OUTPUT"
+          fi
+
+  web:
+    name: Export web (une fois)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: npm ci
+        run: npm ci --no-audit --no-fund
+        env:
+          EXPO_NO_TELEMETRY: 1
+      # `build:web` (agent web : export + post-traitement) s'il existe, sinon l'export simple.
+      - name: Export
+        env:
+          EXPO_NO_TELEMETRY: 1
+          CI: 1
+        run: |
+          if node -e "process.exit(require('./package.json').scripts['build:web'] ? 0 : 1)"; then
+            npm run build:web
+          else
+            npx expo export -p web --output-dir dist
+          fi
+          test -f dist/index.html
+          du -sh dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: web-dist
+          path: dist
+          retention-days: 3
+
+  build:
+    name: Image ${{ matrix.variant }} (${{ matrix.arch }})
+    needs: [meta, web]
+    strategy:
+      fail-fast: false
+      matrix:
+        variant: [full, web]
+        arch: [amd64, arm64]
+        include:
+          - arch: amd64
+            runner: ubuntu-latest
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+          - variant: full
+            dockerfile: docker/Dockerfile
+            target: full
+          - variant: web
+            dockerfile: docker/Dockerfile.web
+            target: web-runtime
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 90
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: web-dist
+          path: web-dist
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      # Rust natif (pas d'émulation) ; l'export web remplace l'étage `web` du Dockerfile.
+      - name: Build + push par digest
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ${{ matrix.dockerfile }}
+          target: ${{ matrix.target }}
+          platforms: linux/${{ matrix.arch }}
+          build-contexts: web=./web-dist
+          build-args: |
+            VERSION=${{ needs.meta.outputs.version }}
+          labels: |
+            org.opencontainers.image.revision=${{ github.sha }}
+          outputs: type=image,name=${{ needs.meta.outputs.image }},push-by-digest=true,name-canonical=true,push=true
+          provenance: mode=max
+          sbom: true
+          cache-from: type=gha,scope=${{ matrix.variant }}-${{ matrix.arch }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.variant }}-${{ matrix.arch }}
+      - name: Digest
+        run: |
+          mkdir -p "$RUNNER_TEMP/digests"
+          d="${{ steps.build.outputs.digest }}"
+          touch "$RUNNER_TEMP/digests/${d#sha256:}"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: digests-${{ matrix.variant }}-${{ matrix.arch }}
+          path: ${{ runner.temp }}/digests/*
+          if-no-files-found: error
+          retention-days: 1
+
+  merge:
+    name: Manifeste ${{ matrix.variant }}
+    needs: [meta, build]
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        variant: [full, web]
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: ${{ runner.temp }}/digests
+          pattern: digests-${{ matrix.variant }}-*
+          merge-multiple: true
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      # :<v>, :<v>-web et :latest seulement sur une étiquette v* ; :sha-… toujours.
+      - name: Tags + manifeste multi-arch
+        shell: bash
+        run: |
+          image="${{ needs.meta.outputs.image }}"
+          suffix=""; [[ "${{ matrix.variant }}" == web ]] && suffix="-web"
+          tags=(-t "${image}:${{ needs.meta.outputs.sha }}${suffix}")
+          if [[ "${{ needs.meta.outputs.release }}" == 1 ]]; then
+            tags+=(-t "${image}:${{ needs.meta.outputs.version }}${suffix}")
+            [[ "${{ matrix.variant }}" == full ]] && tags+=(-t "${image}:latest")
+          fi
+          cd "$RUNNER_TEMP/digests"
+          docker buildx imagetools create "${tags[@]}" $(printf "${image}@sha256:%s " *)
+          docker buildx imagetools inspect "${image}:${{ needs.meta.outputs.sha }}${suffix}"
+
+  smoke:
+    name: Fumée (${{ matrix.arch }})
+    needs: [meta, merge]
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-latest
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      packages: read
+    env:
+      FULL: ${{ needs.meta.outputs.image }}:${{ needs.meta.outputs.sha }}
+      WEB: ${{ needs.meta.outputs.image }}:${{ needs.meta.outputs.sha }}-web
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Pull
+        run: docker pull "$FULL" && docker pull "$WEB"
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: native/huwa-server
+          key: seeder-${{ matrix.arch }}
+      # Seeder librqbit local (examples/seeder.rs) + petit tracker HTTP : aucun contenu protégé,
+      # les médias sont des mires ffmpeg (testsrc / sine).
+      - name: Seeder
+        working-directory: native/huwa-server
+        run: cargo build --locked --release --example seeder
+      - name: Médias synthétiques
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg > /dev/null
+          bash docker/smoke/make-media.sh "$RUNNER_TEMP/media"
+      - name: Image complète
+        run: |
+          set -x
+          # Tracker and peer on the runner's private address: the server refuses loopback
+          # trackers, and allows private ones only with HUWA_ALLOW_PRIVATE_UPSTREAMS=1.
+          ip=$(hostname -I | awk '{print $1}')
+          native/huwa-server/target/release/examples/seeder --host "$ip" "$RUNNER_TEMP"/media/h264_aac.mkv "$RUNNER_TEMP"/media/hi10p_ac3.mkv "$RUNNER_TEMP"/media/hevc_ac3.mkv > "$RUNNER_TEMP/seeds.jsonl" 2> "$RUNNER_TEMP/seeder.log" &
+          for i in $(seq 1 120); do grep -q READY "$RUNNER_TEMP/seeds.jsonl" && break; sleep 1; done
+          cat "$RUNNER_TEMP/seeds.jsonl"
+          docker run -d --name huwa --network host \
+            -e HUWA_TRUST_PROXY=1 -e HUWA_SESSIONS_PER_IP=5 -e HUWA_STREMIO_COMPAT=1 -e HUWA_HWACCEL=none \
+            -e HUWA_ALLOW_PRIVATE_UPSTREAMS=1 \
+            -e HUWA_LOG=info,huwa_server=debug "$FULL"
+          python3 docker/smoke/smoke.py full --base http://127.0.0.1:8080 --seeds "$RUNNER_TEMP/seeds.jsonl" --compat
+          docker exec huwa /usr/local/bin/huwa-server --healthcheck
+          docker exec huwa /usr/lib/jellyfin-ffmpeg/ffmpeg -hide_banner -version | head -1
+          docker exec huwa sh -c 'ps -eo pid,user,args' | head -20
+      - name: Journal (image complète)
+        if: always()
+        run: docker logs huwa 2>&1 | tail -200 || true
+      - name: Image -web (pas de moteur, pas de ffmpeg)
+        run: |
+          set -x
+          docker rm -f huwa || true
+          docker run -d --name huwa-web --network host -e HUWA_PORT=18080 -e HUWA_RELAY=0 "$WEB"
+          python3 docker/smoke/smoke.py web --base http://127.0.0.1:18080
+          docker run --rm --entrypoint sh "$WEB" -c '! command -v ffmpeg && ! test -e /usr/lib/jellyfin-ffmpeg && ! test -e /usr/lib/jellyfin-ffmpeg/ffmpeg'
+          docker run --rm --entrypoint /usr/local/bin/huwa-server "$WEB" --version | grep -q '(web)'
+          docker logs huwa-web 2>&1 | tail -50
+      - name: Tailles
+        if: always()
+        run: |
+          {
+            echo "### Images (${{ matrix.arch }})"
+            for i in "$FULL" "$WEB"; do
+              s=$(docker image inspect --format '{{.Size}}' "$i" 2>/dev/null || echo 0)
+              echo "- \`$i\`: $((s / 1048576)) MiB"
+            done
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+
+  trivy:
+    name: Trivy (${{ matrix.variant }})
+    needs: [meta, merge]
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        variant: [full, web]
+    permissions:
+      contents: read
+      packages: read
+    steps:
+      - uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Image
+        id: img
+        shell: bash
+        run: |
+          suffix=""; [[ "${{ matrix.variant }}" == web ]] && suffix="-web"
+          echo "ref=${{ needs.meta.outputs.image }}:${{ needs.meta.outputs.sha }}${suffix}" >> "$GITHUB_OUTPUT"
+      # Rapport (tableau + artefact) ; non bloquant : les CVE de la base Debian sans correctif
+      # sont ignorées, le reste est à trier avant une étiquette v*.
+      # Épinglé par commit (v0.36.0) : les étiquettes de cette action ont été réécrites en 2026.
+      - uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25
+        with:
+          image-ref: ${{ steps.img.outputs.ref }}
+          format: table
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+          exit-code: "0"
+          output: trivy-${{ matrix.variant }}.txt
+        env:
+          TRIVY_USERNAME: ${{ github.actor }}
+          TRIVY_PASSWORD: ${{ secrets.GITHUB_TOKEN }}
+      - name: Résumé
+        if: always()
+        run: |
+          { echo "### Trivy ${{ matrix.variant }}"; echo '```'; head -c 60000 trivy-${{ matrix.variant }}.txt || true; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: trivy-${{ matrix.variant }}
+          path: trivy-${{ matrix.variant }}.txt

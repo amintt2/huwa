@@ -1,0 +1,17 @@
+# Build context of docker/Dockerfile.web (BuildKit reads <Dockerfile>.dockerignore).
+.git
+.claude
+**/node_modules
+**/.expo
+dist
+web-dist
+ios
+android
+native/**/target
+native/huwa-torrent-core/dist
+modules/*/ios/*.xcframework
+modules/*/android/build
+distribution
+store
+certs
+*.log

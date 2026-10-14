@@ -42,11 +42,26 @@ impl ApiError {
             .with("limit", json!(limit))
     }
 
+    /// A per-session or server-wide transcode quota (`kind`: `session` or `server`).
+    pub fn transcode_quota(limit: usize, kind: &str) -> Self {
+        let msg = if kind == "server" {
+            format!("the server is already running its {limit} transcode(s)")
+        } else {
+            format!("transcode quota exceeded ({limit} per session)")
+        };
+        Self::new(StatusCode::TOO_MANY_REQUESTS, "quota_exceeded", msg).with("limit", json!(limit)).with("kind", json!(format!("transcode_{kind}")))
+    }
+
+    pub fn unavailable(code: &'static str, msg: impl Into<String>) -> Self {
+        Self::new(StatusCode::SERVICE_UNAVAILABLE, code, msg)
+    }
+
     pub fn internal(msg: impl Into<String>) -> Self {
         Self::new(StatusCode::INTERNAL_SERVER_ERROR, "internal", msg)
     }
 
     /// An engine / proxy error (`api::dispatch`): refused upstreams are 403, the rest 400.
+    #[cfg(feature = "engine")]
     pub fn engine(e: anyhow::Error) -> Self {
         if let Some(b) = e.downcast_ref::<huwa_torrent_core::net_policy::UpstreamBlocked>() {
             return Self::new(StatusCode::FORBIDDEN, "upstream_blocked", b.to_string());
@@ -67,7 +82,7 @@ impl IntoResponse for ApiError {
         body.extend(self.extra);
         let mut resp = (self.status, Json(Value::Object(body))).into_response();
         resp.headers_mut().insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
-        if self.status == StatusCode::TOO_MANY_REQUESTS {
+        if self.status == StatusCode::TOO_MANY_REQUESTS || self.status == StatusCode::SERVICE_UNAVAILABLE {
             resp.headers_mut().insert(header::RETRY_AFTER, HeaderValue::from_static("10"));
         }
         if self.status == StatusCode::UNAUTHORIZED {

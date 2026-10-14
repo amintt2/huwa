@@ -1,0 +1,43 @@
+Huwa Server image (ghcr.io/amintt2/huwa) — third-party notices
+==================================================================
+
+Huwa (huwa-server, the web app, the P2P gateway glue) is MIT licensed: /usr/share/doc/huwa/LICENSE.
+Source: https://github.com/amintt2/huwa
+
+This image also contains the following programs, under their own licenses.
+
+jellyfin-ffmpeg (GPL-3.0-or-later)
+----------------------------------
+/usr/lib/jellyfin-ffmpeg/ (ffmpeg, ffprobe and the libraries the Debian package installs) is
+jellyfin-ffmpeg, FFmpeg with Jellyfin's patches, built with GPL components (libx264, libx265,
+and others). It is installed unmodified from the Jellyfin Debian repository
+(https://repo.jellyfin.org/debian, package and version recorded in
+/usr/lib/jellyfin-ffmpeg/PACKAGE_VERSION).
+
+Corresponding source code:
+  - https://github.com/jellyfin/jellyfin-ffmpeg (tag matching PACKAGE_VERSION, e.g. v7.1.2-3)
+  - FFmpeg: https://ffmpeg.org/download.html
+  - the source packages next to the binary packages on https://repo.jellyfin.org/
+
+huwa-server runs ffmpeg / ffprobe as separate processes (command line, no linking).
+The corresponding source is published by the Jellyfin project at the locations above (GPLv3
+section 6(d)); the image only redistributes their unmodified binary package.
+
+librqbit (Apache-2.0)
+---------------------
+The torrent engine (huwa-torrent-core) embeds librqbit 9.0.1 (https://github.com/ikatson/rqbit),
+Apache License 2.0, with the local patches listed in native/vendor/librqbit/HUWA_PATCHES.md of the
+Huwa repository. Seeding (upload) is compiled out.
+
+Node.js (MIT) and npm packages
+------------------------------
+/usr/local/bin/node is Node.js 22 (MIT, https://nodejs.org). The P2P gateway and blind-peer relay
+in /opt/huwa use Holepunch packages (hyperdht, @hyperswarm/dht-relay, blind-peer, …; Apache-2.0 /
+MIT): their licenses are in /opt/huwa/*/node_modules/*/LICENSE*.
+
+tini (MIT), Debian bookworm base (various free licenses: /usr/share/doc/*/copyright).
+
+Stremio compatibility
+---------------------
+The optional Stremio streaming-server routes implement the protocol only. No Stremio code
+(GPL-2.0) is included.

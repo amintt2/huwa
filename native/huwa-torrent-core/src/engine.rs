@@ -314,10 +314,12 @@ pub struct Engine {
     /// Janitor and streaming monitor: they upgrade a `Weak<Engine>` on every tick, so `shutdown`
     /// aborts and awaits them (otherwise a tick could still hold the engine afterwards).
     background: parking_lot::Mutex<Vec<tokio::task::JoinHandle<()>>>,
-    /// Torrent of the latest `start_stream` (the one on screen). The others are parked by the
-    /// streaming monitor once their player left (see `park`): rapid switching never leaves old
-    /// torrents downloading against the new start.
-    focus: RwLock<Option<String>>,
+    /// Torrent of the latest `start_stream` (the one on screen), per focus owner. The others are
+    /// parked by the streaming monitor once their player left (see `park`): rapid switching never
+    /// leaves old torrents downloading against the new start. The app has one owner (`""`); a
+    /// server gives each browser session its own (`start_stream_for`), so one session's start
+    /// never backgrounds another session's playback.
+    focus: RwLock<HashMap<String, String>>,
     /// Cache evictions done by `enforce_quota` (count, bytes, time), for `stats`.
     evictions: parking_lot::Mutex<EvictionStats>,
 }
@@ -591,7 +593,7 @@ impl Engine {
             meta_cache: MetaCache::default(),
             streaming: Default::default(),
             background: parking_lot::Mutex::new(Vec::new()),
-            focus: RwLock::new(None),
+            focus: RwLock::new(HashMap::new()),
             evictions: Default::default(),
         });
         engine.streaming.unverified_start.store(engine.config.read().unverified_start, Ordering::Relaxed);
@@ -748,7 +750,13 @@ impl Engine {
     /// Registers the torrent (if new), starts the magnet resolution in the background and
     /// returns the loopback URL immediately. The HTTP handler waits for readiness.
     pub fn start_stream(self: &Arc<Self>, req: StartStreamRequest) -> Result<StartStreamResponse> {
-        self.start_inner(req, true)
+        self.start_inner(req, Some(""))
+    }
+
+    /// `start_stream` for one focus owner (a server session): the torrent becomes that owner's
+    /// focus; torrents focused by other owners are left alone.
+    pub fn start_stream_for(self: &Arc<Self>, req: StartStreamRequest, owner: &str) -> Result<StartStreamResponse> {
+        self.start_inner(req, Some(owner))
     }
 
     /// Pre-warm (Wi-Fi, before the tap): the first pieces of the file and its container index are
@@ -760,7 +768,7 @@ impl Engine {
         let (_, hex) = normalize_hash(&req.info_hash)?;
         if let Some(e) = self.entry(&hex) {
             // Being played (or pre-warmed) right now: nothing to add, and nothing to disturb.
-            let busy = self.focus().as_deref() == Some(hex.as_str())
+            let busy = self.is_focused(&hex)
                 || e.active_streams.load(Ordering::Relaxed) > 0
                 || e.prewarming.load(Ordering::Acquire);
             if busy {
@@ -769,7 +777,7 @@ impl Engine {
                 return Ok(StartStreamResponse { id: hex.clone(), url: self.url_for(&hex, file, ext), info_hash: hex });
             }
         }
-        let resp = self.start_inner(req, false)?;
+        let resp = self.start_inner(req, None)?;
         let entry = self.entry(&resp.info_hash).context("unknown torrent")?;
         if entry.prewarming.swap(true, Ordering::AcqRel) {
             return Ok(resp);
@@ -826,7 +834,7 @@ impl Engine {
                 Ok(Err(e)) => warn!(hex = %entry.hex, "pre-warm failed: {e:#}"),
                 Err(_) => info!(hex = %entry.hex, "pre-warm timed out"),
             }
-            if engine.focus().as_deref() != Some(entry.hex.as_str()) {
+            if !engine.is_focused(&entry.hex) {
                 engine.park(&entry);
             }
         });
@@ -839,13 +847,14 @@ impl Engine {
         Ok(resp)
     }
 
-    fn start_inner(self: &Arc<Self>, req: StartStreamRequest, focus: bool) -> Result<StartStreamResponse> {
+    fn start_inner(self: &Arc<Self>, req: StartStreamRequest, owner: Option<&str>) -> Result<StartStreamResponse> {
         let (id20, hex) = normalize_hash(&req.info_hash)?;
         let trackers = self.torrent_trackers(&req.sources);
-        if focus {
-            let previous = self.focus.write().replace(hex.clone());
+        let focus = owner.is_some();
+        if let Some(owner) = owner {
+            let previous = self.focus.write().insert(owner.to_string(), hex.clone());
             if previous.as_deref() != Some(hex.as_str()) {
-                self.background_others(&hex);
+                self.background_others();
             }
         }
 
@@ -1107,23 +1116,52 @@ impl Engine {
         });
     }
 
+    /// The app's focus (owner `""`).
     pub fn focus(&self) -> Option<String> {
-        self.focus.read().clone()
+        self.focus.read().get("").cloned()
     }
 
-    /// The focused torrent started less than `START_QUIET` ago (its first pieces are coming in).
+    /// `hex` is the focus of some owner (the app, or a server session).
+    pub fn is_focused(&self, hex: &str) -> bool {
+        self.focus.read().values().any(|h| h == hex)
+    }
+
+    /// The focus of `owner` (a server session; `""` = the app).
+    pub fn focus_of(&self, owner: &str) -> Option<String> {
+        self.focus.read().get(owner).cloned()
+    }
+
+    /// `owner` no longer focuses `hex` (it released a torrent other owners still hold): the others'
+    /// focus is untouched.
+    pub fn drop_focus_of(&self, owner: &str, hex: &str) {
+        let mut f = self.focus.write();
+        if f.get(owner).map(String::as_str) == Some(hex) {
+            f.remove(owner);
+        }
+    }
+
+    /// `owner` (a server session that went away) no longer focuses anything: its torrent is parked
+    /// by the monitor once its responses are gone, unless another owner focuses it.
+    pub fn drop_focus_owner(&self, owner: &str) {
+        self.focus.write().remove(owner);
+    }
+
+    /// A focused torrent started less than `START_QUIET` ago (its first pieces are coming in).
     pub fn starting_now(&self) -> bool {
-        let Some(e) = self.focus().and_then(|h| self.entry(&h)) else { return false };
-        let since = crate::timeline::epoch_ms().saturating_sub(e.timeline.started_at_ms());
-        since < START_QUIET.as_millis() as u64
+        let focused: Vec<String> = self.focus.read().values().cloned().collect();
+        focused.iter().filter_map(|h| self.entry(h)).any(|e| {
+            let since = crate::timeline::epoch_ms().saturating_sub(e.timeline.started_at_ms());
+            since < START_QUIET.as_millis() as u64
+        })
     }
 
-    /// A new torrent took the focus: the others stop their natural-order download at once (only
-    /// what an open player response still reads continues: a next-episode prefetch started while
-    /// one plays). Parking (peers, announces) follows once their player left (`park`).
-    fn background_others(self: &Arc<Self>, focus: &str) {
+    /// A new torrent took a focus: the torrents nobody focuses any more stop their natural-order
+    /// download at once (only what an open player response still reads continues: a next-episode
+    /// prefetch started while one plays). Parking (peers, announces) follows once their player
+    /// left (`park`).
+    fn background_others(self: &Arc<Self>) {
         for e in self.entries() {
-            if e.hex == focus || e.selection.load(Ordering::Acquire) != SELECTION_WHOLE_FILE {
+            if self.is_focused(&e.hex) || e.selection.load(Ordering::Acquire) != SELECTION_WHOLE_FILE {
                 continue;
             }
             let Some(h) = e.handle() else { continue };
@@ -1142,12 +1180,7 @@ impl Engine {
         if decided_at.is_some_and(|at| entry.timeline.started_at_ms() > at) {
             return Ok(false);
         }
-        {
-            let mut focus = self.focus.write();
-            if focus.as_deref() == Some(hex) {
-                *focus = None;
-            }
-        }
+        self.focus.write().retain(|_, h| h != hex);
         self.park(&entry);
         Ok(true)
     }
@@ -1167,11 +1200,11 @@ impl Engine {
         let (engine, entry) = (self.clone(), entry.clone());
         self.runtime.spawn(async move {
             // Another start of this torrent meanwhile: leave it alone.
-            if engine.focus().as_deref() == Some(entry.hex.as_str()) {
+            if engine.is_focused(&entry.hex) {
                 return;
             }
             engine.sync_selection(&entry, &handle, false).await;
-            if engine.focus().as_deref() == Some(entry.hex.as_str()) || entry.active_streams.load(Ordering::Relaxed) > 0 {
+            if engine.is_focused(&entry.hex) || entry.active_streams.load(Ordering::Relaxed) > 0 {
                 return;
             }
             if let Err(e) = engine.session.pause(&handle).await {
@@ -1345,6 +1378,7 @@ impl Engine {
     /// Removes the torrent from the session and deletes its files.
     pub async fn remove(&self, hex: &str) -> Result<()> {
         let entry = self.entries.write().remove(hex).context("unknown torrent")?;
+        self.focus.write().retain(|_, h| h != hex);
         self.streaming.forget(hex);
         let resolving = matches!(&*entry.state.read(), EntryState::Resolving);
         let task = entry.resolver.lock().take();
@@ -1405,7 +1439,6 @@ impl Engine {
         if used <= target {
             return Ok(0);
         }
-        let focus = self.focus();
         let now = now_secs();
         let mut candidates: Vec<Arc<Entry>> = self
             .entries()
@@ -1413,7 +1446,7 @@ impl Engine {
             .filter(|e| {
                 e.active_streams.load(Ordering::Relaxed) == 0
                     && e.handle().is_some()
-                    && focus.as_deref() != Some(e.hex.as_str())
+                    && !self.is_focused(&e.hex)
                     && now.saturating_sub(e.last_access.load(Ordering::Relaxed)) >= EVICT_MIN_IDLE.as_secs()
             })
             .collect();

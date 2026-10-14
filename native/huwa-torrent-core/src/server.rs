@@ -275,7 +275,7 @@ pub async fn serve_file(engine: Arc<Engine>, info_hash: &str, file: &str, header
     // until its first bytes arrive; metered networks never select the whole file (see streaming.rs).
     let settled = playback.as_ref().is_none_or(|(p, _)| p.settled());
     let quiet = playback.as_ref().is_none_or(|(p, _)| p.settled_for(crate::streaming::QUIET_AFTER_DATA));
-    let focused = engine.focus().as_deref() == Some(hex.as_str());
+    let focused = engine.is_focused(&hex);
     engine.sync_selection(&entry, &handle, !metered && quiet && focused).await;
     // A window that has not delivered yet: only the pieces the player needs first are asked for,
     // widened back to librqbit's default with the first bytes (see `startup_lookahead`).
