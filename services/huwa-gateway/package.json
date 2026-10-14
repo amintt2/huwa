@@ -1,18 +1,22 @@
 {
   "name": "huwa-gateway",
-  "version": "0.0.1",
+  "version": "0.1.0",
   "private": true,
-  "description": "Huwa P2P gateway for browsers: non-custodial @hyperswarm/dht-relay over WebSocket (spike S2 of docs/WEB_DOCKER_PLAN.md).",
-  "main": "relay.js",
+  "description": "Huwa P2P gateway for browsers: non-custodial dht-relay over WebSocket, persistent HyperDHT node, rendezvous mailbox (docs/server-api.md, Gateway).",
+  "main": "index.js",
   "bin": {
-    "huwa-gateway": "relay.js"
+    "huwa-gateway": "index.js"
   },
   "license": "Apache-2.0",
   "engines": {
     "node": ">=22"
   },
+  "scripts": {
+    "start": "node index.js",
+    "test": "node --test --test-timeout=240000 test/*.test.js"
+  },
   "dependencies": {
-    "@hyperswarm/dht-relay": "0.4.3",
+    "@huwa/dht-relay": "file:../../packages/dht-relay",
     "hyperdht": "6.34.0",
     "ws": "8.18.3"
   }
