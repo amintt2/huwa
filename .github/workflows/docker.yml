@@ -7,10 +7,13 @@ name: Docker
 # Export web construit une fois ; Rust compilé sur des runners natifs amd64 et arm64 ; push par
 # digest puis fusion du manifeste multi-arch ; SBOM + provenance ; fumée ; Trivy.
 
+# Sur une autre branche que huwa-v1, seul un commit dont le message contient « [docker] » lance
+# la construction (images :sha-… uniquement) : les branches de travail peuvent tester l'image
+# sans publier de version ni :latest.
 on:
   push:
     tags: ["v*"]
-    branches: [huwa-v1]
+    branches: ["**"]
     paths:
       - docker/**
       - deploy/**
@@ -39,6 +42,11 @@ env:
 jobs:
   meta:
     name: Tags
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      startsWith(github.ref, 'refs/tags/v') ||
+      github.ref == 'refs/heads/huwa-v1' ||
+      contains(github.event.head_commit.message, '[docker]')
     runs-on: ubuntu-latest
     outputs:
       image: ${{ steps.m.outputs.image }}
