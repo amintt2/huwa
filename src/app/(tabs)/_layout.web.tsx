@@ -1,9 +1,16 @@
+// Web tabs (docs/WEB_DOCKER_PLAN.md §3, "NativeTabs → left rail ≥ 768 px / bottom bar on phones").
+// NativeTabs' web rendering is a floating top pill that overlaps the screen headers, so the web
+// uses JS tabs:
+// · from 768 px, no tab bar here: the shell's left rail and top bar (src/web/shell.tsx, mounted
+//   by the root layout so Calendrier / Extensions / Réglages keep them too) do the navigation;
+// · on phones, a bottom bar with the native app's five tabs.
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { Tabs } from 'expo-router';
 import type { ComponentProps } from 'react';
 
 import { useT } from '@/i18n';
-import { C } from '@/theme/tokens';
+import { C, F } from '@/theme/tokens';
+import { WIDE, useWindowSize } from '@/web/viewport';
 
 type Icon = ComponentProps<typeof Ionicons>['name'];
 
@@ -15,20 +22,17 @@ const TABS: { name: string; label: 'tabs.home' | 'tabs.anime' | 'tabs.manhwa' | 
   { name: 'profile', label: 'tabs.profile', icon: 'person-circle-outline', active: 'person-circle' },
 ];
 
-/**
- * Web placeholder for the NativeTabs bar (whose web rendering is a floating top pill that
- * overlaps the screen headers on phones): a plain JS bottom tab bar. Phase 1 replaces it with the
- * Stremio-like left rail ≥768 px / bottom bar on phones (docs/WEB_DOCKER_PLAN.md §3).
- */
 export default function TabsLayout() {
   const t = useT();
+  const wide = useWindowSize().width >= WIDE;
   return (
     <Tabs
       screenOptions={{
         headerShown: false,
         tabBarActiveTintColor: C.accentText,
         tabBarInactiveTintColor: C.text2,
-        tabBarStyle: { backgroundColor: C.surface, borderTopColor: C.border },
+        tabBarLabelStyle: { fontSize: 11, ...F.semibold },
+        tabBarStyle: wide ? { display: 'none' } : { backgroundColor: 'rgba(12,17,28,0.96)', borderTopColor: C.hairline, height: 60, paddingTop: 4 },
         sceneStyle: { backgroundColor: C.bg },
       }}>
       {TABS.map((tab) => (
@@ -37,7 +41,7 @@ export default function TabsLayout() {
           name={tab.name}
           options={{
             title: t(tab.label),
-            tabBarIcon: ({ focused, color, size }) => <Ionicons name={focused ? tab.active : tab.icon} color={color} size={size} />,
+            tabBarIcon: ({ focused, color }) => <Ionicons name={focused ? tab.active : tab.icon} color={color} size={23} />,
           }}
         />
       ))}

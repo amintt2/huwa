@@ -1,0 +1,9 @@
+{
+  "v": 1,
+  "instanceName": "Huwa",
+  "defaultGateway": null,
+  "defaultStreamingServer": null,
+  "relayKeys": [],
+  "operatorContact": null,
+  "features": { "p2p": false, "streaming": false, "addons": true, "install": true }
+}
