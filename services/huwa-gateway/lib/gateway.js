@@ -1,6 +1,6 @@
 // Huwa P2P gateway: HyperDHT for browsers, NON-CUSTODIAL ONLY.
 //
-//   WS   /p2p                      @huwa/dht-relay (packages/dht-relay): the browser keeps every
+//   WS   /p2p                      vendored dht-relay fork (./dht-relay): the browser keeps every
 //                                  secret key, signs its announces and mutable records and runs
 //                                  Noise itself; this process forwards public keys, signatures
 //                                  and ciphertext. A message carrying a secret key closes the socket.
@@ -18,8 +18,8 @@ const path = require('path')
 const v8 = require('v8')
 const { WebSocketServer } = require('ws')
 const DHT = require('hyperdht')
-const RelayNode = require('@huwa/dht-relay')
-const RelayStream = require('@huwa/dht-relay/ws')
+const RelayNode = require('../dht-relay')
+const RelayStream = require('../dht-relay/ws')
 
 const { Rendezvous } = require('./rendezvous')
 const { DEFAULTS } = require('./config')
@@ -114,7 +114,7 @@ async function startGateway(options = {}) {
     testnet = await createTestnet(c.testnet, { host: '127.0.0.1' })
     bootstrap = testnet.bootstrap
   }
-  // Long-lived node on a fixed UDP port (HUWA_DHT_PORT): once the operator forwards it, the node
+  // Long-lived node, on a fixed UDP port with HUWA_GATEWAY_DHT_PORT: once the operator forwards it, the node
   // is reachable, so phones behind NAT can always connect to the browsers it relays.
   // Not testnet.createNode(): a server on that node (pinned to 127.0.0.1) never gets the
   // holepunched stream on a local testnet.

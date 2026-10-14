@@ -1,8 +1,8 @@
 {
   "bundle": {
-    "bytes": 1111177,
-    "gzip": 315552,
-    "brotli": 260339,
+    "bytes": 1111244,
+    "gzip": 315586,
+    "brotli": 260212,
     "top": [
       [
         "hypercore",
@@ -54,16 +54,38 @@
       ]
     ]
   },
+  "chromium": {
+    "version": "153.0.8010.12",
+    "qrLink": {
+      "totalMs": 17178,
+      "phoneMs": 27,
+      "inviteSeenMs": 37,
+      "pairingMs": 17092
+    },
+    "commentWebToPhoneMs": 165,
+    "commentPhoneToWebMs": 88,
+    "audit": {
+      "inboundBytes": 18056,
+      "heapMB": 10,
+      "leaks": []
+    },
+    "logout": {
+      "revoked": true,
+      "replicated": true,
+      "phoneSawRevocationMs": 1
+    },
+    "phraseRestoreMs": 408
+  },
   "firefox": {
     "version": "155.0",
     "qrLink": {
-      "totalMs": 16892,
-      "phoneMs": 27,
-      "inviteSeenMs": 30,
-      "pairingMs": 16795
+      "totalMs": 2695,
+      "phoneMs": 6,
+      "inviteSeenMs": 13,
+      "pairingMs": 2572
     },
-    "commentWebToPhoneMs": 187,
-    "commentPhoneToWebMs": 100,
+    "commentWebToPhoneMs": 174,
+    "commentPhoneToWebMs": 108,
     "logout": {
       "revoked": true,
       "replicated": true,
@@ -73,10 +95,18 @@
   "webkit": {
     "version": "26.6",
     "qrLink": {
-      "totalMs": 21220,
-      "phoneMs": 9,
-      "inviteSeenMs": 27,
-      "pairingMs": 21044
-    }
+      "totalMs": 23088,
+      "phoneMs": 6,
+      "inviteSeenMs": 23,
+      "pairingMs": 22918
+    },
+    "commentWebToPhoneMs": 6486,
+    "commentPhoneToWebMs": 135,
+    "logout": {
+      "revoked": true,
+      "replicated": true,
+      "phoneSawRevocationMs": 0
+    },
+    "phraseRestoreMs": 455
   }
 }

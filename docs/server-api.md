@@ -569,6 +569,50 @@ app.
   on shutdown (`SIGKILL` after 10 s); `SIGHUP` to the server is forwarded to them.
 - **Built-in TLS:** `HUWA_TLS_CERT` / `HUWA_TLS_KEY` (§9).
 
+### 14.1 Gateway (`services/huwa-gateway`), seen from the gateway (additions, phase 3)
+
+- **Process.** `node services/huwa-gateway/index.js --port <p> --host 127.0.0.1` (`relay.js` is
+  an alias of `index.js`, so the default `HUWA_GATEWAY_SCRIPT` keeps working). Prints one JSON
+  line `{"ready":true,"port":…,"dhtPort":…}` on stdout once listening, then JSON log lines
+  (`HUWA_LOG`). Exits 0 on `SIGTERM` / `SIGINT`. Optional `--lifeline`
+  (`HUWA_GATEWAY_LIFELINE=1`): exit when stdin closes. Self-contained: `npm ci --omit=dev` in
+  `services/huwa-gateway` installs everything, the dht-relay fork is vendored in
+  `services/huwa-gateway/dht-relay/` (ISC, upstream licence kept). No blind-peer inside: the
+  server's `services/blind-peer` child stays the only one.
+- **Routes** (all under the `/p2p` prefix the server relays):
+
+  | Route | |
+  |---|---|
+  | `GET /p2p` (WebSocket upgrade) | dht-relay, **non-custodial only**: any handshake / connect / listen / announce / unannounce carrying a secret key closes the socket (`stats.custodialRefused`) |
+  | `GET /p2p/health` | `200 {ok, version, uptimeS, ws:{open,max}, dht:{host,port,firewalled,ephemeral,online}, rendezvous:{topics}, stats}`; no per-user data |
+  | `POST /p2p/rendezvous/<topic>` | body = one opaque frame (≤ 8192 bytes, any content type) → `201 {n, ttlMs}`; `413` too large, `429` topic full (8 frames) or rate limit (30 POST/min per client), `503` box full, `400` bad topic |
+  | `GET /p2p/rendezvous/<topic>?after=<n>&wait=<ms ≤ 30000>` | long poll → `200 {frames:[{n, data: base64}], next}` |
+  | `DELETE /p2p/rendezvous/<topic>` | `204` |
+  | `OPTIONS /p2p/rendezvous/<topic>` | CORS preflight (`204`) |
+
+  `<topic>` = 64 lowercase hex characters (random, chosen by the browser; knowing it is the only
+  capability). Frames expire 2 minutes after they were posted (`HUWA_RENDEZVOUS_TTL_MS`). The
+  gateway never sees anything but ciphertext there (the QR link of src/p2p/link-web.ts).
+- **Headers it relies on.** `Origin` (checked against `HUWA_ALLOWED_ORIGINS`, default
+  `self,https://huwa.mciut.fr`; `self` = `HUWA_PUBLIC_URL`'s origin, else the request's
+  `X-Forwarded-Host`/`Host`; `*` = any; no `Origin` = not a browser, allowed: `403` on WS and
+  rendezvous otherwise, CORS headers only for allowed origins). `X-Forwarded-For`: the gateway
+  takes the **right-most** entry, and only when the TCP peer is loopback, as the client address
+  (per-IP limits). `X-Forwarded-Proto` for `self`.
+- **Limits** (environment; the server's own `HUWA_MAX_WS` cap stays in front):
+  `HUWA_MAX_WS` (200, `503`), `HUWA_WS_PER_IP` (8 WebSockets per client, `429`),
+  `HUWA_WS_BYTES_PER_SEC` (2 MiB/s per WebSocket, both directions, token bucket),
+  `HUWA_WS_IDLE_MS` (90 s without any frame from the client: the relay pings every 15 s, so this
+  only closes dead or frozen tabs), `HUWA_WS_MAX_PEERS` (64 relayed peer streams per WebSocket),
+  `HUWA_WS_MAX_QUERIES` (32 concurrent DHT queries per WebSocket); mutable records 60/min per
+  WebSocket, ≤ 1000 bytes. `HUWA_RENDEZVOUS_MAX_TOPICS` (4096).
+- **DHT.** One long-lived HyperDHT node per gateway. Its UDP port is `HUWA_GATEWAY_DHT_PORT`
+  (default `0` = random), **not** `HUWA_DHT_PORT`, which the blind-peer relay binds. Forwarding a
+  fixed `HUWA_GATEWAY_DHT_PORT` makes the node reachable (fewer holepunches for browsers), but
+  it works firewalled. `HUWA_BOOTSTRAP` as for the rest of the server.
+- **Never in production:** `--audit <dir>` / `HUWA_GATEWAY_AUDIT_DIR` (keeps inbound bytes and
+  adds heap-snapshot routes, for tests) and `--testnet N`, `--static <dir>`.
+
 ## 15. Decisions on the phase 0 open questions
 
 1. **Single focus → per-session focus.** The engine keeps one focus per owner; each browser

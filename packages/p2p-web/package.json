@@ -11,7 +11,7 @@
     "bench": "node bench/link-bench.mjs"
   },
   "devDependencies": {
-    "@huwa/dht-relay": "file:../dht-relay",
+    "@huwa/dht-relay": "file:../../services/huwa-gateway/dht-relay",
     "buffer": "6.0.3",
     "events": "3.3.0",
     "fake-indexeddb": "6.2.5",

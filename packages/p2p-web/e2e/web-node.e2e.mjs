@@ -16,13 +16,19 @@ const BROWSERS = (process.env.E2E_BROWSERS || 'chromium').split(',').filter(Bool
 const audit = fs.mkdtempSync(path.join(os.tmpdir(), 'huwa-e2e-audit-'))
 const results = {}
 
+// Each browser gets its own testnet, gateway and phone: on a local testnet, links made after an
+// earlier browser of the same phone logged out are slow (see bench/README, open issue), and the
+// browsers must not depend on each other's leftovers.
 let gw
 let phone
+async function fresh() {
+  await phone?.close()
+  await gw?.stop()
+  gw = await startGateway({ testnet: 3, audit })
+  phone = await startPhone({ bootstrap: gw.bootstrap.map((b) => ({ host: b.host, port: b.port })) })
+}
 test.before(async () => {
   results.bundle = await buildAll()
-  gw = await startGateway({ testnet: 3, audit })
-  const bootstrap = gw.bootstrap.map((b) => ({ host: b.host, port: b.port }))
-  phone = await startPhone({ bootstrap })
 })
 test.after(async () => {
   await phone?.close()
@@ -39,6 +45,7 @@ for (const name of BROWSERS) {
       t.skip(name + ' not installed: ' + err.message.split('\n')[0])
       return
     }
+    await fresh()
     const r = (results[name] = { version: browser.version() })
     const context = await browser.newContext()
     const page = await context.newPage()
@@ -145,6 +152,7 @@ for (const name of BROWSERS) {
 }
 
 test('custodial dht-relay clients are refused by the gateway', async () => {
+  if (!gw) await fresh()
   const RelayNode = require('@huwa/dht-relay')
   const Stream = require('@huwa/dht-relay/ws')
   const { WebSocket } = require('ws')

@@ -1,0 +1,189 @@
+{
+  "date": "2026-10-14T20:07:45.057Z",
+  "network": "local testnet",
+  "runs": [
+    {
+      "i": 0,
+      "ok": true,
+      "phoneMs": 33,
+      "linkMs": 281,
+      "pairingMs": 195,
+      "commentWebToPhoneMs": 177,
+      "commentPhoneToWebMs": 118,
+      "logout": {
+        "revoked": true,
+        "replicated": true,
+        "ms": 228
+      },
+      "revokeSeenMs": 230
+    },
+    {
+      "i": 1,
+      "ok": true,
+      "phoneMs": 6,
+      "linkMs": 26425,
+      "pairingMs": 26359,
+      "commentWebToPhoneMs": 3116,
+      "commentPhoneToWebMs": 78,
+      "logout": {
+        "revoked": true,
+        "replicated": true,
+        "ms": 129
+      },
+      "revokeSeenMs": 131
+    },
+    {
+      "i": 2,
+      "ok": false,
+      "phoneMs": 6,
+      "linkMs": 22206,
+      "pairingMs": 22146,
+      "error": "waitComment: Error: timeout waiting for comment b65c4293faef0c83474ce48cb3741de3"
+    },
+    {
+      "i": 3,
+      "ok": true,
+      "phoneMs": 11,
+      "linkMs": 27552,
+      "pairingMs": 27481,
+      "commentWebToPhoneMs": 3137,
+      "commentPhoneToWebMs": 71,
+      "logout": {
+        "revoked": true,
+        "replicated": true,
+        "ms": 232
+      },
+      "revokeSeenMs": 234
+    },
+    {
+      "i": 4,
+      "ok": true,
+      "phoneMs": 8,
+      "linkMs": 15355,
+      "pairingMs": 15287,
+      "commentWebToPhoneMs": 169,
+      "commentPhoneToWebMs": 94,
+      "logout": {
+        "revoked": true,
+        "replicated": true,
+        "ms": 232
+      },
+      "revokeSeenMs": 233
+    }
+  ],
+  "bundle": {
+    "bytes": 1111244,
+    "gzip": 315586,
+    "brotli": 260212,
+    "top": [
+      [
+        "hypercore",
+        "181 KiB"
+      ],
+      [
+        "autobase",
+        "138 KiB"
+      ],
+      [
+        "src/p2p (Huwa)",
+        "86 KiB"
+      ],
+      [
+        "other",
+        "83 KiB"
+      ],
+      [
+        "hypercore-storage",
+        "76 KiB"
+      ],
+      [
+        "@noble/curves",
+        "61 KiB"
+      ],
+      [
+        "hyperbee",
+        "49 KiB"
+      ],
+      [
+        "sodium-javascript",
+        "44 KiB"
+      ],
+      [
+        "buffer",
+        "25 KiB"
+      ],
+      [
+        "compact-encoding",
+        "19 KiB"
+      ],
+      [
+        "bip39-mnemonic",
+        "19 KiB"
+      ],
+      [
+        "hyperswarm",
+        "19 KiB"
+      ]
+    ]
+  },
+  "gateway": {
+    "dht": {
+      "host": "127.0.0.1",
+      "port": 54123,
+      "firewalled": true,
+      "ephemeral": true,
+      "online": true
+    }
+  },
+  "phone": {
+    "me": {
+      "key": "3d6d4f37523e6cd0718a9df63750630fb4bab6648f1e377b97cb23082ae427e1",
+      "name": "Bench",
+      "createdAt": 1792008466836,
+      "fingerprint": "ws4s3m8k"
+    },
+    "peers": 0,
+    "firewalled": true,
+    "host": "127.0.0.1"
+  },
+  "browser": "chromium 153.0.8010.12",
+  "summary": {
+    "runs": 5,
+    "fullSuccess": 4,
+    "linked": 5,
+    "linkUnder20s": 2,
+    "linkMs": {
+      "min": 281,
+      "p50": 22206,
+      "p95": 27552,
+      "max": 27552
+    },
+    "commentWebToPhoneMs": {
+      "p50": 3116,
+      "max": 3137
+    },
+    "commentPhoneToWebMs": {
+      "p50": 94,
+      "max": 118
+    },
+    "gatewayStats": {
+      "connections": 5,
+      "open": 0,
+      "handshakes": 5,
+      "refusedOrigin": 0,
+      "refusedCapacity": 0,
+      "refusedPerIp": 0,
+      "custodialRefused": 0,
+      "limits": 0,
+      "idleClosed": 0,
+      "inboundBytes": 88261,
+      "outboundBytes": 132868,
+      "rendezvous": {
+        "posts": 5,
+        "gets": 5,
+        "expired": 2,
+        "refused": 0
+      }
+    }
+  }
+}

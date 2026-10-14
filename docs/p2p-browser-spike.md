@@ -233,3 +233,28 @@ Conditions for P3 (before the web login UI ships):
 
 If condition 2 fails on a real network (connections not reliably established through the gateway),
 switch to **D3-F** (linked session lite) for P3 and keep D3 for later.
+
+## 6. Phase 3 follow-up (2026-10-14)
+
+The conditions above were worked through in phase 3 (`docs/WEB_DOCKER_PLAN.md` P3):
+
+1. **dht-relay forked and vendored**: `services/huwa-gateway/dht-relay/` (README lists every
+   change). Mutable records now travel in the relay protocol; the HTTP `/p2p/mutable` route is gone.
+2. **Cause of the "no working connection" runs found**: hyperdht runs the Noise exchange through
+   several DHT nodes at once and can hand the same server reply to `recv` twice. The relay client
+   threw on the duplicate; the exception escaped into the transport's `push()` and froze the read
+   loop of the whole relay stream (every later connection, announce and signature request of that
+   browser was dropped, hence the gateway's "connection timed out"). Fixed (duplicate denied,
+   handlers can no longer freeze the stream), with tests. Two more hangs fixed: a relayed server
+   re-listening with a key still closing on the gateway (`listenError` + retry), and signature
+   requests sent to a client that is gone. Lookups/announces issued while the WebSocket is still
+   opening now wait for it instead of ending empty (a fresh node was undiscoverable).
+   **Real network** (public HyperDHT, gateway and "phone" in their own processes on one machine
+   behind one NAT, Chromium 153): **20/20** QR links, median **1.8 s**, max 10.4 s (first run on a
+   cold gateway), comments 0.18 s web → phone and 0.11 s phone → web
+   (`packages/p2p-web/bench/results-public-chromium.json`). Not measured: a phone on 4G / another
+   network.
+3. **rocksdb-idb**: lazy values (LRU), WAL + compaction, coded quota errors, encryption at rest,
+   single-writer Web Lock (`packages/rocksdb-idb`).
+4. **PoW**: blake2b on WebAssembly in the browser shim (2.5 M hashes/s vs 3.8 M native, measured in Node's V8; in Chromium a new author's comment, 16-bit PoW included, reaches the phone in about 0.2 s).
+5. Shims in `src/p2p/web/shims/`, tested against sodium-native (`packages/p2p-web/test`).

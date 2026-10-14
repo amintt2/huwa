@@ -2,7 +2,7 @@
 //   node packages/p2p-web/build.mjs [--out file] [--no-minify] [--meta]
 // Root script: `npm run build:p2p-worker`. Run it before `expo export -p web`.
 //
-// One copy of every shared module (the fork in packages/dht-relay has its own node_modules for
+// One copy of every shared module (the dht-relay fork resolves its own from the gateway's node_modules for
 // its tests): b4a, sodium, hyperdht, protomux, ... are pinned to the app's copies.
 import { build } from 'esbuild'
 import { createRequire } from 'node:module'
@@ -45,7 +45,7 @@ export async function bundle({ outfile = path.join(repo, 'public', 'p2p-worker.j
   const alias = {
     'rocksdb-idb': path.join(repo, 'packages', 'rocksdb-idb'),
     'rocksdb-native': path.join(repo, 'packages', 'rocksdb-idb'),
-    '@huwa/dht-relay': path.join(repo, 'packages', 'dht-relay'),
+    '@huwa/dht-relay': path.join(repo, 'services', 'huwa-gateway', 'dht-relay'),
     // b4a in its Node flavour over the Buffer polyfill installed by shims/globals.js
     b4a: path.join(rootDir('b4a'), 'index.js'),
     buffer: dir(requireHere, 'buffer'),

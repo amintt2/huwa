@@ -2,7 +2,7 @@
   "name": "@huwa/dht-relay",
   "version": "0.4.3-huwa.1",
   "private": true,
-  "description": "Huwa fork of @hyperswarm/dht-relay 0.4.3 (ISC): non-custodial by default, hyperdht 6.34 announce signing, mutable records in the protocol, per-client limits and backpressure.",
+  "description": "Huwa fork of @hyperswarm/dht-relay 0.4.3 (ISC): non-custodial by default, hyperdht 6.34 announce signing, mutable records in the protocol, per-client limits and backpressure. Vendored in the gateway: its dependencies are installed by the gateway's package.json.",
   "main": "./index.js",
   "exports": {
     ".": "./index.js",
@@ -24,7 +24,7 @@
     "url": "git+https://github.com/holepunchto/hyperswarm-dht-relay.git"
   },
   "scripts": {
-    "test": "node --test test/*.test.js"
+    "test": "cd .. && node --test --test-timeout=240000 dht-relay/test/*.test.js"
   },
   "dependencies": {
     "@hyperswarm/secret-stream": "6.9.2",
@@ -40,8 +40,5 @@
     "sodium-universal": "5.0.1",
     "streamx": "2.28.1",
     "timeout-refresh": "2.0.1"
-  },
-  "devDependencies": {
-    "ws": "8.18.3"
   }
 }

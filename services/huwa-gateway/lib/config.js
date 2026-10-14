@@ -14,7 +14,8 @@ const DEFAULTS = {
   wsMaxConnections: 64,
   wsMaxQueries: 32,
   wsMutablePerMinute: 60,
-  dhtPort: 49737,
+  // 0 = random. HUWA_DHT_PORT belongs to the blind-peer relay (docs/server-api.md §14).
+  dhtPort: 0,
   dhtHost: '0.0.0.0',
   bootstrap: null,
   rendezvousTtlMs: 120_000,
@@ -66,7 +67,7 @@ function fromEnv(env = process.env, argv = process.argv.slice(2)) {
   c.wsIdleMs = int(env.HUWA_WS_IDLE_MS, c.wsIdleMs)
   c.wsMaxConnections = int(env.HUWA_WS_MAX_PEERS, c.wsMaxConnections)
   c.wsMaxQueries = int(env.HUWA_WS_MAX_QUERIES, c.wsMaxQueries)
-  c.dhtPort = int(arg('dht-port') ?? env.HUWA_DHT_PORT, c.dhtPort)
+  c.dhtPort = int(arg('dht-port') ?? env.HUWA_GATEWAY_DHT_PORT, c.dhtPort)
   c.dhtHost = env.HUWA_DHT_HOST || c.dhtHost
   c.bootstrap = parseBootstrap(list(arg('bootstrap') ?? env.HUWA_BOOTSTRAP, null))
   c.rendezvousTtlMs = int(env.HUWA_RENDEZVOUS_TTL_MS, c.rendezvousTtlMs)

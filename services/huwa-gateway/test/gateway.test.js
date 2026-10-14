@@ -2,8 +2,8 @@ const test = require('node:test')
 const assert = require('node:assert/strict')
 const crypto = require('node:crypto')
 const { WebSocket } = require('ws')
-const RelayNode = require('@huwa/dht-relay')
-const RelayStream = require('@huwa/dht-relay/ws')
+const RelayNode = require('../dht-relay')
+const RelayStream = require('../dht-relay/ws')
 const { startGateway } = require('..')
 const { fromEnv } = require('../lib/config')
 
@@ -27,7 +27,7 @@ function open(url, headers = {}) {
 const topic = () => crypto.randomBytes(32).toString('hex')
 
 test('config from the environment', () => {
-  const c = fromEnv({ HUWA_GATEWAY_PORT: '9000', HUWA_MAX_WS: '3', HUWA_ALLOWED_ORIGINS: 'self, https://a.example', HUWA_BOOTSTRAP: '1.2.3.4:49737,[::1]:5', HUWA_DHT_PORT: '40000' }, [])
+  const c = fromEnv({ HUWA_GATEWAY_PORT: '9000', HUWA_MAX_WS: '3', HUWA_ALLOWED_ORIGINS: 'self, https://a.example', HUWA_BOOTSTRAP: '1.2.3.4:49737,[::1]:5', HUWA_GATEWAY_DHT_PORT: '40000', HUWA_DHT_PORT: '49737' }, [])
   assert.equal(c.port, 9000)
   assert.equal(c.host, '127.0.0.1')
   assert.equal(c.maxWs, 3)
