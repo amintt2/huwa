@@ -38,6 +38,8 @@ const RESTORE_LOOKUP_MS = 15_000
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
 const noop = () => {}
+/** Default network: a plain Hyperswarm (UDP HyperDHT), as on Bare and Node. */
+const defaultSwarmFactory = (opts) => new Hyperswarm(opts)
 /** Background timer that never keeps the process alive (Node tests). */
 function later(fn, ms) {
   const t = setTimeout(fn, ms)
@@ -99,14 +101,25 @@ async function rangeValues(bee, prefix, opts = {}) {
 class HuwaNode {
   /**
    * @param {object} opts
-   * @param {string} opts.storage  Corestore directory
+   * @param {string|object} opts.storage  Corestore directory (Bare, Node), or an injected storage:
+   *   anything `new Corestore(storage)` accepts (a hypercore-storage `CorestoreStorage`, or a
+   *   rocksdb-native compatible DB such as packages/rocksdb-idb in the browser).
+   * @param {string|object|(() => object)} [opts.statsStorage]  storage of the community stats
+   *   Corestore (kept apart, see _statsNet); defaults to `storage + '-stats'` for a directory. A
+   *   function is called on first use only (stats are opt-in).
+   * @param {(opts: object, info: { role: 'main'|'stats' }) => object} [opts.swarmFactory]  builds
+   *   a Hyperswarm-compatible swarm from `{ bootstrap, keyPair? }`; defaults to `new Hyperswarm`.
+   *   The browser passes one over `@hyperswarm/dht-relay` (keys stay in the browser).
    * @param {Array} [opts.bootstrap]  DHT bootstrap nodes (`host:port` or `{host, port}`)
    * @param {string} [opts.deviceName]
    * @param {(ev: object) => void} [opts.onevent]  status / me / subscription pushes
    * @param {{ enabled?: boolean, keys?: string[] }} [opts.relays]  Huwa relays (see relay.js)
    */
-  constructor({ storage, bootstrap, deviceName = 'appareil', onevent = noop, log = noop, restoreLookupMs = RESTORE_LOOKUP_MS, relays = null }) {
+  constructor({ storage, statsStorage, swarmFactory = defaultSwarmFactory, bootstrap, deviceName = 'appareil', onevent = noop, log = noop, restoreLookupMs = RESTORE_LOOKUP_MS, relays = null }) {
+    if (!storage) throw new Error('storage requis')
     this.storage = storage
+    this.statsStorage = statsStorage !== undefined ? statsStorage : typeof storage === 'string' ? storage + '-stats' : null
+    this.swarmFactory = swarmFactory
     this.restoreLookupMs = restoreLookupMs
     this.bootstrap = bootstrap && bootstrap.length ? bootstrap : undefined
     this.deviceName = deviceName
@@ -154,7 +167,7 @@ class HuwaNode {
     await this.store.ready()
     await this.local.ready()
     const tStore = Date.now()
-    this.swarm = new Hyperswarm({ bootstrap: this.bootstrap })
+    this.swarm = this.swarmFactory({ bootstrap: this.bootstrap }, { role: 'main' })
     this.swarm.on('connection', (conn, info) => this._onconnection(conn, info))
     this.swarm.on('update', () => this._emitStatus())
     this.relay.attach({ dht: this.swarm.dht, store: this.store, wakeup: this.wakeup })
@@ -1408,12 +1421,14 @@ class HuwaNode {
   _statsNet() {
     if (this.closed) throw new Error('Nœud fermé')
     if (!this.statsStore) {
-      this.statsStore = new Corestore(this.storage + '-stats')
+      const storage = typeof this.statsStorage === 'function' ? this.statsStorage() : this.statsStorage
+      if (!storage) throw new Error('Stockage des statistiques non configuré')
+      this.statsStore = new Corestore(storage)
       this.statsLocal = new Hyperbee(this.statsStore.get({ name: 'stats-local' }), { keyEncoding: 'utf-8', valueEncoding: 'json' })
     }
     if (!this.statsSwarm) {
       this.statsWakeup = new ProtomuxWakeup()
-      this.statsSwarm = new Hyperswarm({ keyPair: crypto.keyPair(), bootstrap: this.bootstrap })
+      this.statsSwarm = this.swarmFactory({ keyPair: crypto.keyPair(), bootstrap: this.bootstrap }, { role: 'stats' })
       this.statsSwarm.on('connection', (conn) => {
         conn.on('error', noop)
         this.statsWakeup.addStream(this.statsStore.replicate(conn))
