@@ -1,0 +1,28 @@
+{
+  "name": "rocksdb-idb",
+  "version": "0.0.1",
+  "private": true,
+  "description": "Subset of rocksdb-native used by hypercore-storage 3.x, over an in-memory sorted map persisted in IndexedDB (Huwa web, spike S2).",
+  "main": "index.js",
+  "license": "Apache-2.0",
+  "scripts": {
+    "test": "node --test test/*.test.mjs",
+    "test:upstream": "node spike/hcs-suite.mjs",
+    "spike:build": "node spike/build.mjs",
+    "spike": "node spike/run.mjs",
+    "spike:node": "node spike/node-relay-check.mjs"
+  },
+  "dependencies": {
+    "b4a": "^1.9.0",
+    "streamx": "^2.21.1"
+  },
+  "devDependencies": {
+    "@hyperswarm/dht-relay": "0.4.3",
+    "brittle": "4.5.0",
+    "buffer": "6.0.3",
+    "fake-indexeddb": "6.2.5",
+    "playwright": "1.63.0",
+    "sodium-javascript": "0.8.0",
+    "test-tmp": "1.4.0"
+  }
+}
