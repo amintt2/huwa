@@ -1,0 +1,25 @@
+# Build context of site/Dockerfile (repository root). Only what the web export needs.
+**/node_modules
+**/.git
+.claude
+.expo
+dist
+web-build
+ios
+android
+native
+packages
+services
+store
+distribution
+docs
+test
+**/*.p8
+**/*.p12
+**/*.jks
+**/*.keystore
+**/*.key
+**/.env*
+credentials.json
+src/p2p/worklet.bundle.js
+src/manga-ext/runtime/runtime.bundle.js
