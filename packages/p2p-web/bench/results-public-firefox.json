@@ -1,0 +1,271 @@
+{
+  "date": "2026-10-14T20:22:00.314Z",
+  "network": "public HyperDHT",
+  "runs": [
+    {
+      "i": 0,
+      "ok": true,
+      "phoneMs": 43,
+      "linkMs": 1665,
+      "pairingMs": 1486,
+      "commentWebToPhoneMs": 160,
+      "commentPhoneToWebMs": 75,
+      "logout": {
+        "revoked": true,
+        "replicated": true,
+        "ms": 2200
+      },
+      "revokeSeenMs": 2202
+    },
+    {
+      "i": 1,
+      "ok": true,
+      "phoneMs": 4,
+      "linkMs": 3203,
+      "pairingMs": 3092,
+      "commentWebToPhoneMs": 280,
+      "commentPhoneToWebMs": 157,
+      "logout": {
+        "revoked": true,
+        "replicated": true,
+        "ms": 1721
+      },
+      "revokeSeenMs": 1723
+    },
+    {
+      "i": 2,
+      "ok": true,
+      "phoneMs": 6,
+      "linkMs": 2322,
+      "pairingMs": 2222,
+      "commentWebToPhoneMs": 222,
+      "commentPhoneToWebMs": 72,
+      "logout": {
+        "revoked": true,
+        "replicated": true,
+        "ms": 2683
+      },
+      "revokeSeenMs": 2684
+    },
+    {
+      "i": 3,
+      "ok": true,
+      "phoneMs": 6,
+      "linkMs": 1969,
+      "pairingMs": 1865,
+      "commentWebToPhoneMs": 225,
+      "commentPhoneToWebMs": 108,
+      "logout": {
+        "revoked": true,
+        "replicated": true,
+        "ms": 1793
+      },
+      "revokeSeenMs": 1794
+    },
+    {
+      "i": 4,
+      "ok": true,
+      "phoneMs": 5,
+      "linkMs": 2125,
+      "pairingMs": 2030,
+      "commentWebToPhoneMs": 390,
+      "commentPhoneToWebMs": 132,
+      "logout": {
+        "revoked": true,
+        "replicated": true,
+        "ms": 1700
+      },
+      "revokeSeenMs": 1701
+    },
+    {
+      "i": 5,
+      "ok": true,
+      "phoneMs": 5,
+      "linkMs": 2475,
+      "pairingMs": 2384,
+      "commentWebToPhoneMs": 176,
+      "commentPhoneToWebMs": 64,
+      "logout": {
+        "revoked": true,
+        "replicated": true,
+        "ms": 1598
+      },
+      "revokeSeenMs": 1600
+    },
+    {
+      "i": 6,
+      "ok": true,
+      "phoneMs": 5,
+      "linkMs": 3142,
+      "pairingMs": 3052,
+      "commentWebToPhoneMs": 185,
+      "commentPhoneToWebMs": 69,
+      "logout": {
+        "revoked": true,
+        "replicated": true,
+        "ms": 1262
+      },
+      "revokeSeenMs": 1264
+    },
+    {
+      "i": 7,
+      "ok": true,
+      "phoneMs": 4,
+      "linkMs": 3116,
+      "pairingMs": 3025,
+      "commentWebToPhoneMs": 176,
+      "commentPhoneToWebMs": 75,
+      "logout": {
+        "revoked": true,
+        "replicated": true,
+        "ms": 1782
+      },
+      "revokeSeenMs": 1784
+    },
+    {
+      "i": 8,
+      "ok": true,
+      "phoneMs": 5,
+      "linkMs": 2095,
+      "pairingMs": 2009,
+      "commentWebToPhoneMs": 190,
+      "commentPhoneToWebMs": 130,
+      "logout": {
+        "revoked": true,
+        "replicated": true,
+        "ms": 1132
+      },
+      "revokeSeenMs": 1135
+    },
+    {
+      "i": 9,
+      "ok": true,
+      "phoneMs": 5,
+      "linkMs": 2547,
+      "pairingMs": 2456,
+      "commentWebToPhoneMs": 225,
+      "commentPhoneToWebMs": 127,
+      "logout": {
+        "revoked": true,
+        "replicated": true,
+        "ms": 1399
+      },
+      "revokeSeenMs": 1401
+    }
+  ],
+  "bundle": {
+    "bytes": 1111244,
+    "gzip": 315586,
+    "brotli": 260212,
+    "top": [
+      [
+        "hypercore",
+        "181 KiB"
+      ],
+      [
+        "autobase",
+        "138 KiB"
+      ],
+      [
+        "src/p2p (Huwa)",
+        "86 KiB"
+      ],
+      [
+        "other",
+        "83 KiB"
+      ],
+      [
+        "hypercore-storage",
+        "76 KiB"
+      ],
+      [
+        "@noble/curves",
+        "61 KiB"
+      ],
+      [
+        "hyperbee",
+        "49 KiB"
+      ],
+      [
+        "sodium-javascript",
+        "44 KiB"
+      ],
+      [
+        "buffer",
+        "25 KiB"
+      ],
+      [
+        "compact-encoding",
+        "19 KiB"
+      ],
+      [
+        "bip39-mnemonic",
+        "19 KiB"
+      ],
+      [
+        "hyperswarm",
+        "19 KiB"
+      ]
+    ]
+  },
+  "gateway": {
+    "dht": {
+      "host": "82.65.30.59",
+      "port": 54299,
+      "firewalled": true,
+      "ephemeral": true,
+      "online": true
+    }
+  },
+  "phone": {
+    "me": {
+      "key": "18dbef951ae835ad238ce02468bf2880bd807f52e8b25bf73443ac8889066066",
+      "name": "Bench",
+      "createdAt": 1792009326289,
+      "fingerprint": "k11zj68m"
+    },
+    "peers": 0,
+    "firewalled": true,
+    "host": "82.65.30.59"
+  },
+  "browser": "firefox 155.0",
+  "summary": {
+    "runs": 10,
+    "fullSuccess": 10,
+    "linked": 10,
+    "linkUnder20s": 10,
+    "linkMs": {
+      "min": 1665,
+      "p50": 2475,
+      "p95": 3203,
+      "max": 3203
+    },
+    "commentWebToPhoneMs": {
+      "p50": 222,
+      "max": 390
+    },
+    "commentPhoneToWebMs": {
+      "p50": 108,
+      "max": 157
+    },
+    "gatewayStats": {
+      "connections": 10,
+      "open": 0,
+      "handshakes": 10,
+      "refusedOrigin": 0,
+      "refusedCapacity": 0,
+      "refusedPerIp": 0,
+      "custodialRefused": 0,
+      "limits": 0,
+      "idleClosed": 0,
+      "inboundBytes": 160672,
+      "outboundBytes": 407505,
+      "rendezvous": {
+        "posts": 10,
+        "gets": 10,
+        "expired": 0,
+        "refused": 0
+      }
+    }
+  }
+}
