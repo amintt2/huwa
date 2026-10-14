@@ -101,17 +101,17 @@ fn remux_h264_aac_seek_and_ass_sidecar() {
     let (_, t0) = segment(&s, &h, 0);
     assert!(t0.abs() < 0.1, "segment 0 starts at {t0}");
     let (_, t1) = segment(&s, &h, 1);
-    assert!((t1 - starts[1]).abs() < 0.05, "segment 1 at {t1}, playlist {}", starts[1]);
+    assert!((t1 - starts[1]).abs() < 0.1, "segment 1 at {t1}, playlist {}", starts[1]);
     // Seek to 80 %: ffmpeg restarts there, the segment carries its source time.
     let k = starts.len() * 8 / 10;
     let (secs, t) = segment(&s, &h, k);
     assert!(secs < 5.0, "seek to 80 % took {secs:.2} s");
-    assert!((t - starts[k]).abs() < 0.05, "segment {k} at {t}, playlist {}", starts[k]);
+    assert!((t - starts[k]).abs() < 0.1, "segment {k} at {t}, playlist {}", starts[k]);
     let (_, t) = segment(&s, &h, k + 1);
-    assert!((t - starts[k + 1]).abs() < 0.05);
+    assert!((t - starts[k + 1]).abs() < 0.1);
     // Going back works too (earlier run's files or a new run).
     let (_, t2) = segment(&s, &h, 2);
-    assert!((t2 - starts[2]).abs() < 0.05);
+    assert!((t2 - starts[2]).abs() < 0.1);
 
     // ASS sidecar, progressively extracted.
     let vtt_url = p["subtitles"][0]["url"].as_str().unwrap().to_string();

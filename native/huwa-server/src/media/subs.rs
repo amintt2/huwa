@@ -210,10 +210,9 @@ impl Subs {
 
     fn args(&self, run: u64, start: f64) -> Vec<String> {
         let mut a: Vec<String> = ["-hide_banner", "-nostdin", "-nostats", "-loglevel", "error", "-y", "-protocol_whitelist", "http,tcp", "-rw_timeout", "120000000"].map(String::from).to_vec();
-        if start > 0.0 {
-            a.extend(["-ss".to_string(), format!("{start:.3}")]);
-        }
-        a.extend(["-copyts", "-start_at_zero", "-i"].map(String::from));
+        // Source timestamps as they are (absolute seek, no shift): sidecar times are the file's.
+        a.extend(["-seek_timestamp".to_string(), "1".to_string(), "-ss".to_string(), format!("{start:.3}")]);
+        a.extend(["-copyts", "-i"].map(String::from));
         a.push(self.input.clone());
         for (ord, abs) in &self.tracks {
             a.extend(["-map".to_string(), format!("0:{abs}"), "-c:s".to_string(), "ass".to_string(), "-flush_packets".to_string(), "1".to_string(), "-f".to_string(), "ass".to_string()]);

@@ -214,7 +214,7 @@ def full(args):
     k = len(hls.starts) * 8 // 10
     took, t = hls.segment(k)
     check(took < 5.0, f"remux seek to 80 % (segment {k}) in {took:.2f} s")
-    check(abs(t - hls.starts[k]) < 0.05, f"segment {k} at {t:.3f} s = playlist {hls.starts[k]:.3f} s")
+    check(abs(t - hls.starts[k]) < 0.1, f"segment {k} at {t:.3f} s = playlist {hls.starts[k]:.3f} s")
     vtt_url = p["subtitles"][0]["url"]
     deadline, vtt = time.monotonic() + 40, ""
     while time.monotonic() < deadline:

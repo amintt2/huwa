@@ -46,6 +46,8 @@ pub const WAIT: Duration = Duration::from_secs(30);
 /// A variant without requests for this long is stopped and its files deleted.
 pub const IDLE: Duration = Duration::from_secs(60);
 const EPS: f64 = 0.002;
+/// Largest timeline shift between ffmpeg's output and the playlist that is corrected.
+const MAX_SHIFT: f64 = 0.25;
 
 pub fn now_ms() -> u64 {
     std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis() as u64).unwrap_or(0)
@@ -135,11 +137,11 @@ pub fn ffmpeg_args(plan: &Plan, input: &str, start: f64, dir: &Path, run: u64, e
     }
     // Input: the internal loopback listener only.
     a.extend(["-protocol_whitelist", "http,tcp", "-rw_timeout", "120000000"].map(String::from));
-    if start > 0.0 {
-        // Copy: just past the keyframe (rounding must never land on the previous one).
-        let ss = if plan.video_copy { start + 0.001 } else { start };
-        a.extend(["-ss".to_string(), format!("{ss:.3}")]);
-    }
+    // Always an explicit seek, as an absolute timestamp (`-seek_timestamp`: older ffmpeg adds the
+    // file's start time, often slightly negative, and lands one GOP early). Copy: just past the
+    // keyframe (rounding must never land on the previous one).
+    let ss = if plan.video_copy && plan.video.is_some() { start + 0.001 } else { start };
+    a.extend(["-seek_timestamp".to_string(), "1".to_string(), "-ss".to_string(), format!("{ss:.3}")]);
     a.extend(["-copyts", "-start_at_zero", "-avoid_negative_ts", "disabled"].map(String::from));
     a.extend(["-i".to_string(), input.to_string()]);
     let height = video_height.unwrap_or(1080).min(plan.max_height);
@@ -528,9 +530,14 @@ async fn watch(v: Arc<Variant>, run: u64, start_seg: usize, mut child: tokio::pr
             next_idx += 1;
         }
         let finished = status.is_some_and(|s| s.success());
+        // ffmpeg's output timeline may sit a few ms off the playlist's (`-start_at_zero` with an
+        // audio priming delay, Cues rounding): measured on the run's first fragment, and only
+        // when small (a seek that landed a GOP early keeps its extra fragment in the first
+        // segment instead).
+        let shift = frags.first().map(|(t, _)| t - v.segments[start_seg].0).filter(|d| d.abs() < MAX_SHIFT).unwrap_or(0.0);
         let mut newly = Vec::new();
         while frontier < v.segments.len() {
-            let end = v.segments.get(frontier + 1).map_or(f64::INFINITY, |s| s.0);
+            let end = v.segments.get(frontier + 1).map_or(f64::INFINITY, |s| s.0 + shift);
             let complete = frags.iter().skip(assigned).any(|(t, _)| *t >= end - EPS) || finished;
             if !complete {
                 break;
@@ -601,13 +608,13 @@ mod tests {
         let dir = Path::new("/cache/hls/m/v");
         let a = ffmpeg_args(&plan(Mode::Remux, true), "http://127.0.0.1:1/i/s/t/h/0", 12.5, dir, 3, Encoder::Software, Some(720)).join(" ");
         assert!(a.contains("-protocol_whitelist http,tcp"));
-        assert!(a.contains("-ss 12.501 -copyts"));
+        assert!(a.contains("-seek_timestamp 1 -ss 12.501 -copyts"));
         assert!(a.contains("-map 0:0 -c:v copy -map 0:1 -c:a aac -ac 2"));
         assert!(a.contains("-hls_time 0.1"));
         assert!(a.contains("movflags=+frag_discont"));
         assert!(a.contains("r3-init.mp4") && a.contains("/cache/hls/m/v/r3-%d.m4s"));
         let t = ffmpeg_args(&plan(Mode::Transcode, false), "http://127.0.0.1:1/i/s/t/h/0", 0.0, dir, 0, Encoder::Software, Some(2160)).join(" ");
-        assert!(!t.contains("-ss"));
+        assert!(t.contains("-seek_timestamp 1 -ss 0.000 -copyts"));
         assert!(t.contains("scale=-2:1080,format=yuv420p"));
         assert!(t.contains("libx264") && t.contains("expr:gte(t,n_forced*4)") && t.contains("-hls_time 4"));
         let mut p = plan(Mode::Transcode, false);
