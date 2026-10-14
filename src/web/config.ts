@@ -16,6 +16,7 @@
 //     "features": { "p2p": false, "streaming": false, "addons": true, "install": true }
 //   }
 import { useSyncExternalStore } from 'react';
+import { setWebGateway } from '@/p2p/web/gateway';
 
 export type WebFeatures = {
   /** The browser P2P node may use `defaultGateway` (phase 3). */
@@ -73,20 +74,38 @@ export function parseConfig(raw: unknown): WebConfig {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return DEFAULT_CONFIG;
   const r = raw as Record<string, unknown>;
   const f = (r.features && typeof r.features === 'object' ? r.features : {}) as Record<string, unknown>;
+  // Huwa Server's /huwa-config.json (docs/server-api.md §14) nests these: server, p2p, instance.
+  const obj = (v: unknown) => (v && typeof v === 'object' && !Array.isArray(v) ? (v as Record<string, unknown>) : {});
+  const server = obj(r.server);
+  const p2p = obj(r.p2p);
+  const instance = obj(r.instance);
+  const base = typeof location !== 'undefined' ? location.href : 'http://localhost/';
+  const absolute = (v: unknown) => {
+    if (typeof v !== 'string' || !v.trim()) return null;
+    try {
+      return new URL(v, typeof server.url === 'string' && server.url ? server.url : base).href;
+    } catch {
+      return null;
+    }
+  };
+  const serverStreams = f.torrent === true || f.transcode === true;
   const bool = (v: unknown, d: boolean) => (typeof v === 'boolean' ? v : d);
-  const name = typeof r.instanceName === 'string' && r.instanceName.trim() ? r.instanceName.trim().slice(0, 40) : DEFAULT_CONFIG.instanceName;
+  const rawName = typeof r.instanceName === 'string' ? r.instanceName : typeof instance.name === 'string' ? instance.name : '';
+  const name = rawName.trim() ? rawName.trim().slice(0, 40) : DEFAULT_CONFIG.instanceName;
   const relayKeys = Array.isArray(r.relayKeys) ? r.relayKeys.filter((k): k is string => typeof k === 'string' && /^[0-9a-f]{64}$/i.test(k)).slice(0, 8) : [];
-  const contact = typeof r.operatorContact === 'string' && /^(mailto:|https:\/\/)/.test(r.operatorContact) ? r.operatorContact.slice(0, 200) : null;
+  const rawContact = typeof r.operatorContact === 'string' ? r.operatorContact : typeof instance.operatorContact === 'string' ? instance.operatorContact : '';
+  const contact = /^(mailto:|https:\/\/)/.test(rawContact) ? rawContact.slice(0, 200) : null;
   return {
     v: 1,
     instanceName: name,
-    defaultGateway: cleanUrl(r.defaultGateway, true),
-    defaultStreamingServer: cleanUrl(r.defaultStreamingServer),
+    defaultGateway: cleanUrl(r.defaultGateway ?? absolute(p2p.gateway), true),
+    // A Huwa Server with the engine or ffmpeg streams for its own web app.
+    defaultStreamingServer: cleanUrl(r.defaultStreamingServer ?? (serverStreams ? absolute(server.url || '/') : null)),
     relayKeys,
     operatorContact: contact,
     features: {
-      p2p: bool(f.p2p, DEFAULT_CONFIG.features.p2p),
-      streaming: bool(f.streaming, DEFAULT_CONFIG.features.streaming),
+      p2p: bool(f.p2p ?? f.p2pGateway, DEFAULT_CONFIG.features.p2p),
+      streaming: bool(f.streaming ?? (serverStreams || undefined), DEFAULT_CONFIG.features.streaming),
       addons: bool(f.addons, DEFAULT_CONFIG.features.addons),
       install: bool(f.install, DEFAULT_CONFIG.features.install),
     },
@@ -109,6 +128,8 @@ export function loadWebConfig(): Promise<WebConfig> {
       const res = await fetch(CONFIG_URL, { cache: 'no-cache', signal: ctrl.signal, headers: { accept: 'application/json' } });
       // The SPA fallback answers unknown paths with index.html: only JSON counts.
       if (res.ok && (res.headers.get('content-type') ?? '').includes('json')) current = parseConfig(await res.json());
+      // The browser P2P node connects to this instance's gateway (same-origin /p2p otherwise).
+      if (current.defaultGateway) setWebGateway(current.defaultGateway);
     } catch {
       // Offline or no file: defaults.
     } finally {

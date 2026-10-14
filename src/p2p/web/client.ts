@@ -11,6 +11,8 @@ import { P2PError } from '../errors';
 
 import { openDedicatedChannel, openNodeChannel, supportsBrowserNode, type NodeChannel, type NodeMessage } from './channel';
 
+import { defaultGateway } from './gateway';
+
 export type WebStorageMode = 'device' | 'passkey' | 'memory';
 
 /** What the worker reports about this browser's account session (src/p2p/web/session.js). */
@@ -72,22 +74,7 @@ function setHint(mode: WebStorageMode | null) {
   else if (mode) storage('local')?.setItem(HINT, mode);
 }
 
-/**
- * Gateway from /huwa-config.json (`p2p.gateway`, e.g. "/p2p", relative to `server.url` or the
- * page). Call before the first getP2P(). Accepts http(s), ws(s) or a path.
- */
-export function setWebGateway(gateway: string | null | undefined, base: string = typeof location !== 'undefined' ? location.href : 'http://localhost/') {
-  if (!gateway) return;
-  const u = new URL(gateway, base);
-  u.protocol = u.protocol === 'https:' || u.protocol === 'wss:' ? 'wss:' : 'ws:';
-  (globalThis as { __HUWA_GATEWAY__?: string }).__HUWA_GATEWAY__ = u.href.replace(/\/+$/, '');
-}
-
-export function defaultGateway(): string {
-  const override = (globalThis as { __HUWA_GATEWAY__?: string }).__HUWA_GATEWAY__ ?? process.env.EXPO_PUBLIC_HUWA_GATEWAY;
-  if (override) return override;
-  return typeof location !== 'undefined' ? location.origin.replace(/^http/, 'ws') + '/p2p' : '';
-}
+export { defaultGateway, setWebGateway } from './gateway';
 
 export class WebP2P extends RpcP2P {
   readonly ready: Promise<void>;

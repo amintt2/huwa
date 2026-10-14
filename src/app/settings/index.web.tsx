@@ -17,6 +17,7 @@ import { useWebConfig } from '@/web/config';
 import { isIOS, isStandalone, promptInstall, useCanInstall } from '@/web/pwa';
 import { SignInActions } from '@/web/sign-in';
 import { StreamingServerSettings } from '@/web/streaming-settings';
+import { WebSessionCard } from '@/components/web-login';
 
 export default function WebSettings() {
   const me = useMe();
@@ -61,6 +62,8 @@ function AccountGroups() {
           last
         />
       </Group>
+      {/* This browser's session: lock with a passkey, public computer mode, log out (revokes it). */}
+      <WebSessionCard />
       <Group title="Lecture">
         <Row icon="options-outline" label="Général" detail="Langue, lecture, données" onPress={() => router.push('/settings/general')} />
         <Row icon="text" label="Sous-titres" detail={subPrefs.enabled ? subLangs.map(langName).join(', ') : 'Désactivés'} onPress={() => router.push('/settings/subtitles')} />

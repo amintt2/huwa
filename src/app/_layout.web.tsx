@@ -18,6 +18,8 @@ import { useEffect, useState } from 'react';
 import { hydrateAddons } from '@/addons/registry';
 import { ToastHost } from '@/components/feedback';
 import { OfflineBanner } from '@/components/states';
+import { PhraseBackupHost, StorageErrorBanner, WebUnlockScreen } from '@/components/web-login';
+import { useWebSession } from '@/p2p/web/login';
 import { loadCatalog } from '@/data/anilist';
 import { installMappingOverlay } from '@/data/mapping-overlay';
 import { hydrateLinks } from '@/manga-ext/link';
@@ -71,6 +73,7 @@ export default function RootLayout() {
   }, []);
   const p2pState = useP2PStatus().state;
   const me = useMe();
+  const session = useWebSession();
   useJournalSync(hydrated && !!me);
   const ready = hydrated && settingsReady && listsReady && catalogReady && p2pState !== 'starting';
 
@@ -89,6 +92,15 @@ export default function RootLayout() {
   }, [config.instanceName]);
 
   if (!ready) return null;
+  // Account locked (passkey / device key): unlock before anything that needs the account.
+  if (session.state === 'locked') {
+    return (
+      <ThemeProvider value={theme}>
+        <StatusBar style="light" />
+        <WebUnlockScreen />
+      </ThemeProvider>
+    );
+  }
 
   const gate = (opts?: object) => (me ? opts : GATE);
 
@@ -154,8 +166,11 @@ export default function RootLayout() {
             <Stack.Screen name="onboarding" options={{ animation: 'fade' }} />
           </Stack.Protected>
         </Stack>
+        {/* Survives the onboarding route unmounting right after account creation. */}
+        <PhraseBackupHost />
       </WebShell>
       <OfflineBanner />
+      <StorageErrorBanner />
       <ToastHost />
       <ServerParamPrompt />
       <UpdatePrompt />
