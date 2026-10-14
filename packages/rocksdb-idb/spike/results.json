@@ -1,0 +1,208 @@
+{
+  "date": "2026-10-14T17:09:44.857Z",
+  "node": "v22.22.3",
+  "bundle": {
+    "bytes": 1244076,
+    "gzip": 346470,
+    "brotli": 260670,
+    "top": [
+      [
+        "hypercore",
+        "181 KiB"
+      ],
+      [
+        "autobase",
+        "138 KiB"
+      ],
+      [
+        "hypercore-storage",
+        "76 KiB"
+      ],
+      [
+        "@noble/curves",
+        "62 KiB"
+      ],
+      [
+        "src/p2p (Huwa)",
+        "60 KiB"
+      ],
+      [
+        "hyperbee",
+        "49 KiB"
+      ],
+      [
+        "sodium-javascript",
+        "44 KiB"
+      ],
+      [
+        "protomux",
+        "43 KiB"
+      ],
+      [
+        "@hyperswarm/dht-relay",
+        "39 KiB"
+      ],
+      [
+        "compact-encoding",
+        "36 KiB"
+      ],
+      [
+        "streamx",
+        "35 KiB"
+      ],
+      [
+        "@hyperswarm/secret-stream",
+        "31 KiB"
+      ],
+      [
+        "hyperdht",
+        "28 KiB"
+      ],
+      [
+        "other",
+        "27 KiB"
+      ],
+      [
+        "@noble/hashes",
+        "25 KiB"
+      ]
+    ]
+  },
+  "browser": "153.0.8010.12",
+  "storage": {
+    "write": {
+      "openMs": 19.199999928474426,
+      "appendMs": 1388.7000000476837,
+      "appendPerSec": 360,
+      "batchAppendMs": 38.299999952316284,
+      "autobaseAppendMs": 2306,
+      "autobasePerSec": 43,
+      "coreKey": "d8d6b472fc0cb9e2f0d9a3594284bbc6095db2b875cb453269f930cee1e75327",
+      "baseKey": "f9adb3c76f45d6c82bd369b4756878899c160d6d4ff819cb76f93ef683b19f2b",
+      "coreLength": 1000,
+      "baseLength": 201,
+      "idb": {
+        "transactions": 1535,
+        "batches": 1536,
+        "ops": 9898
+      },
+      "closeMs": 0.8999999761581421
+    },
+    "read": {
+      "reopenMs": 45.299999952316284,
+      "sameKey": true,
+      "coreLength": 1000,
+      "readOk": true,
+      "readMs": 0.2999999523162842,
+      "autobaseOk": true,
+      "viewEntries": 100
+    }
+  },
+  "pow": {
+    "browser": {
+      "blake2bWasmLoaded": false,
+      "blake2bWasmSupported": false,
+      "sodiumHashesPerSec": 137315,
+      "nobleHashesPerSec": 133280,
+      "solve": {
+        "8": {
+          "avgMs": 3,
+          "maxMs": 5
+        },
+        "12": {
+          "avgMs": 23,
+          "maxMs": 41
+        },
+        "16": {
+          "avgMs": 344,
+          "maxMs": 701
+        }
+      }
+    },
+    "node": {
+      "sodiumHashesPerSec": 2454501,
+      "nobleHashesPerSec": 148833,
+      "solve": {
+        "8": {
+          "avgMs": 0,
+          "maxMs": 1
+        },
+        "12": {
+          "avgMs": 1,
+          "maxMs": 3
+        },
+        "16": {
+          "avgMs": 15,
+          "maxMs": 32
+        }
+      }
+    }
+  },
+  "p2p": {
+    "nodeReadyMs": 13,
+    "pairing": {
+      "ms": 22357,
+      "sameIdentity": true,
+      "name": "moi",
+      "devicesOnMobile": 2
+    },
+    "homeBasePhoneToWebMs": 7805,
+    "commentWebToPhone": {
+      "totalMs": 459,
+      "appendWithPowMs": 343,
+      "propagationMs": 112
+    },
+    "commentPhoneToWebMs": 153,
+    "browserPeers": 1
+  },
+  "audit": {
+    "inboundBytes": 16088,
+    "heapSnapshotMB": 12,
+    "gatewayStats": {
+      "connections": 2,
+      "handshakes": 1,
+      "custodialRefused": 1,
+      "inboundBytes": 16088,
+      "mutableGets": 2,
+      "mutablePuts": 1
+    },
+    "browserSecrets": {
+      "swarmSecretKey": {
+        "inInboundBytes": false,
+        "inHeapStrings": false
+      },
+      "deviceSecretKey": {
+        "inInboundBytes": false,
+        "inHeapStrings": false
+      },
+      "boxSeed": {
+        "inInboundBytes": false,
+        "inHeapStrings": false
+      },
+      "corestorePrimaryKey": {
+        "inInboundBytes": false,
+        "inHeapStrings": false
+      },
+      "homeWriterSecretKey": {
+        "inInboundBytes": false,
+        "inHeapStrings": false
+      }
+    },
+    "leak": false,
+    "custodialControl": {
+      "refused": true,
+      "keyFoundInInbound": true
+    }
+  },
+  "restart": {
+    "readyMs": 42,
+    "identityRestored": true,
+    "bio": "bio depuis le mobile"
+  },
+  "browserIdentity": {
+    "ms": 148.39999997615814,
+    "words": 24,
+    "name": "Compte web",
+    "key": "283c1385e4b40f581fd802789be6ac19a5536de53ad934775d2c2aeca780dec0"
+  }
+}

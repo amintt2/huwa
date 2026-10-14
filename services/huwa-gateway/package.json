@@ -1,0 +1,19 @@
+{
+  "name": "huwa-gateway",
+  "version": "0.0.1",
+  "private": true,
+  "description": "Huwa P2P gateway for browsers: non-custodial @hyperswarm/dht-relay over WebSocket (spike S2 of docs/WEB_DOCKER_PLAN.md).",
+  "main": "relay.js",
+  "bin": {
+    "huwa-gateway": "relay.js"
+  },
+  "license": "Apache-2.0",
+  "engines": {
+    "node": ">=22"
+  },
+  "dependencies": {
+    "@hyperswarm/dht-relay": "0.4.3",
+    "hyperdht": "6.34.0",
+    "ws": "8.18.3"
+  }
+}

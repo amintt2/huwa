@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<title>Huwa S2 spike</title>
+</head>
+<body>
+<pre id="log">Huwa spike S2 : nœud P2P dans un Worker</pre>
+<script>
+  // window.rpc(cmd, args) -> Promise, used by spike/run.mjs through Playwright.
+  let worker = null
+  let seq = 0
+  const pending = new Map()
+  const log = (s) => (document.getElementById('log').textContent += '\n' + s)
+  window.startWorker = () =>
+    new Promise((resolve, reject) => {
+      worker = new Worker('dist/worker.js')
+      worker.onerror = (e) => reject(new Error(e.message))
+      worker.onmessage = (e) => {
+        const m = e.data
+        if (m.ready) return resolve(true)
+        const p = pending.get(m.id)
+        if (!p) return
+        pending.delete(m.id)
+        if (m.ok) p.resolve(m.v)
+        else p.reject(new Error(m.e))
+      }
+    })
+  window.rpc = (cmd, args) =>
+    new Promise((resolve, reject) => {
+      const id = ++seq
+      pending.set(id, { resolve, reject })
+      log('> ' + cmd)
+      worker.postMessage({ id, cmd, args })
+    })
+  window.stopWorker = () => {
+    if (worker) worker.terminate()
+    worker = null
+  }
+</script>
+</body>
+</html>
