@@ -1,0 +1,87 @@
+name: Huwa Server
+
+# Serveur auto-hébergeable (native/huwa-server) et feature `server` du moteur
+# (native/huwa-torrent-core) : compilation et tests Linux amd64 + arm64 (runners natifs,
+# pas de compilation croisée). Plan : docs/WEB_DOCKER_PLAN.md (S3, D20).
+
+on:
+  push:
+    paths:
+      - native/huwa-server/**
+      - native/huwa-torrent-core/**
+      - native/vendor/**
+      - .github/workflows/server.yml
+  pull_request:
+    paths:
+      - native/huwa-server/**
+      - native/huwa-torrent-core/**
+      - native/vendor/**
+      - .github/workflows/server.yml
+  workflow_dispatch:
+
+concurrency:
+  group: server-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  server:
+    name: huwa-server (${{ matrix.arch }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-latest
+            arch: amd64
+          - runner: ubuntu-24.04-arm
+            arch: arm64
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            native/huwa-server
+            native/huwa-torrent-core
+          key: ${{ matrix.arch }}
+
+      # Moteur avec la feature `server` : politique d'adresses amont (résolveur DNS, rebinding,
+      # redirections), URL publiques, liaison configurable. Les tests réseau restent #[ignore].
+      - name: Moteur (feature server)
+        working-directory: native/huwa-torrent-core
+        run: cargo test --locked --features server
+
+      # Serveur : sessions, quotas, isolation, SSRF, flux 206 depuis un seeder local hors ligne.
+      - name: Tests huwa-server
+        working-directory: native/huwa-server
+        run: cargo test --locked
+
+      - name: Build release
+        working-directory: native/huwa-server
+        run: cargo build --locked --release
+
+      # Fumée : le binaire démarre, répond, et refuse un amont interne.
+      - name: Smoke test
+        working-directory: native/huwa-server
+        run: |
+          mkdir -p "$RUNNER_TEMP/huwa/cache" "$RUNNER_TEMP/huwa/data"
+          HUWA_PORT=18080 HUWA_BIND=127.0.0.1 HUWA_CACHE_DIR="$RUNNER_TEMP/huwa/cache" HUWA_DATA_DIR="$RUNNER_TEMP/huwa/data" \
+            ./target/release/huwa-server > "$RUNNER_TEMP/huwa/server.log" 2>&1 &
+          for i in $(seq 1 30); do curl -sf http://127.0.0.1:18080/health && break; sleep 1; done
+          curl -sf http://127.0.0.1:18080/api/v1/info | tee /dev/stderr | grep -q '"seeding":false'
+          TOKEN=$(curl -sf -X POST http://127.0.0.1:18080/api/v1/session | python3 -c 'import sys,json;print(json.load(sys.stdin)["token"])')
+          code=$(curl -s -o /dev/null -w '%{http_code}' -X POST -H "Authorization: Bearer $TOKEN" \
+            -d '{"url":"http://169.254.169.254/latest/meta-data/"}' http://127.0.0.1:18080/api/v1/engine/httpOpen)
+          test "$code" = 403
+          kill %1 || true
+          cat "$RUNNER_TEMP/huwa/server.log"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: huwa-server-linux-${{ matrix.arch }}
+          path: native/huwa-server/target/release/huwa-server
+          retention-days: 7
