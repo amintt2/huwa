@@ -4,8 +4,13 @@
 # app, per-browser sessions, /huwa-config.json and the P2P gateway (+ blind-peer relay) for
 # browsers. Built WITHOUT the torrent engine, the HTTP / fetch proxy and ffmpeg
 # (`--no-default-features`: /api/v1/engine is a 404). huwa.mciut.fr never streams torrents.
+# Also carries the legacy site (site/: /get, /privacy, /terms, /pack, /extensions, AltStore
+# sources, .well-known association files): it replaces the nginx-only site/Dockerfile.
 #
 #   docker build -f docker/Dockerfile.web -t huwa:web .
+#   docker run --rm -p 8080:8080 -e HUWA_RELAY=0 -e HUWA_INDEXABLE=1 huwa:web
+#
+# Coolify (huwa.mciut.fr): deploy/coolify/huwa-site.yaml.
 
 ARG NODE_VERSION=22
 ARG RUST_IMAGE=rust:1-bookworm
@@ -26,6 +31,19 @@ RUN if node -e "process.exit(require('./package.json').scripts['build:web'] ? 0 
 
 FROM scratch AS web
 COPY --from=web-build /src/dist/ /
+
+# ---- 1b. Legacy site of huwa.mciut.fr under the app (what site/Dockerfile + nginx served) ------
+# site/ first (the old landing page becomes /get = get.html), the web export on top: the app's
+# index.html is the home page. huwa-server applies site/nginx.conf's rules (src/web.rs): JSON
+# association files, /addon & /install → extensions.html, /privacy → privacy.html…
+FROM debian:bookworm-slim AS webroot
+COPY site/ /out/
+RUN cd /out \
+ && mv index.html get.html \
+ && rm -f Dockerfile Dockerfile.dockerignore nginx.conf
+COPY --from=web / /out/
+RUN test -f /out/index.html -a -f /out/get.html -a -f /out/.well-known/apple-app-site-association \
+ && grep -q '"applinks"' /out/.well-known/apple-app-site-association
 
 # ---- 2. huwa-server without the engine --------------------------------------------------------
 FROM ${RUST_IMAGE} AS rust
@@ -83,7 +101,7 @@ RUN groupadd --system --gid 1000 huwa \
 COPY --from=rust /usr/local/bin/huwa-server /usr/local/bin/huwa-server
 COPY --from=gateway /opt/huwa/gateway /opt/huwa/gateway
 COPY --from=gateway /opt/huwa/blind-peer /opt/huwa/blind-peer
-COPY --from=web / /opt/huwa/web/
+COPY --from=webroot /out/ /opt/huwa/web/
 COPY LICENSE /usr/share/doc/huwa/LICENSE
 ENV HUWA_PORT=8080 \
     HUWA_DATA_DIR=/data \

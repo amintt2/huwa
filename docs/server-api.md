@@ -534,8 +534,14 @@ app.
 - **Web app.** `HUWA_WEB_DIR` (the image: `/opt/huwa/web`, an `expo export -p web` build) served at
   `/` with SPA fallback (`index.html` for unknown paths), precompressed `.br` / `.gz` when present.
   Hashed bundles (`/_expo/static/…`, `/assets/…`) are `immutable`; HTML, the service worker, the
-  manifest and the config are `no-cache`. `/.well-known/apple-app-site-association` is served as
-  JSON.
+  manifest and the config are `no-cache`. `/.well-known/apple-app-site-association` and
+  `/.well-known/assetlinks.json` are served as JSON (no redirect).
+  Legacy site (the `-web` image copies `site/` under the app, the old landing page as `get.html`;
+  same rules as `site/nginx.conf`): `/.well-known/*` and `/altstore/*` are real files or `404`,
+  never the app; `/addon` and `/install` answer with `extensions.html` and `/get` with
+  `get.html` when those files exist (the app's routes otherwise, as on self-hosted images); an
+  extensionless path with a matching `.html` file answers with it (`/privacy`, `/terms`, `/pack`,
+  `/extensions`), then the SPA fallback.
 - **`GET /huwa-config.json`** (generated from the environment, `no-cache`; schema `v: 1`):
 
   ```json
@@ -545,12 +551,14 @@ app.
     "features": { …same as /api/v1/info… },
     "p2p": { "gateway": "/p2p", "rendezvous": "/p2p/rendezvous" },
     "instance": { "name": null, "operatorContact": null, "indexable": false },
-    "anilist": { "clientId": null }
+    "anilist": { "clientId": null },
+    "community": { "discord": null }
   }
   ```
 
   `server.url` is `HUWA_PUBLIC_URL` or `""` (same origin as the page). `p2p.*` are `null` when
-  `HUWA_P2P_GATEWAY=0`.
+  `HUWA_P2P_GATEWAY=0`. `community.discord` is `HUWA_DISCORD_INVITE` (https only) or `null`: the
+  web app shows its Discord invitation only when set.
 - **`GET /health`** → `200 ok`. The image's HEALTHCHECK runs `huwa-server --healthcheck`.
 - **`GET /metrics`** (Prometheus text): request, session, quota, probe, HLS (jobs, restarts,
   failures, segments), subtitle, compat and WebSocket counters; gauges for sessions, open

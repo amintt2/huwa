@@ -135,6 +135,9 @@ pub struct ServerConfig {
     pub instance_name: Option<String>,
     pub operator_contact: Option<String>,
     pub anilist_client_id: Option<String>,
+    /// `HUWA_DISCORD_INVITE` (empty): community invite shown by the web app (`/huwa-config.json`
+    /// `community.discord`). https only; `none` / `-` = hidden (the deploy templates set one).
+    pub discord_invite: Option<String>,
     /// `HUWA_METRICS` (loopback | 1 | 0).
     pub metrics: MetricsAccess,
     /// `HUWA_SESSION_TTL_DAYS` (30).
@@ -237,6 +240,7 @@ impl Default for ServerConfig {
             instance_name: None,
             operator_contact: None,
             anilist_client_id: None,
+            discord_invite: None,
             metrics: MetricsAccess::Loopback,
             session_ttl: Duration::from_secs(30 * 24 * 3600),
             stream_token_ttl: Duration::from_secs(6 * 3600),
@@ -394,6 +398,13 @@ impl ServerConfig {
         c.instance_name = var("HUWA_INSTANCE_NAME");
         c.operator_contact = var("HUWA_OPERATOR_CONTACT");
         c.anilist_client_id = var("HUWA_ANILIST_CLIENT_ID");
+        if let Some(v) = var("HUWA_DISCORD_INVITE").filter(|v| !matches!(v.to_ascii_lowercase().as_str(), "-" | "none" | "off" | "0")) {
+            let u = url::Url::parse(&v).with_context(|| format!("HUWA_DISCORD_INVITE={v}"))?;
+            if u.scheme() != "https" {
+                return Err(anyhow!("HUWA_DISCORD_INVITE must be an https:// link"));
+            }
+            c.discord_invite = Some(v);
+        }
         if let Some(v) = var("HUWA_METRICS") {
             c.metrics = match v.to_ascii_lowercase().as_str() {
                 "loopback" | "local" => MetricsAccess::Loopback,
@@ -514,5 +525,9 @@ mod tests {
         assert!(cfg(&[("HUWA_HWACCEL", "gpu")]).is_err());
         assert!(cfg(&[("HUWA_TLS_CERT", "/c.pem")]).is_err());
         assert!(cfg(&[("HUWA_METRICS", "sometimes")]).is_err());
+        assert!(cfg(&[("HUWA_DISCORD_INVITE", "http://discord.gg/x")]).is_err());
+        assert_eq!(cfg(&[("HUWA_DISCORD_INVITE", " https://discord.gg/x ")]).unwrap().discord_invite.as_deref(), Some("https://discord.gg/x"));
+        assert_eq!(cfg(&[("HUWA_DISCORD_INVITE", "")]).unwrap().discord_invite, None);
+        assert_eq!(cfg(&[("HUWA_DISCORD_INVITE", "none")]).unwrap().discord_invite, None);
     }
 }

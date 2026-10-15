@@ -1,3 +1,6 @@
+# SUPERSEDED by docker/Dockerfile.web (deploy/coolify/huwa-site.yaml): same pages plus the P2P
+# gateway that web login needs. Kept for a rollback only.
+#
 # huwa.mciut.fr — public Huwa web app + the legacy site pages (docs/WEB_DOCKER_PLAN.md D15, P1).
 # No torrent engine, no ffmpeg, no fetch proxy: nginx serving static files only.
 #

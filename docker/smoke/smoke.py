@@ -298,6 +298,20 @@ def web(args):
     st, _, b = req("GET", "/some/spa/route")
     check(st == 200 and b"<html" in b.lower(), "SPA fallback")
     check(j(req("GET", "/huwa-config.json")[2])["features"]["torrent"] is False, "/huwa-config.json")
+    # Legacy site of huwa.mciut.fr (site/ copied under the app, rules of site/nginx.conf).
+    for p in ["/.well-known/apple-app-site-association", "/.well-known/assetlinks.json", "/altstore-source.json", "/sideload-source.json"]:
+        st, h, b = req("GET", p)
+        check(st == 200 and h.get("content-type", "").startswith("application/json") and j(b) is not None, f"{p} is JSON")
+    st, _, b = req("GET", "/.well-known/apple-app-site-association")
+    check(b"/addon*" in b and b"/pack*" in b, "AASA lists the universal-link paths")
+    st, h, _ = req("GET", "/altstore/icon.png")
+    check(st == 200 and h.get("content-type") == "image/png", "/altstore/icon.png")
+    check(req("GET", "/altstore/nope")[0] == 404, "/altstore/* never falls back to the app")
+    for p, marker in [("/get", b"altstore-source.json"), ("/privacy", b"<html"), ("/privacy.html", b"<html"), ("/terms.html", b"<html"),
+                      ("/pack", b"<html"), ("/extensions", b"<html"), ("/addon?url=https%3A%2F%2Fa.example%2Fmanifest.json", b"<html"),
+                      ("/install?url=x", b"<html")]:
+        st, _, b = req("GET", p)
+        check(st == 200 and marker in b.lower() and b'id="root"' not in b, f"{p} is the legacy page")
     log("PASS")
 
 

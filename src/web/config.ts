@@ -13,9 +13,11 @@
 //     "defaultStreamingServer": "https://host", // preselected streaming server, or null
 //     "relayKeys": ["<64 hex>"],               // blind-peer relays offered to new accounts
 //     "operatorContact": "mailto:…",           // shown in Réglages → À propos de l'instance
-//     "features": { "p2p": false, "streaming": false, "addons": true, "install": true }
+//     "features": { "p2p": false, "streaming": false, "addons": true, "install": true },
+//     "community": { "discord": "https://discord.gg/…" } // invitation + Réglages row, or null
 //   }
 import { useSyncExternalStore } from 'react';
+import { cleanDiscordInvite } from '@/community/discord';
 import { setWebGateway } from '@/p2p/web/gateway';
 
 export type WebFeatures = {
@@ -37,6 +39,8 @@ export type WebConfig = {
   relayKeys: string[];
   operatorContact: string | null;
   features: WebFeatures;
+  /** Community links (huwa-server: HUWA_DISCORD_INVITE). null = hidden. */
+  community: { discord: string | null };
   /** Where the values came from: the instance file, or the built-in defaults. */
   source: 'instance' | 'defaults';
 };
@@ -49,6 +53,7 @@ export const DEFAULT_CONFIG: WebConfig = {
   relayKeys: [],
   operatorContact: null,
   features: { p2p: false, streaming: false, addons: true, install: true },
+  community: { discord: null },
   source: 'defaults',
 };
 
@@ -79,6 +84,7 @@ export function parseConfig(raw: unknown): WebConfig {
   const server = obj(r.server);
   const p2p = obj(r.p2p);
   const instance = obj(r.instance);
+  const community = obj(r.community);
   const base = typeof location !== 'undefined' ? location.href : 'http://localhost/';
   const absolute = (v: unknown) => {
     if (typeof v !== 'string' || !v.trim()) return null;
@@ -109,6 +115,7 @@ export function parseConfig(raw: unknown): WebConfig {
       addons: bool(f.addons, DEFAULT_CONFIG.features.addons),
       install: bool(f.install, DEFAULT_CONFIG.features.install),
     },
+    community: { discord: cleanDiscordInvite(community.discord) },
     source: 'instance',
   };
 }

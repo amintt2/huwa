@@ -31,5 +31,8 @@ module.exports = ({ config }) => {
     .split(',')
     .map((k) => k.trim())
     .filter(Boolean);
-  return { ...config, updates, extra: { ...config.extra, channel, gifApiKey, relayKeys } };
+  // Discord invite shown after onboarding and in Réglages (src/community/discord.ts): app.json
+  // `extra.discordInvite`, or HUWA_DISCORD_INVITE at build time. Empty = hidden.
+  const discordInvite = String(process.env.HUWA_DISCORD_INVITE ?? config.extra?.discordInvite ?? '').trim();
+  return { ...config, updates, extra: { ...config.extra, channel, gifApiKey, relayKeys, discordInvite } };
 };

@@ -19,6 +19,7 @@ import { animeReleases, manhwaReleases, weeklyTop } from '@/data/releases';
 import { useContinueItems } from '@/store/derived';
 import { useStore } from '@/store/store';
 import { C, R, S, SHADOW } from '@/theme/tokens';
+import { InstallBanner } from '@/web/install';
 import { ScrollRow } from '@/web/scroll-row';
 import { WIDE } from '@/web/viewport';
 
@@ -121,6 +122,8 @@ export default function Home() {
           </View>
         </View>
       )}
+      {/* "Installer l'app" for this platform: APK on Android, home screen on iOS, PWA on desktop. */}
+      <InstallBanner />
     </View>
   );
 }

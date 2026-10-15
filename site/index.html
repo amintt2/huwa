@@ -58,6 +58,11 @@
     code { background: var(--elevated); padding: 2px 6px; border-radius: 6px; font-size: 13px; color: var(--text); word-break: break-all; }
     .note { font-size: 14px; color: var(--text2); }
     footer { padding: 32px 0 48px; border-top: 1px solid var(--border); font-size: 14px; color: var(--text2); }
+    .cta-note { margin: -14px 0 0; font-size: 14px; color: var(--text2); }
+    .cta-note:empty { display: none; }
+    .btn-discord { background: #5865F2; color: #fff; }
+    .btn-discord:hover { background: #6873f5; }
+    .card.match { border-color: rgba(127,176,255,.55); box-shadow: 0 0 0 1px rgba(127,176,255,.25); }
     .copy { font: inherit; font-size: 13px; color: var(--accent-text); background: none; border: 1px solid rgba(127,176,255,.3); border-radius: 8px; padding: 2px 8px; margin-left: 4px; cursor: pointer; }
     @media (prefers-reduced-motion: reduce) { .btn { transition: none; } }
   </style>
@@ -73,12 +78,17 @@
       <h1>Anime et manhwa,<br><span>enfin reliés.</span></h1>
       <p class="lead">Fini l’anime ? Huwa te dit à quel chapitre reprendre le manhwa, et inversement. Tes sources viennent des addons que tu choisis, ta communauté passe de pair à pair. Pas de compte, pas de pub, pas de serveur central.</p>
       <div class="cta">
-        <a class="btn btn-primary" href="#installer">
+        <a class="btn btn-primary" id="smart-cta" href="#installer">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4v11m0 0-4.5-4.5M12 15l4.5-4.5M5 20h14"/></svg>
-          Installer Huwa
+          <span>Installer Huwa</span>
         </a>
-        <a class="btn btn-soft" href="https://github.com/amintt2/huwa">Voir sur GitHub</a>
+        <a class="btn btn-soft" id="smart-alt" href="/">Ouvrir Huwa Web</a>
+        <a class="btn btn-discord" href="https://discord.gg/K9wTTr3T97" rel="noopener">
+          <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M20.3 4.4A19.6 19.6 0 0 0 15.4 3l-.6 1.3a18.2 18.2 0 0 0-5.6 0L8.6 3a19.5 19.5 0 0 0-4.9 1.5C.6 9.1-.3 13.6.1 18.1a19.8 19.8 0 0 0 6 3l1.3-2a12.8 12.8 0 0 1-2-1l.5-.4a14 14 0 0 0 12.2 0l.5.4c-.6.4-1.3.7-2 1l1.3 2a19.7 19.7 0 0 0 6-3c.5-5.2-.8-9.7-3.6-13.7ZM8 15.4c-1.2 0-2.2-1.1-2.2-2.4S6.8 10.6 8 10.6s2.2 1.1 2.2 2.4-1 2.4-2.2 2.4Zm8 0c-1.2 0-2.2-1.1-2.2-2.4s1-2.4 2.2-2.4 2.2 1.1 2.2 2.4-1 2.4-2.2 2.4Z"/></svg>
+          Rejoindre le Discord
+        </a>
       </div>
+      <p class="cta-note" id="smart-note"></p>
     </div>
 
     <section>
@@ -96,7 +106,7 @@
     <section id="installer">
       <h2>Installer</h2>
       <div class="install">
-        <div class="card">
+        <div class="card" data-os="android">
           <span class="tag">Android</span>
           <h3>APK direct ou Obtainium</h3>
           <ol>
@@ -110,7 +120,7 @@
           </div>
         </div>
 
-        <div class="card">
+        <div class="card" data-os="ios">
           <span class="tag">iPhone et iPad · Union européenne</span>
           <h3>AltStore PAL, en 3 étapes</h3>
           <ol>
@@ -152,10 +162,65 @@
     </section>
 
     <footer>
-      Huwa · open source · <a href="/extensions">Ajouter une extension</a> · <a href="/privacy.html">Confidentialité</a> · <a href="/terms.html">Conditions d’utilisation</a> · <a href="https://github.com/amintt2/huwa/blob/huwa-v1/distribution/LEGAL.md">Cadre juridique et notifications (DMCA)</a>
+      Huwa · open source · <a href="https://discord.gg/K9wTTr3T97" rel="noopener">Discord</a> · <a href="/extensions">Ajouter une extension</a> · <a href="/privacy.html">Confidentialité</a> · <a href="/terms.html">Conditions d’utilisation</a> · <a href="https://github.com/amintt2/huwa/blob/huwa-v1/distribution/LEGAL.md">Cadre juridique et notifications (DMCA)</a>
     </footer>
   </div>
   <script>
+    // Smart primary button: same rules as the web app (src/web/install-suggest.ts). Android → the
+    // APK of the latest release (arm64 build when published), iPhone / iPad → Huwa Web on the home
+    // screen, desktop → Huwa Web (installable from the browser).
+    (function () {
+      var ua = navigator.userAgent || '';
+      var hints = navigator.userAgentData || null;
+      var android = !/iPhone|iPad|iPod/.test(ua) && ((hints && /android/i.test(hints.platform || '')) || /Android/i.test(ua));
+      // iPadOS Safari sends a Mac UA: a touch screen gives it away.
+      var ios = !android && (/iPhone|iPad|iPod/.test(ua) || (/Macintosh/.test(ua) && navigator.maxTouchPoints > 1));
+      var standalone = navigator.standalone === true || (window.matchMedia && matchMedia('(display-mode: standalone)').matches);
+      var cta = document.getElementById('smart-cta');
+      var alt = document.getElementById('smart-alt');
+      var note = document.getElementById('smart-note');
+      var label = cta.querySelector('span');
+      var RELEASES = 'https://github.com/amintt2/huwa/releases/latest';
+      var os = android ? 'android' : ios ? 'ios' : '';
+      if (os) {
+        var card = document.querySelector('.card[data-os="' + os + '"]');
+        if (card) card.classList.add('match');
+      }
+      if (standalone) return;
+      if (android) {
+        label.textContent = 'Installer l’app Android';
+        cta.href = RELEASES;
+        alt.textContent = 'Ajouter à Obtainium';
+        alt.href = 'obtainium://add/https://github.com/amintt2/huwa';
+        note.textContent = 'Si Android le demande, autorise l’installation depuis ton navigateur.';
+        fetch('https://api.github.com/repos/amintt2/huwa/releases/latest', { headers: { Accept: 'application/vnd.github+json' } })
+          .then(function (r) { return r.ok ? r.json() : null; })
+          .then(function (rel) {
+            if (!rel || !rel.assets || rel.draft || rel.prerelease) return;
+            var v = String(rel.tag_name || '').replace(/^v/, '');
+            var pick = function (n) { return rel.assets.filter(function (a) { return a.name === n; })[0]; };
+            var a = pick('Huwa-' + v + '-arm64-v8a.apk') || pick('Huwa-' + v + '.apk');
+            if (a && /^https:\/\/github\.com\/amintt2\/huwa\//.test(a.browser_download_url)) {
+              cta.href = a.browser_download_url;
+              label.textContent = 'Installer l’app Android (' + v + ')';
+            }
+          })
+          .catch(function () {});
+      } else if (ios) {
+        label.textContent = 'Ajouter à l’écran d’accueil';
+        cta.href = '/';
+        alt.textContent = 'App native (AltStore)';
+        alt.href = '#installer';
+        note.textContent = 'Ouvre Huwa Web, puis Partager → Sur l’écran d’accueil. L’app native arrive sur AltStore PAL (UE).';
+      } else {
+        label.textContent = 'Ouvrir Huwa Web';
+        cta.href = '/';
+        alt.textContent = 'Apps mobiles';
+        alt.href = '#installer';
+        note.textContent = 'Installe-la ensuite depuis ton navigateur (Chrome, Edge : icône d’installation dans la barre d’adresse).';
+      }
+    })();
+
     document.querySelectorAll('.copy').forEach((b) => b.addEventListener('click', async () => {
       try { await navigator.clipboard.writeText(b.dataset.copy); b.textContent = 'Copié'; } catch { b.textContent = b.dataset.copy; }
     }));

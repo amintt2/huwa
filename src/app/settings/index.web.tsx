@@ -14,10 +14,11 @@ import { useSubtitlePrefs } from '@/subtitles/prefs';
 import { useSettings } from '@/settings/settings';
 import { C, S } from '@/theme/tokens';
 import { useWebConfig } from '@/web/config';
-import { isIOS, isStandalone, promptInstall, useCanInstall } from '@/web/pwa';
+import { InstallRow } from '@/web/install';
 import { SignInActions } from '@/web/sign-in';
 import { StreamingServerSettings } from '@/web/streaming-settings';
 import { WebSessionCard } from '@/components/web-login';
+import { DiscordRow } from '@/components/discord-invite';
 
 export default function WebSettings() {
   const me = useMe();
@@ -75,25 +76,16 @@ function AccountGroups() {
 }
 
 function AppGroup() {
-  const canInstall = useCanInstall();
   const [persisted, setPersisted] = useState<boolean | null>(null);
   useEffect(() => {
     navigator.storage?.persisted?.().then(setPersisted, () => setPersisted(null));
   }, []);
-  const standalone = isStandalone();
+  const { features } = useWebConfig();
   return (
     <Group title="Application">
-      {standalone ? (
-        <Row icon="phone-portrait-outline" label="App installée" detail="Huwa tourne dans sa propre fenêtre." />
-      ) : canInstall ? (
-        <Row icon="download-outline" label="Installer l’app" detail="Une fenêtre à part, l’accueil hors ligne, une icône." onPress={() => void promptInstall()} />
-      ) : (
-        <Row
-          icon="download-outline"
-          label="Installer l’app"
-          detail={isIOS() ? 'Dans Safari : Partager → Sur l’écran d’accueil.' : 'Menu du navigateur → Installer Huwa (Chrome, Edge) ou Ajouter à l’écran d’accueil.'}
-        />
-      )}
+      {/* Per platform: Android APK, iPhone home screen, desktop PWA (src/web/install.tsx). */}
+      {features.install && <InstallRow />}
+      <DiscordRow last={false} />
       <Row
         icon="save-outline"
         label="Stockage persistant"

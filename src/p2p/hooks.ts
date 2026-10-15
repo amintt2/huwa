@@ -2,6 +2,7 @@
 // activity journal in sync). Screens use these, never `getP2P()` directly.
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 
+import { requestDiscordInvite } from '@/community/discord';
 import { badges as computeBadges } from '@/social/badges';
 import { moderate, myBlocks, type ModerationContext, type Verdict } from '@/social/moderation';
 import { seriesOfTarget } from '@/social/migrate';
@@ -236,6 +237,8 @@ export const social = {
     await recoveryPhrase.set(r.phrase).catch(() => {});
     await cloudBackup.save(r.phrase, { name: r.profile.name, fingerprint: r.profile.fingerprint }).catch(() => {});
     applyDefaults();
+    // Onboarding done: the one-time « Rejoins la communauté » card (src/community/discord.ts).
+    void requestDiscordInvite();
     identityBus.emit();
     journalBus.emit();
     return r;
@@ -248,6 +251,8 @@ export const social = {
     // by the root layout once the real name arrives.
     await cloudBackup.save(words, { name: r.name !== 'moi' ? r.name : undefined, fingerprint: r.fingerprint }).catch(() => {});
     applyDefaults();
+    // Onboarding done: the one-time « Rejoins la communauté » card (src/community/discord.ts).
+    void requestDiscordInvite();
     identityBus.emit();
     journalBus.emit();
     securityBus.emit();
@@ -256,6 +261,8 @@ export const social = {
   async acceptPairing(invite: string) {
     const r = await p2p().acceptPairing(invite);
     applyDefaults();
+    // Onboarding done: the one-time « Rejoins la communauté » card (src/community/discord.ts).
+    void requestDiscordInvite();
     identityBus.emit();
     securityBus.emit();
     return r;

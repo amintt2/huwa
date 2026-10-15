@@ -1,0 +1,85 @@
+# huwa.mciut.fr: the public Huwa web app + P2P gateway + the legacy site, from docker/Dockerfile.web
+# (huwa-server built without the torrent engine, the fetch proxy and ffmpeg). Replaces the
+# nginx-only site/Dockerfile: web login needs the gateway at /p2p, which nginx did not have.
+#
+# ─── Coolify: settings of the existing huwa.mciut.fr application ────────────────────────────────
+# (The current app builds site/Dockerfile. Change these fields, keep the domain.)
+#
+#   General
+#     Build Pack ............ Dockerfile
+#     Base Directory ........ /
+#     Dockerfile Location ... /docker/Dockerfile.web
+#     Domains ............... https://huwa.mciut.fr
+#     Ports Exposes ......... 8080            (was 80 with nginx)
+#     Ports Mappings ........ (empty; or 49737:49737/udp, see "Relay" below)
+#     Health check .......... the image's own HEALTHCHECK (huwa-server --healthcheck); in Coolify's
+#                             Healthcheck tab use path /health, port 8080 if you enable it there.
+#   Environment Variables (Build Variable: off for all of them)
+#     HUWA_PUBLIC_URL=https://huwa.mciut.fr
+#     HUWA_TRUST_PROXY=1               Traefik terminates TLS and sets X-Forwarded-For
+#     HUWA_INDEXABLE=1                 public site: no X-Robots-Tag noindex, robots.txt allows
+#     HUWA_RELAY=0                     the standalone `huwa-relay` app already relays (UDP 49738)
+#     HUWA_DISCORD_INVITE=https://discord.gg/K9wTTr3T97   "Rejoins la communauté" (none = hidden)
+#     HUWA_INSTANCE_NAME=Huwa          optional
+#     HUWA_OPERATOR_CONTACT=           optional, mailto:… or https://…
+#   Persistent Storage
+#     Volume, name huwa-site-data, destination /data   (gateway keys, token.key, relay store)
+#     (/cache is disposable: no volume needed, the -web image has no torrent cache)
+#
+# ─── Relay: why HUWA_RELAY=0 ─────────────────────────────────────────────────────────────────────
+# The `huwa-relay` app (services/blind-peer, Coolify) already runs a blind-peer relay on this host,
+# UDP 49738, 20 GB. The -web image would start a second one (UDP HUWA_DHT_PORT = 49737, its own
+# key and store): two relays with different keys on one host duplicate storage and announce twice
+# for no gain, and the apps only know huwa-relay's key (app.json extra.relayKeys). So disable it.
+# No port clash either way: huwa-relay = 49738/udp, this relay = 49737/udp, and the P2P gateway's
+# own HyperDHT node uses a random UDP port (HUWA_GATEWAY_DHT_PORT=0), firewalled-capable.
+# If you ever drop huwa-relay and want this image to relay instead: HUWA_RELAY=1,
+# HUWA_RELAY_MAX_STORAGE_MB=20480, Ports Mappings 49737:49737/udp, `ufw allow 49737/udp`, and put
+# the new key (/data/relay/public-key.txt, also in the container log) in app.json extra.relayKeys.
+#
+# ─── Switching over ──────────────────────────────────────────────────────────────────────────────
+# Deploy, then check (from anywhere):
+#   curl -sI https://huwa.mciut.fr/.well-known/apple-app-site-association   200, application/json
+#   curl -sI https://huwa.mciut.fr/get                                       200, text/html
+#   curl -s  https://huwa.mciut.fr/huwa-config.json                          p2p.gateway "/p2p"
+#   curl -s  https://huwa.mciut.fr/p2p/health                                {"ok":true,…}
+# Rollback: set the Dockerfile Location back to /site/Dockerfile and the port to 80.
+#
+# ─── Same thing as a Compose file (Coolify "Docker Compose" build pack, or docker compose) ──────
+# Base Directory /, Docker Compose Location /deploy/coolify/huwa-site.yaml. The build context is the
+# repository root.
+services:
+  huwa-site:
+    build:
+      context: ../..
+      dockerfile: docker/Dockerfile.web
+      target: web-runtime
+    # Or a published image instead of building: ghcr.io/amintt2/huwa:<version>-web
+    restart: unless-stopped
+    environment:
+      - SERVICE_FQDN_HUWASITE_8080
+      - HUWA_PUBLIC_URL=${HUWA_PUBLIC_URL:-https://huwa.mciut.fr}
+      - HUWA_TRUST_PROXY=1
+      # The public site may be indexed (self-hosted instances keep the noindex default).
+      - HUWA_INDEXABLE=1
+      # huwa-relay (services/blind-peer, UDP 49738) is the relay of this host: no second one.
+      - HUWA_RELAY=${HUWA_RELAY:-0}
+      - HUWA_RELAY_MAX_STORAGE_MB=${HUWA_RELAY_MAX_STORAGE_MB:-2048}
+      - HUWA_DISCORD_INVITE=${HUWA_DISCORD_INVITE:-https://discord.gg/K9wTTr3T97}
+      - HUWA_INSTANCE_NAME=${HUWA_INSTANCE_NAME:-Huwa}
+      - HUWA_OPERATOR_CONTACT=${HUWA_OPERATOR_CONTACT:-}
+      - HUWA_LOG=${HUWA_LOG:-info}
+    volumes:
+      - huwa-site-data:/data
+    # Only with HUWA_RELAY=1 (never 49738: that is huwa-relay's).
+    # ports:
+    #   - "49737:49737/udp"
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/huwa-server", "--healthcheck"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+
+volumes:
+  huwa-site-data:

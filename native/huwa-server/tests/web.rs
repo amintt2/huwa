@@ -70,6 +70,64 @@ fn static_app_config_and_headers() {
     assert_eq!(indexable.get("/robots.txt", None).text(), "User-agent: *\nAllow: /\n");
 }
 
+/// The `-web` image of huwa.mciut.fr: `site/` under the app (docker/Dockerfile.web), the rules of
+/// `site/nginx.conf`.
+#[test]
+fn legacy_site_pages() {
+    let tmp = common::temp_dir("legacy");
+    let dir = web_dir(&tmp);
+    std::fs::create_dir_all(dir.join("altstore")).unwrap();
+    std::fs::write(dir.join(".well-known/assetlinks.json"), "[]").unwrap();
+    for f in ["get", "extensions", "privacy", "terms", "pack"] {
+        std::fs::write(dir.join(format!("{f}.html")), format!("<!doctype html><title>{f}</title>")).unwrap();
+    }
+    std::fs::write(dir.join("altstore-source.json"), "{\"name\":\"Huwa\"}").unwrap();
+    std::fs::write(dir.join("altstore/icon.png"), [0x89, b'P', b'N', b'G']).unwrap();
+    let s = Server::start("legacy", |c| {
+        c.web_dir = Some(dir.clone());
+        c.indexable = true;
+    });
+    let title = |p: &str| {
+        let r = s.get(p, None);
+        assert_eq!(r.status, 200, "{p}");
+        let t = r.text();
+        t.split("<title>").nth(1).and_then(|x| x.split("</title>").next()).unwrap_or("").to_string()
+    };
+    for (path, want) in [
+        ("/", "Huwa"),
+        ("/get", "get"),
+        ("/get/", "get"),
+        ("/privacy", "privacy"),
+        ("/privacy.html", "privacy"),
+        ("/terms", "terms"),
+        ("/pack", "pack"),
+        ("/extensions", "extensions"),
+        ("/addon?url=https%3A%2F%2Fa.example%2Fmanifest.json", "extensions"),
+        ("/install?url=x&type=paperback", "extensions"),
+        ("/anime/21", "Huwa"),
+    ] {
+        assert_eq!(title(path), want, "{path}");
+    }
+    assert_eq!(s.get("/get", None).header("cache-control").as_deref(), Some("no-cache"));
+    // Association files: JSON, 200 at the exact path (reqwest would follow a redirect: check the URL too).
+    for p in ["/.well-known/apple-app-site-association", "/.well-known/assetlinks.json"] {
+        let r = s.get(p, None);
+        assert_eq!((r.status, r.header("content-type").as_deref()), (200, Some("application/json")), "{p}");
+    }
+    assert_eq!(s.get("/altstore-source.json", None).header("content-type").as_deref(), Some("application/json"));
+    assert_eq!(s.get("/altstore/icon.png", None).header("content-type").as_deref(), Some("image/png"));
+    // Never the app under /.well-known or /altstore.
+    assert_eq!(s.get("/.well-known/nope", None).status, 404);
+    assert_eq!(s.get("/altstore/nope.png", None).status, 404);
+    // Public site: indexable.
+    assert!(s.get("/get", None).header("x-robots-tag").is_none());
+
+    // Self-hosted image (no legacy files): /addon and /install are the app's routes.
+    let plain = Server::start("legacy-none", |c| c.web_dir = Some(web_dir(&common::temp_dir("legacy-none"))));
+    assert!(plain.get("/install?url=x", None).text().contains("<title>Huwa</title>"));
+    assert!(plain.get("/get", None).text().contains("<title>Huwa</title>"));
+}
+
 #[test]
 fn engine_routes_follow_the_build() {
     let s = Server::start("build", |_| {});

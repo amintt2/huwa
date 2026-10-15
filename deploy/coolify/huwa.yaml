@@ -19,6 +19,8 @@ services:
       - HUWA_CACHE_MAX_GB=${HUWA_CACHE_MAX_GB:-20}
       - HUWA_INSTANCE_NAME=${HUWA_INSTANCE_NAME:-}
       - HUWA_OPERATOR_CONTACT=${HUWA_OPERATOR_CONTACT:-}
+      # Huwa community invite shown by the web app (HUWA_DISCORD_INVITE=none hides it).
+      - HUWA_DISCORD_INVITE=${HUWA_DISCORD_INVITE:-https://discord.gg/K9wTTr3T97}
       - HUWA_STREMIO_COMPAT=${HUWA_STREMIO_COMPAT:-0}
       - HUWA_HWACCEL=${HUWA_HWACCEL:-auto}
       - HUWA_TRANSCODES_MAX=${HUWA_TRANSCODES_MAX:-1}

@@ -5,5 +5,6 @@
   "defaultStreamingServer": null,
   "relayKeys": [],
   "operatorContact": null,
-  "features": { "p2p": false, "streaming": false, "addons": true, "install": true }
+  "features": { "p2p": false, "streaming": false, "addons": true, "install": true },
+  "community": { "discord": null }
 }

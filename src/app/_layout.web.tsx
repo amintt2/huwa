@@ -18,7 +18,8 @@ import { useEffect, useState } from 'react';
 import { hydrateAddons } from '@/addons/registry';
 import { ToastHost } from '@/components/feedback';
 import { OfflineBanner } from '@/components/states';
-import { PhraseBackupHost, StorageErrorBanner, WebUnlockScreen } from '@/components/web-login';
+import { DiscordInviteCard } from '@/components/discord-invite';
+import { PhraseBackupHost, StorageErrorBanner, WebUnlockScreen, usePendingBackup } from '@/components/web-login';
 import { useWebSession } from '@/p2p/web/login';
 import { loadCatalog } from '@/data/anilist';
 import { installMappingOverlay } from '@/data/mapping-overlay';
@@ -74,6 +75,7 @@ export default function RootLayout() {
   const p2pState = useP2PStatus().state;
   const me = useMe();
   const session = useWebSession();
+  const backupPending = !!usePendingBackup();
   useJournalSync(hydrated && !!me);
   const ready = hydrated && settingsReady && listsReady && catalogReady && p2pState !== 'starting';
 
@@ -174,6 +176,8 @@ export default function RootLayout() {
       <ToastHost />
       <ServerParamPrompt />
       <UpdatePrompt />
+      {/* Once, right after signing in for the first time (after the phrase backup). */}
+      {me ? <DiscordInviteCard blocked={backupPending} /> : null}
     </ThemeProvider>
   );
 }

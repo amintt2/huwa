@@ -25,6 +25,7 @@ import { installMappingOverlay } from '@/data/mapping-overlay';
 import { hydrateLinks } from '@/manga-ext/link';
 import { PaperbackHost } from '@/manga-ext/PaperbackHost';
 import { CloudflareSheet } from '@/components/cloudflare-sheet';
+import { DiscordInviteCard } from '@/components/discord-invite';
 import { hydrateMangaExt } from '@/manga-ext/registry';
 import { useEpisodeNotifications } from '@/notifications/episodes';
 import { useApkUpdateCheck } from '@/updates/check';
@@ -192,6 +193,8 @@ export default function RootLayout() {
       {isDemo ? <DemoRoute /> : <EpisodeNotifications />}
       {!isDemo && me ? <PasskeyOffer /> : null}
       {me ? <PendingLink /> : null}
+      {/* Once, right after onboarding: « Rejoins la communauté Huwa sur Discord ». */}
+      {!isDemo && me ? <DiscordInviteCard /> : null}
       <OfflineBanner />
       <PaperbackHost />
       <CloudflareSheet />

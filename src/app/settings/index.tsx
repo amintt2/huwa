@@ -1,6 +1,8 @@
 import { router } from 'expo-router';
 import { Alert } from 'react-native';
 
+import { useDiscordInvite } from '@/community/invite';
+import { DiscordRow } from '@/components/discord-invite';
 import { Screen } from '@/components/screen';
 import { Group, Row, WARN } from '@/components/social';
 import { Txt } from '@/components/ui';
@@ -25,6 +27,7 @@ export default function Settings() {
   const mangaSources = useMangaExt().installed.filter((s) => s.enabled).length;
   const subPrefs = useSubtitlePrefs();
   const { subLangs } = useSettings();
+  const discord = useDiscordInvite();
   const subtitleDetail = subPrefs.enabled ? subLangs.map(langName).join(', ') : 'Désactivés';
 
   // One coherent status: the label says the state, the detail explains it (never « Connecté »
@@ -70,8 +73,9 @@ export default function Settings() {
             label="Notifications des messages"
             value={dmNotif === 'discreet' ? 'Discret' : 'Instantané'}
             onPress={() => router.push('/settings/notifications')}
-            last
+            last={!discord}
           />
+          <DiscordRow />
         </Group>
 
         <Group title="Lecture">
