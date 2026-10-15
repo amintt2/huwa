@@ -1,7 +1,7 @@
 import { LinearGradient } from 'expo-linear-gradient';
 import { router, useIsFocused } from 'expo-router';
 import { useEffect, useRef, useState } from 'react';
-import { AccessibilityInfo, Pressable, StyleSheet, View, useWindowDimensions } from 'react-native';
+import { Pressable, StyleSheet, View, useWindowDimensions } from 'react-native';
 import Animated, {
   cancelAnimation,
   Easing,
@@ -30,6 +30,9 @@ import { toggleMyList, useStore } from '@/store/store';
 import { C, F, S } from '@/theme/tokens';
 
 import { PRIORITY, usePresearch } from './presearch';
+import { useReduceMotion } from './reduce-motion';
+import { Skeleton } from './skeleton';
+import { LineSkeleton } from './skeletons';
 import { ActionTile, Button, Cover, MetaLine, Txt } from './ui';
 
 /**
@@ -41,21 +44,6 @@ const heroHeight = (width: number) => Math.min(760, Math.max(560, Math.round(wid
 const AUTO_MS = 6000;
 const SLIDE_MS = 700;
 const slideEase = Easing.bezier(0.65, 0, 0.35, 1);
-
-/** Live "Reduce Motion" setting (reanimated's hook only reads it once at startup). */
-function useReduceMotion() {
-  const [on, setOn] = useState(false);
-  useEffect(() => {
-    let alive = true;
-    AccessibilityInfo.isReduceMotionEnabled().then((v) => alive && setOn(v));
-    const sub = AccessibilityInfo.addEventListener('reduceMotionChanged', setOn);
-    return () => {
-      alive = false;
-      sub.remove();
-    };
-  }, []);
-  return on;
-}
 
 type Rotation = ReturnType<typeof createRotation>;
 
@@ -373,7 +361,7 @@ function Slide({
       accessibilityElementsHidden={clone}
       style={{ width, height: heroHeight(width), overflow: 'hidden' }}>
       <Animated.View style={[StyleSheet.absoluteFill, art]}>
-        <Cover palette={series.palette} image={series.image} width={width} height={heroHeight(width)} radius={0} outline={false} />
+        <Cover palette={series.palette} image={series.image} width={width} height={heroHeight(width)} radius={0} outline={false} priority={active ? 'high' : 'normal'} />
       </Animated.View>
       {/* Scrims: top keeps the brand and status bar legible; bottom melts the art into the page. */}
       <LinearGradient pointerEvents="none" colors={['rgba(5,7,13,0.85)', 'rgba(5,7,13,0.35)', 'rgba(5,7,13,0)']} locations={[0, 0.45, 1]} style={styles.topScrim} />
@@ -408,6 +396,24 @@ function Slide({
         </View>
       </Animated.View>
     </Pressable>
+  );
+}
+
+/** The hero before the catalog is known: same height, title, metadata and action row. */
+export function HeroSkeleton() {
+  const { width } = useWindowDimensions();
+  return (
+    <Skeleton height={heroHeight(width)} radius={0} tint={C.surface}>
+      <View style={[styles.copy, { gap: 14 }]} accessibilityLabel="Chargement" accessibilityRole="progressbar">
+        <LineSkeleton width="70%" height={34} tint={C.elevated} />
+        <LineSkeleton width="52%" height={13} tint={C.elevated} />
+        <View style={styles.actions}>
+          <Skeleton width={64} height={50} radius={12} tint={C.elevated} />
+          <Skeleton height={50} radius={12} tint={C.elevated} style={{ flex: 1 }} />
+          <Skeleton width={64} height={50} radius={12} tint={C.elevated} />
+        </View>
+      </View>
+    </Skeleton>
   );
 }
 

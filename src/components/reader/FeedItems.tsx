@@ -6,6 +6,7 @@ import { router } from 'expo-router';
 import { useState, type ReactNode } from 'react';
 import { ActivityIndicator, StyleSheet, View } from 'react-native';
 
+import { Skeleton } from '@/components/skeleton';
 import { Press, Txt } from '@/components/ui';
 import { episodeForChapter } from '@/data/bridge';
 import { getChapter } from '@/data/catalog';
@@ -59,20 +60,22 @@ export function PageView({
       accessibilityLabel={`Page ${number}`}
       style={{ width: boxW, height: boxH, alignItems: 'center', justifyContent: top ? 'flex-start' : 'center', transform: flip ? [{ scaleX: -1 }] : undefined }}>
       <View style={{ width: w, height: h }}>
-        {state !== 'ok' && (
+        {state === 'loading' && (
+          // The page's own size (known ratio): a shimmering block with its number, no spinner.
+          <Skeleton radius={0} tint={light ? 'rgba(0,0,0,0.06)' : 'rgba(255,255,255,0.04)'} style={[StyleSheet.absoluteFill, styles.placeholder]}>
+            <Txt v="headline" color={muted} tabular style={{ fontSize: 28, lineHeight: 34, ...F.bold }}>{number}</Txt>
+          </Skeleton>
+        )}
+        {state === 'error' && (
           <View style={[StyleSheet.absoluteFill, styles.placeholder]}>
             <Txt v="headline" color={muted} tabular style={{ fontSize: 28, lineHeight: 34, ...F.bold }}>{number}</Txt>
-            {state === 'loading' ? (
-              <ActivityIndicator color={muted} />
-            ) : (
-              <Press onPress={() => {
-                setState('loading');
-                setAttempt((a) => a + 1);
-              }} style={styles.retry} accessibilityRole="button" accessibilityLabel={`Recharger la page ${number}`}>
-                <Ionicons name="refresh" size={16} color={C.text} />
-                <Txt v="label" style={{ fontSize: 14 }}>Réessayer</Txt>
-              </Press>
-            )}
+            <Press onPress={() => {
+              setState('loading');
+              setAttempt((a) => a + 1);
+            }} style={styles.retry} accessibilityRole="button" accessibilityLabel={`Recharger la page ${number}`}>
+              <Ionicons name="refresh" size={16} color={C.text} />
+              <Txt v="label" style={{ fontSize: 14 }}>Réessayer</Txt>
+            </Press>
           </View>
         )}
         {state !== 'error' && (

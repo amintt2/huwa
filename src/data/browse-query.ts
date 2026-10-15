@@ -47,7 +47,7 @@ const SORTS: Record<BrowseSort, string[]> = {
 };
 
 export const LIGHT_FIELDS = `id format status season seasonYear startDate { year } episodes averageScore popularity genres
-  title { english userPreferred } coverImage { large color } nextAiringEpisode { episode airingAt }`;
+  title { english userPreferred } coverImage { extraLarge large color } nextAiringEpisode { episode airingAt }`;
 
 /**
  * Query for one page of results. AniList treats an explicit `null` argument as "match null",

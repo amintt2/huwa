@@ -10,7 +10,6 @@
 // · Below: the phone layout of the native hero (poster art, centered copy), with swipe.
 // · Rotates every 7 s; pauses while hovered, focused or touched; never with Reduce Motion.
 import Ionicons from '@expo/vector-icons/Ionicons';
-import { Image } from 'expo-image';
 import { LinearGradient } from 'expo-linear-gradient';
 import { router, useIsFocused } from 'expo-router';
 import { useCallback, useEffect, useRef, useState } from 'react';
@@ -25,6 +24,8 @@ import { franchiseTarget, resolvePrequels, useFranchiseTarget } from '@/data/fra
 import { toggleMyList, useStore } from '@/store/store';
 import { C, F, R, S, SHADOW } from '@/theme/tokens';
 
+import { Skeleton } from './skeleton';
+import { LineSkeleton } from './skeletons';
 import { ActionTile, Button, Cover, MetaLine, Txt } from './ui';
 
 const AUTO_MS = 7000;
@@ -115,6 +116,50 @@ export function HeroCarousel({ items }: { items: Series[] }) {
   );
 }
 
+/** The hero before the catalog is known: same height and layout (wide banner or phone poster). */
+export function HeroSkeleton() {
+  const { width } = useWindowDimensions();
+  const wide = width >= WIDE;
+  const height = wide ? wideHeight(width) : phoneHeight(width);
+  if (!wide) {
+    return (
+      <Skeleton height={height} radius={0} tint={C.surface}>
+        <View style={[styles.copy, { gap: 14 }]} accessibilityLabel="Chargement" accessibilityRole="progressbar">
+          <LineSkeleton width="70%" height={34} tint={C.elevated} />
+          <LineSkeleton width="52%" height={13} tint={C.elevated} />
+          <View style={styles.actions}>
+            <Skeleton width={64} height={50} radius={12} tint={C.elevated} />
+            <Skeleton height={50} radius={12} tint={C.elevated} style={{ flex: 1 }} />
+            <Skeleton width={64} height={50} radius={12} tint={C.elevated} />
+          </View>
+        </View>
+      </Skeleton>
+    );
+  }
+  const poster = Math.min(height - 64, 380);
+  return (
+    <View style={{ height }} accessibilityLabel="Chargement" accessibilityRole="progressbar">
+      <Skeleton height={height} radius={0} tint={C.surface} style={StyleSheet.absoluteFill} />
+      <View style={styles.wideCopy}>
+        <LineSkeleton width={90} height={11} tint={C.elevated} />
+        <LineSkeleton width="80%" height={44} tint={C.elevated} />
+        <LineSkeleton width="45%" height={13} tint={C.elevated} />
+        <View style={{ gap: 8, maxWidth: 560 }}>
+          <LineSkeleton width="100%" height={13} tint={C.elevated} />
+          <LineSkeleton width="92%" height={13} tint={C.elevated} />
+          <LineSkeleton width="60%" height={13} tint={C.elevated} />
+        </View>
+        <View style={styles.wideActions}>
+          <Skeleton width={220} height={56} radius={12} tint={C.elevated} />
+          <Skeleton width={150} height={56} radius={12} tint={C.elevated} />
+          <Skeleton width={110} height={56} radius={12} tint={C.elevated} />
+        </View>
+      </View>
+      <Skeleton width={Math.round(poster / 1.42)} height={poster} radius={R.poster} tint={C.elevated} style={styles.widePoster} />
+    </View>
+  );
+}
+
 function Arrow({ side, onPress, visible }: { side: 'left' | 'right'; onPress: () => void; visible: boolean }) {
   return (
     <Pressable
@@ -189,11 +234,8 @@ function Slide({ series, active, wide, width, height, reduce }: { series: Series
       pointerEvents={active ? 'auto' : 'none'}>
       {wide ? (
         <View style={StyleSheet.absoluteFill}>
-          {series.banner ? (
-            <Image source={series.banner} style={StyleSheet.absoluteFill} contentFit="cover" transition={250} />
-          ) : (
-            <Cover palette={series.palette} image={series.image} width={width} height={height} radius={0} outline={false} />
-          )}
+          {/* Banner (poster when there is none): tinted skeleton while it loads, like every cover. */}
+          <Cover palette={series.palette} image={series.banner ?? series.image} width={series.banner ? undefined : width} height={height} radius={0} outline={false} priority={active ? 'high' : 'low'} />
           <LinearGradient pointerEvents="none" colors={['rgba(5,7,13,0.96)', 'rgba(5,7,13,0.75)', 'rgba(5,7,13,0.15)']} locations={[0, 0.42, 1]} start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }} style={StyleSheet.absoluteFill} />
           <LinearGradient pointerEvents="none" colors={['rgba(5,7,13,0)', C.bg]} locations={[0.55, 1]} style={StyleSheet.absoluteFill} />
           <View style={styles.wideCopy}>
@@ -217,7 +259,7 @@ function Slide({ series, active, wide, width, height, reduce }: { series: Series
         </View>
       ) : (
         <Pressable onPress={open} accessible={false} style={StyleSheet.absoluteFill}>
-          <Cover palette={series.palette} image={series.image} width={width} height={height} radius={0} outline={false} />
+          <Cover palette={series.palette} image={series.image} width={width} height={height} radius={0} outline={false} priority={active ? 'high' : 'low'} />
           <LinearGradient pointerEvents="none" colors={['rgba(5,7,13,0.85)', 'rgba(5,7,13,0.35)', 'rgba(5,7,13,0)']} locations={[0, 0.45, 1]} style={styles.topScrim} />
           <LinearGradient pointerEvents="none" colors={['rgba(5,7,13,0)', 'rgba(5,7,13,0.55)', 'rgba(5,7,13,0.92)', C.bg]} locations={[0, 0.35, 0.72, 1]} style={styles.bottomScrim} />
           <View style={styles.copy}>

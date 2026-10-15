@@ -6,6 +6,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { CloudflareButton, SourceErrorState, SourceIcon, useOpenSourceItem } from '@/components/paperback';
 import { gridRowLayout, PosterTile, useGridTile } from '@/components/rails';
+import { PosterGridSkeleton } from '@/components/skeletons';
 import { Button, IconButton, Txt } from '@/components/ui';
 import { palette } from '@/data/anilist';
 import { getSection, getSourceHome, loadSourceHome, sectionPage } from '@/manga-ext/discover';
@@ -110,7 +111,9 @@ export default function SourceSection() {
           )
         }
         ListFooterComponent={
-          state.loading ? (
+          state.loading && !items.length ? (
+            <PosterGridSkeleton cols={3} rows={4} width={tileW} />
+          ) : state.loading ? (
             <ActivityIndicator color={C.text2} style={{ marginVertical: S.xl }} />
           ) : state.error && items.length ? (
             <View style={{ flexDirection: 'row', gap: S.sm, alignSelf: 'center', marginVertical: S.lg }}>

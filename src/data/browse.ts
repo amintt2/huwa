@@ -10,6 +10,7 @@ import { gql, openMedia } from './anilist-api';
 import { buildAiredQuery, buildBrowseQuery, filterLocal, filtersKey, type BrowseFilters } from './browse-query';
 import { allSeries, getSeries, type Palette } from './catalog';
 import { palette } from './anilist';
+import { cache, TTL } from './swr';
 
 export type BrowseItem = {
   key: string;
@@ -35,19 +36,19 @@ type Light = {
   episodes: number | null;
   averageScore: number | null;
   title: { english: string | null; userPreferred: string };
-  coverImage: { large: string; color: string | null };
+  coverImage: { extraLarge?: string | null; large: string; color: string | null };
   nextAiringEpisode: { episode: number; airingAt: number } | null;
 };
 
 const PER_PAGE = 30;
-const FRESH_MS = 30 * 60e3;
-const STALE_MS = 24 * 3600e3;
-const DISK_PREFIX = 'huwa/browse/v1/';
+/** Pages kept by versions before the SWR cache: removed once. */
+const LEGACY_PREFIX = 'huwa/browse/v1/';
 
 const toItem = (m: Light, badge?: string): BrowseItem => ({
   key: `al${m.id}`,
   title: m.title.english ?? m.title.userPreferred,
-  image: m.coverImage.large,
+  // Full size: the tile picks the right one for its width (components/images).
+  image: m.coverImage.extraLarge ?? m.coverImage.large,
   palette: getSeries(`al${m.id}`)?.palette ?? palette(m.coverImage.color),
   score: m.averageScore ? Math.round(m.averageScore) / 10 : null,
   year: m.seasonYear ?? m.startDate?.year ?? null,
@@ -58,35 +59,28 @@ const toItem = (m: Light, badge?: string): BrowseItem => ({
 
 export type BrowsePage = { items: BrowseItem[]; hasNext: boolean };
 
-const memory = new Map<string, { at: number; page: BrowsePage }>();
+let legacyPurged = false;
+function purgeLegacy() {
+  if (legacyPurged) return;
+  legacyPurged = true;
+  AsyncStorage.getAllKeys()
+    .then((keys) => {
+      const old = keys.filter((k) => k.startsWith(LEGACY_PREFIX));
+      if (old.length) return AsyncStorage.multiRemove(old);
+    })
+    .catch(() => {});
+}
 
-async function cached(key: string, load: () => Promise<BrowsePage>): Promise<BrowsePage> {
-  const hit = memory.get(key);
-  if (hit && Date.now() - hit.at < FRESH_MS) return hit.page;
-  let disk: { at: number; page: BrowsePage } | undefined;
-  if (!hit) {
-    try {
-      const raw = await AsyncStorage.getItem(DISK_PREFIX + key);
-      disk = raw ? JSON.parse(raw) : undefined;
-    } catch {
-      disk = undefined;
-    }
-    if (disk && Date.now() - disk.at < FRESH_MS) {
-      memory.set(key, disk);
-      return disk.page;
-    }
-  }
-  try {
-    const page = await load();
-    const entry = { at: Date.now(), page };
-    memory.set(key, entry);
-    AsyncStorage.setItem(DISK_PREFIX + key, JSON.stringify(entry)).catch(() => {});
-    return page;
-  } catch (e) {
-    const old = hit ?? disk;
-    if (old && Date.now() - old.at < STALE_MS) return old.page;
-    throw e;
-  }
+const swrKey = (key: string) => `browse:${key}`;
+
+/**
+ * Stale-while-revalidate (data/swr.ts): a page seen before comes back at once and is refreshed in
+ * the background when older than its TTL (30 min, 10 for the aired feed); the network is only
+ * waited for when nothing usable is cached.
+ */
+function cached(key: string, load: () => Promise<BrowsePage>, ttl = TTL.browse): Promise<BrowsePage> {
+  purgeLegacy();
+  return cache.swr(swrKey(key), load, ttl);
 }
 
 /** Local catalog (demo mode, or AniList unreachable with nothing cached). */
@@ -129,10 +123,10 @@ export async function fetchRecentlyAired(page = 1): Promise<BrowsePage> {
       hasNext: local.length > page * PER_PAGE,
     };
   }
-  // Rounded to 10 minutes so the cache key is stable.
-  const now = Math.floor(Date.now() / 600e3) * 600;
-  const { query, variables } = buildAiredQuery(page, now);
-  return cached(`aired:${now}:${page}`, async () => {
+  // The feed changes with the clock: 10 min fresh, its key doesn't (the cached one shows at once).
+  return cached(`aired:${page}`, async () => {
+    const now = Math.floor(Date.now() / 1000);
+    const { query, variables } = buildAiredQuery(page, now);
     const data = await gql<{ Page: { pageInfo: { hasNextPage: boolean }; airingSchedules: { episode: number; media: (Light & { isAdult: boolean }) | null }[] } }>(query, variables);
     const seen = new Set<number>();
     const items: BrowseItem[] = [];
@@ -142,8 +136,10 @@ export async function fetchRecentlyAired(page = 1): Promise<BrowsePage> {
       items.push(toItem(a.media, `Ép. ${a.episode}`));
     }
     return { items, hasNext: data.Page.pageInfo.hasNextPage };
-  });
+  }, AIRED_TTL);
 }
+
+const AIRED_TTL = { ...TTL.browse, ttl: 10 * 60e3 };
 
 /** Opens a card: catalog series directly, AniList entries fetched and registered first. */
 export async function browseHref(item: BrowseItem): Promise<string> {
@@ -189,6 +185,18 @@ export function useBrowse(f: BrowseFilters | null, aired = false, enabled = true
     load(1, true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [key, enabled, nonce]);
+
+  // First page shown from the cache, then refreshed in the background: swap it in if it changed
+  // and nothing more was loaded meanwhile.
+  const firstKey = f && enabled && !isDemo ? swrKey(aired ? 'aired:1' : `q:${filtersKey(f)}:1`) : null;
+  useEffect(() => {
+    if (!firstKey) return;
+    return cache.subscribe(firstKey, () => {
+      const p = cache.peek<BrowsePage>(firstKey)?.value;
+      if (!p) return;
+      setState((s) => (s.key === key && s.page === 1 && !s.loading ? { ...s, items: p.items, hasNext: p.hasNext } : s));
+    });
+  }, [firstKey, key]);
 
   const current = state.key === key;
   return {

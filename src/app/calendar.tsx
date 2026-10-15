@@ -11,13 +11,14 @@ import { BAR_H, LargeTitle, NavBar } from '@/components/screen';
 import { ErrorState, FilterChip, StateView } from '@/components/states';
 import { Cover, Press, Txt } from '@/components/ui';
 import { palette } from '@/data/anilist';
-import { fetchAiring, openMedia, type AiringItem } from '@/data/anilist-api';
+import { openMedia, type AiringItem } from '@/data/anilist-api';
+import { useAiringWeek } from '@/data/use-anilist';
+import { useImagePrefetch } from '@/components/images';
 import { useLocale, useT } from '@/i18n';
 import { useLists } from '@/store/lists';
 import { useStore } from '@/store/store';
 import { C, R, S, SHADOW } from '@/theme/tokens';
 
-const DAY = 86_400_000;
 const GAP = 12;
 /** Pills and badges sit on fixed-size art or in a strip: grow with Dynamic Type, within reason. */
 const PILL_SCALE = 1.35;
@@ -51,9 +52,6 @@ export default function Calendar() {
   const myList = useStore((s) => s.myList);
   const statuses = useLists((s) => s.status);
 
-  const [items, setItems] = useState<AiringItem[] | null>(null);
-  const [failed, setFailed] = useState(false);
-  const [attempt, setAttempt] = useState(0);
   const [onlyMine, setOnlyMine] = useState(false);
   const [opening, setOpening] = useState<number | null>(null);
   const [today, setToday] = useState(startOfToday);
@@ -72,18 +70,8 @@ export default function Calendar() {
   };
   const [now, setNow] = useState(() => Date.now());
 
-  useEffect(() => {
-    const ctrl = new AbortController();
-    fetchAiring(Math.floor(today / 1000), Math.floor((today + 7 * DAY) / 1000), ctrl.signal)
-      .then((list) => {
-        setItems(list);
-        setFailed(false);
-      })
-      .catch(() => {
-        if (!ctrl.signal.aborted) setFailed(true);
-      });
-    return () => ctrl.abort();
-  }, [today, attempt]);
+  // The week from local midnight, cached (data/swr.ts): shown at once, refreshed after 30 min.
+  const { items, failed, retry } = useAiringWeek(today);
 
   // Keeps "Diffusé" badges and the countdown current while the page stays open, and moves
   // "Aujourd’hui" past midnight (also when coming back to the app the next morning). The selected
@@ -137,6 +125,8 @@ export default function Calendar() {
 
   const mineCount = (items ?? []).filter(isMine).length;
   const selected = days[day];
+  // The next day's posters download while this one is read (tabs switch instantly).
+  useImagePrefetch([...selected.data, ...(days[day + 1]?.data ?? [])].map((a) => a.image), Math.floor((width - S.lg * 2 - GAP) / 2));
   // Next release still to come today: followed series first, else the most popular soonest one.
   const next = useMemo(() => {
     if (day !== 0) return null;
@@ -230,7 +220,7 @@ export default function Calendar() {
       </View>
 
       {failed ? (
-        <ErrorState onRetry={() => setAttempt((n) => n + 1)} />
+        <ErrorState onRetry={retry} />
       ) : !items ? (
         <View style={{ paddingHorizontal: S.lg }}>
           <SkeletonPosters count={4} width={cardW} height={Math.round(cardW * 1.45)} gap={GAP} />

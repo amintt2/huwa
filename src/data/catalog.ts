@@ -344,6 +344,25 @@ export async function hydrateExtraSeries() {
   }
 }
 
+/** The series stored for `id` outside the trending catalog (raw: no overlay, no transform). */
+export const getExtra = (id: string) => extras.get(id);
+/** `id` is one of the trending catalog's series (refreshed with it, not on its own). */
+export const inTrending = (id: string) => current.some((s) => s.id === id);
+
+/**
+ * True until the first real catalog is known (cache or network). Screens show skeletons meanwhile
+ * instead of the offline demo series it starts with. `loadCatalog` settles it (also when the
+ * network fails with nothing cached: the demo series then stay).
+ */
+let catalogLoading = true;
+export const isCatalogLoading = () => catalogLoading;
+export function markCatalogLoaded() {
+  if (!catalogLoading) return;
+  catalogLoading = false;
+  version++;
+  listeners.forEach((l) => l());
+}
+
 /** Re-render when the catalog is replaced (returns a version number). */
 export function useCatalog() {
   return useSyncExternalStore(
@@ -354,6 +373,12 @@ export function useCatalog() {
     () => version,
     () => version,
   );
+}
+
+/** Catalog still loading (no cache yet): show skeletons. Re-renders with the catalog. */
+export function useCatalogLoading() {
+  useCatalog();
+  return catalogLoading;
 }
 
 export const allSeries = () => currentView;

@@ -1,7 +1,9 @@
 // Home of an installed source (Paperback "Discover" on 0.9, home page sections on 0.8): its
-// sections and their items, fetched lazily and kept for the session (a source home doesn't
-// change every minute and each call wakes its sandbox).
+// sections and their items, fetched lazily, kept for the session and saved on disk (a source home
+// doesn't change every minute and each call wakes its sandbox).
 import { useEffect, useSyncExternalStore } from 'react';
+
+import { cache as swrCache } from '@/data/swr';
 
 import { sourceImageHeaders } from './api';
 import { callSource } from './bridge';
@@ -61,17 +63,53 @@ async function warmHeaders(key: string, items: ExtSearchItem[]) {
   if (headers) set(key, { imageHeaders: headers });
 }
 
-/** Loads (once per session, or when stale) the sections of a source and their first items. */
+/** What is kept on disk of a source home (no image headers: they may carry cookies). */
+type Snapshot = { sections: ExtSection[]; rows: Record<string, SectionState> };
+const diskKey = (key: string) => `source-home:${cacheKey(key)}`;
+
+/** Last home saved for this source and version, shown while the sandbox wakes up. */
+async function restore(key: string): Promise<boolean> {
+  const hit = await swrCache.get<Snapshot>(diskKey(key)).catch(() => undefined);
+  if (!hit || homes.get(cacheKey(key))?.state === 'ok') return false;
+  set(key, { state: 'ok', sections: hit.value.sections, rows: hit.value.rows, at: hit.at });
+  warmHeaders(key, Object.values(hit.value.rows).flatMap((r) => r.items)).catch(() => {});
+  return true;
+}
+
+function save(key: string) {
+  const home = homes.get(cacheKey(key));
+  if (!home || home.state !== 'ok') return;
+  const rows = Object.fromEntries(
+    Object.entries(home.rows)
+      .filter(([, r]) => r.state === 'ok')
+      .map(([id, r]) => [id, { state: 'ok' as const, items: r.items, next: r.next }]),
+  );
+  if (!Object.keys(rows).length) return;
+  swrCache.set<Snapshot>(diskKey(key), { sections: home.sections, rows }).catch(() => {});
+}
+
+/**
+ * Loads the sections of a source and their first items. Stale-while-revalidate: the home saved by
+ * the last visit shows at once (data/swr.ts), the source is asked again when it is older than
+ * 30 min, and each row keeps its old items until the new ones arrive.
+ */
 export async function loadSourceHome(key: string, force = false) {
-  const cur = homes.get(cacheKey(key));
-  if (!force && cur && (cur.state === 'loading' || (cur.state === 'ok' && Date.now() - cur.at < TTL))) return;
-  set(key, { state: 'loading', error: undefined, blocked: undefined, ...(force ? { rows: {} } : {}) });
+  let cur = homes.get(cacheKey(key));
+  if (!force && cur?.state === 'loading') return;
+  if (!cur && (await restore(key))) cur = homes.get(cacheKey(key));
+  if (!force && cur && cur.state === 'ok' && Date.now() - cur.at < TTL) return;
+  const shown = !!cur && cur.state === 'ok' && cur.sections.length > 0;
+  const before = shown ? cur!.rows : {};
+  // With something on screen, the refresh happens underneath (no skeleton, no spinner).
+  if (!shown) set(key, { state: 'loading', error: undefined, blocked: undefined, ...(force ? { rows: {} } : {}) });
   try {
     const format = formatOf(key);
     const sections = normalizeSections(format, await callSource(key, 'discover', [], 90_000)).filter((s) => s.kind !== 'genres');
     const rows: Record<string, SectionState> = {};
-    for (const s of sections) rows[s.id] = s.items ? { state: 'ok', items: s.items } : { state: 'loading', items: [] };
-    set(key, { state: 'ok', sections, rows, at: Date.now() });
+    for (const s of sections) {
+      rows[s.id] = s.items ? { state: 'ok', items: s.items } : before[s.id]?.state === 'ok' ? before[s.id] : { state: 'loading', items: [] };
+    }
+    set(key, { state: 'ok', sections, rows, at: Date.now(), error: undefined, blocked: undefined });
     const inline = sections.flatMap((s) => s.items ?? []);
     if (inline.length) warmHeaders(key, inline).catch(() => {});
     // 0.9: items per section, a few at a time (each is a page load on the source's site).
@@ -83,16 +121,20 @@ export async function loadSourceHome(key: string, force = false) {
           setRow(key, s.id, { state: 'ok', items: page.items, next: page.next });
           warmHeaders(key, page.items).catch(() => {});
         } catch (e) {
+          // A row shown from the last visit stays when its refresh fails.
+          if (before[s.id]?.state === 'ok') continue;
           setRow(key, s.id, { state: 'error', items: [], error: errorText(e), blocked: isCloudflareError(e) ? { url: e.url } : undefined });
         }
       }
     };
     await Promise.all(Array.from({ length: Math.min(ROW_CONCURRENCY, queue.length) }, worker));
+    save(key);
   } catch (e) {
-    set(key, { state: 'error', error: errorText(e), blocked: isCloudflareError(e) ? { url: e.url } : undefined });
+    // Offline or blocked with an old home on screen: keep it.
+    if (shown) set(key, { state: 'ok' });
+    else set(key, { state: 'error', error: errorText(e), blocked: isCloudflareError(e) ? { url: e.url } : undefined });
   }
 }
-
 
 export const getSourceHome = (key: string) => homes.get(cacheKey(key)) ?? EMPTY;
 export const getSection = (key: string, id: string) => getSourceHome(key).sections.find((s) => s.id === id);

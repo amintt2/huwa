@@ -80,7 +80,10 @@ export default function RootLayout() {
   const ready = hydrated && settingsReady && listsReady && catalogReady && p2pState !== 'starting';
 
   useEffect(() => {
-    if (ready) SplashScreen.hideAsync();
+    if (!ready) return;
+    SplashScreen.hideAsync();
+    // The static boot skeleton of index.html (scripts/web-postexport.mjs): the app draws now.
+    if (typeof document !== 'undefined') document.getElementById('huwa-boot-skel')?.remove();
   }, [ready]);
 
   // Account keys and progress live in IndexedDB: ask the browser to keep them, once there is

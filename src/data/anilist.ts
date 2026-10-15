@@ -6,14 +6,19 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { isDemo } from '@/demo/flags';
 import { DEMO_SEASONS } from '@/demo/seasons';
 
-import { hydrateExtraSeries, makeChapters, makeEpisodes, registerSeries, setCatalog, type Palette, type Series } from './catalog';
+import { hydrateExtraSeries, makeChapters, makeEpisodes, markCatalogLoaded, registerSeries, setCatalog, type Palette, type Series } from './catalog';
+import { ENDPOINT, gql } from './anilist-gql';
 import { prequelOf } from './anilist-relations';
 import { airedEpisodeCount } from './airing';
 import { estimateCoverage } from './mapping';
 import { fuzzyDate } from './seasons';
+import { cache, TTL } from './swr';
 
-export const ENDPOINT = 'https://graphql.anilist.co';
-const CACHE_KEY = 'huwa/catalog/v2';
+export { ENDPOINT };
+/** Trending catalog in the SWR cache (built series, as shown). */
+export const CATALOG_KEY = 'catalog';
+/** Where versions before the SWR cache kept it (migrated once, then removed). */
+const LEGACY_KEY = 'huwa/catalog/v2';
 /** Bound for broken data only: long-runners (One Piece, Detective Conan) are past 1200. */
 const MAX_EPISODES = 5000;
 
@@ -147,49 +152,67 @@ function mapCatalog(data: { anime: { media: Media[] }; manhwa: { media: Media[] 
 }
 
 async function fetchCatalog(): Promise<Series[]> {
-  const res = await fetch(ENDPOINT, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
-    body: JSON.stringify({ query: QUERY }),
-  });
-  if (!res.ok) throw new Error(`AniList ${res.status}`);
-  const json = await res.json();
-  if (json.errors) throw new Error(json.errors[0]?.message ?? 'AniList error');
-  return mapCatalog(json.data);
+  const data = await gql<{ anime: { media: Media[] }; manhwa: { media: Media[] } }>(QUERY);
+  const list = mapCatalog(data);
+  // An empty answer is not cached (it would replace a good catalog on every screen).
+  if (!list.length) throw new Error('AniList: catalogue vide');
+  return list;
 }
 
+let watching = false;
+
 /**
- * Stale-while-revalidate: show the cached catalog instantly, refresh from the network,
- * keep the offline demo if both fail. Resolves once something real is on screen (or on failure).
+ * Stale-while-revalidate (data/swr.ts): the cached catalog goes on screen at once and is refreshed
+ * in the background when older than 15 min; screens re-render only when the refresh changed it.
+ * Never waits for the network: with nothing cached, screens show skeletons until it answers (and
+ * keep the offline demo series if it fails).
  */
 export async function loadCatalog(): Promise<void> {
   // Demo mode: only the original fictional series, never AniList (plus a second season of one of
   // them, reachable by id only, to show the bridge across seasons).
   if (isDemo) {
     registerSeries(DEMO_SEASONS);
+    markCatalogLoaded();
     return;
   }
   await hydrateExtraSeries();
-  let hadCache = false;
-  try {
-    const raw = await AsyncStorage.getItem(CACHE_KEY);
-    if (raw) {
-      setCatalog(JSON.parse(raw) as Series[]);
-      hadCache = true;
-    }
-  } catch {
-    // corrupted cache: ignore, the network refresh will overwrite it
-  }
-
-  const refresh = fetchCatalog()
-    .then((list) => {
-      if (!list.length) return;
-      setCatalog(list);
-      AsyncStorage.setItem(CACHE_KEY, JSON.stringify(list)).catch(() => {});
-    })
-    .catch(() => {
-      // offline: keep cache or demo series
+  if (!watching) {
+    watching = true;
+    // Every change of the cached catalog (background refresh, another screen's reload) lands here.
+    cache.subscribe(CATALOG_KEY, () => {
+      const list = cache.peek<Series[]>(CATALOG_KEY)?.value;
+      if (list?.length) {
+        setCatalog(list);
+        markCatalogLoaded();
+      }
     });
+  }
+  let entry = await cache.get<Series[]>(CATALOG_KEY);
+  if (!entry) entry = await migrateLegacyCache();
+  if (entry?.value.length) {
+    setCatalog(entry.value);
+    markCatalogLoaded();
+  }
+  cache
+    .swr(CATALOG_KEY, fetchCatalog, TTL.catalog)
+    .catch(() => {
+      // offline: keep the cache, or the demo series
+    })
+    .finally(markCatalogLoaded);
+}
 
-  if (!hadCache) await refresh;
+/** Catalog saved by older versions (`huwa/catalog/v2`): shown once as stale, then refreshed. */
+async function migrateLegacyCache() {
+  try {
+    const raw = await AsyncStorage.getItem(LEGACY_KEY);
+    if (!raw) return undefined;
+    AsyncStorage.removeItem(LEGACY_KEY).catch(() => {});
+    const list = JSON.parse(raw) as Series[];
+    if (!Array.isArray(list) || !list.length) return undefined;
+    // Dated as just stale: shown now, refreshed right away.
+    await cache.set(CATALOG_KEY, list, Date.now() - TTL.catalog.ttl);
+    return cache.peek<Series[]>(CATALOG_KEY);
+  } catch {
+    return undefined; // corrupted: the network refresh replaces it
+  }
 }

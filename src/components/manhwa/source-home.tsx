@@ -3,10 +3,11 @@
 // when the title matches, else a page of the source only).
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { router, type Href } from 'expo-router';
-import { ActivityIndicator, FlatList, RefreshControl, StyleSheet, View } from 'react-native';
+import { FlatList, RefreshControl, StyleSheet, View } from 'react-native';
 
 import { CloudflareButton, SourceErrorState, useOpenSourceItem } from '@/components/paperback';
 import { PosterTile, Rail } from '@/components/rails';
+import { LineSkeleton, RailSkeleton } from '@/components/skeletons';
 import { Txt } from '@/components/ui';
 import { palette } from '@/data/anilist';
 import { loadSourceHome, useSourceHome } from '@/manga-ext/discover';
@@ -37,11 +38,16 @@ export function SourceHome({ sourceKey, bottomInset }: { sourceKey: string; bott
   }
   // Some rows blocked by Cloudflare (the home itself loaded): one banner with the button.
   const blockedRow = Object.values(home.rows).find((r) => r.blocked)?.blocked;
+  // First visit (nothing saved yet): rails in the shape of the home while the sandbox wakes up.
   if (home.state !== 'ok') {
     return (
-      <View style={styles.center}>
-        <ActivityIndicator color={C.text2} />
-        <Txt v="small">Chargement de {source?.name ?? 'la source'}…</Txt>
+      <View style={{ gap: S.xl, paddingTop: S.md }} accessibilityLabel={`Chargement de ${source?.name ?? 'la source'}`}>
+        {[140, 112, 112].map((w, i) => (
+          <View key={i} style={{ gap: S.md }}>
+            <View style={{ paddingHorizontal: S.lg }}><LineSkeleton width={150} height={18} /></View>
+            <RailSkeleton tileWidth={w} count={4} />
+          </View>
+        ))}
       </View>
     );
   }
@@ -89,6 +95,7 @@ export function SourceHome({ sourceKey, bottomInset }: { sourceKey: string; bott
             empty="Aucun titre."
             tileWidth={s.kind === 'featured' || s.kind === 'large' ? 140 : 112}
             keyOf={(i) => i.mangaId}
+            image={home.imageHeaders ? undefined : (i) => i.image}
             renderTile={(item, width) => tile(s, item, width)}
             onMore={s.more ? () => router.push({ pathname: '/source-section', params: { key: sourceKey, section: s.id } } as unknown as Href) : undefined}
           />

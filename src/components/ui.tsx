@@ -3,7 +3,7 @@ import { GlassView, isLiquidGlassAvailable } from 'expo-glass-effect';
 import * as Haptics from 'expo-haptics';
 import { Image } from 'expo-image';
 import { LinearGradient } from 'expo-linear-gradient';
-import type { ComponentProps, ReactNode } from 'react';
+import { useState, type ComponentProps, type ReactNode } from 'react';
 import {
   ActivityIndicator,
   Pressable,
@@ -19,6 +19,9 @@ import Animated, { Easing, useAnimatedStyle, useSharedValue, withTiming } from '
 
 import type { Palette } from '@/data/catalog';
 import { C, DUR, EASE_OUT, F, H, R, S, SHADOW, TABULAR, kindIcon, kindLabel, type Kind } from '@/theme/tokens';
+
+import { sizedImage } from './images';
+import { Skeleton } from './skeleton';
 
 export type IconName = ComponentProps<typeof Ionicons>['name'];
 
@@ -169,8 +172,14 @@ export function MetaLine({ items, color = C.body, style, center }: { items: (str
   );
 }
 
-// ---------- Cover art (placeholder until real key art) ----------
+// ---------- Cover art ----------
 
+/**
+ * Poster / key art. While the image loads: a skeleton tinted with the poster's own color (AniList
+ * `coverImage.color`, darkened), and the image fades in over it (150 ms). The generated palette
+ * art is only a fallback: no image at all, or an image that failed to load. Fixed size: nothing
+ * moves when the image arrives.
+ */
 export function Cover({
   palette,
   image,
@@ -181,11 +190,12 @@ export function Cover({
   shade,
   dim,
   outline = true,
+  priority,
   children,
   style,
 }: {
   palette: Palette;
-  /** Real poster; the gradient art stays underneath as the loading placeholder. */
+  /** Real poster (AniList covers are sized for the slot, see components/images). */
   image?: string;
   /** Request headers for the image (e.g. a Referer required by a manga source's CDN). */
   imageHeaders?: Record<string, string>;
@@ -196,30 +206,41 @@ export function Cover({
   dim?: boolean;
   /** 1 px white ring at 10 % — off for full-bleed art, where it would draw a seam. */
   outline?: boolean;
+  /** `high` for the art that defines the screen (hero, detail backdrop). */
+  priority?: 'low' | 'normal' | 'high';
   children?: ReactNode;
   style?: StyleProp<ViewStyle>;
 }) {
-  const [a, b, c] = palette;
-  const w = typeof width === 'number' ? width : 400;
+  const uri = sizedImage(image, typeof width === 'number' ? width : undefined);
+  // Load state of this exact source (a recycled cell, or headers that arrive later, start over).
+  const id = uri ? `${uri}${imageHeaders ? '#h' : ''}` : '';
+  const [state, setState] = useState<{ id: string; ok: boolean }>();
+  const settled = state?.id === id ? state : undefined;
+  const art = !uri || settled?.ok === false;
   return (
     <View
       style={[
-        { width: width ?? '100%', height, borderRadius: radius, borderCurve: 'continuous', overflow: 'hidden', backgroundColor: a },
+        { width: width ?? '100%', height, borderRadius: radius, borderCurve: 'continuous', overflow: 'hidden', backgroundColor: palette[0] },
         style,
       ]}>
-      <LinearGradient colors={[a, b, c]} locations={[0, 0.62, 1]} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={StyleSheet.absoluteFill} />
-      <View style={{ position: 'absolute', width: w * 0.9, height: w * 0.9, borderRadius: w, backgroundColor: c, opacity: 0.3, left: w * 0.38, top: -w * 0.32 }} />
-      <View style={{ position: 'absolute', width: w * 0.55, height: w * 0.55, borderRadius: w, borderWidth: w * 0.02, borderColor: c, opacity: 0.35, left: w * 0.52, top: -w * 0.1 }} />
-      <View style={{ position: 'absolute', width: w * 0.7, height: w * 0.7, borderRadius: w, backgroundColor: a, opacity: 0.75, left: -w * 0.25, top: height * 0.52 }} />
-      <View
-        style={{
-          position: 'absolute', left: w * 0.2, top: height * 0.55, width: 0, height: 0,
-          borderLeftWidth: w * 0.375, borderRightWidth: w * 0.375, borderBottomWidth: height * 0.5,
-          borderLeftColor: 'transparent', borderRightColor: 'transparent', borderBottomColor: 'rgba(5,7,13,0.55)',
-        }}
-      />
-      {image && (
-        <Image source={imageHeaders ? { uri: image, headers: imageHeaders } : image} style={StyleSheet.absoluteFill} contentFit="cover" transition={200} cachePolicy="memory-disk" recyclingKey={image} />
+      {art ? (
+        <PosterArt palette={palette} width={typeof width === 'number' ? width : 400} height={height} />
+      ) : (
+        <>
+          {/* A cached poster lands within a frame or two: the sweep only starts if it takes longer. */}
+          {!settled && <Skeleton tint={palette[0]} radius={0} delay={300} style={StyleSheet.absoluteFill} />}
+          <Image
+            source={imageHeaders ? { uri, headers: imageHeaders } : uri}
+            style={StyleSheet.absoluteFill}
+            contentFit="cover"
+            transition={150}
+            cachePolicy="memory-disk"
+            recyclingKey={uri}
+            priority={priority}
+            onLoad={() => setState({ id, ok: true })}
+            onError={() => setState({ id, ok: false })}
+          />
+        </>
       )}
       {shade && (
         <LinearGradient
@@ -235,6 +256,26 @@ export function Cover({
       )}
       {children}
     </View>
+  );
+}
+
+/** Generated art for a series without a poster (demo catalog, a source item with no image). */
+function PosterArt({ palette, width: w, height }: { palette: Palette; width: number; height: number }) {
+  const [a, b, c] = palette;
+  return (
+    <>
+      <LinearGradient colors={[a, b, c]} locations={[0, 0.62, 1]} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={StyleSheet.absoluteFill} />
+      <View style={{ position: 'absolute', width: w * 0.9, height: w * 0.9, borderRadius: w, backgroundColor: c, opacity: 0.3, left: w * 0.38, top: -w * 0.32 }} />
+      <View style={{ position: 'absolute', width: w * 0.55, height: w * 0.55, borderRadius: w, borderWidth: w * 0.02, borderColor: c, opacity: 0.35, left: w * 0.52, top: -w * 0.1 }} />
+      <View style={{ position: 'absolute', width: w * 0.7, height: w * 0.7, borderRadius: w, backgroundColor: a, opacity: 0.75, left: -w * 0.25, top: height * 0.52 }} />
+      <View
+        style={{
+          position: 'absolute', left: w * 0.2, top: height * 0.55, width: 0, height: 0,
+          borderLeftWidth: w * 0.375, borderRightWidth: w * 0.375, borderBottomWidth: height * 0.5,
+          borderLeftColor: 'transparent', borderRightColor: 'transparent', borderBottomColor: 'rgba(5,7,13,0.55)',
+        }}
+      />
+    </>
   );
 }
 

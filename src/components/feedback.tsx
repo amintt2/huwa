@@ -6,24 +6,14 @@
 // · Toasts: one at a time, above the tab bar, enter from below (spring), leave faster; an optional
 //   action ("Annuler"). `toast()` from anywhere; `ToastHost` is mounted once in the root layout.
 import Ionicons from '@expo/vector-icons/Ionicons';
-import { LinearGradient } from 'expo-linear-gradient';
 import { useEffect, useState, useSyncExternalStore, type ReactNode } from 'react';
-import { StyleSheet, View, type DimensionValue, type LayoutChangeEvent, type StyleProp, type ViewStyle } from 'react-native';
-import Animated, {
-  Easing,
-  FadeIn,
-  FadeOut,
-  SlideInDown,
-  useAnimatedStyle,
-  useReducedMotion,
-  useSharedValue,
-  withRepeat,
-  withTiming,
-} from 'react-native-reanimated';
+import { StyleSheet, View } from 'react-native';
+import Animated, { FadeIn, FadeOut, SlideInDown, useReducedMotion } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { C, F, R, S, SHADOW } from '@/theme/tokens';
 
+import { Skeleton } from './skeleton';
 import { Button, Press, Txt, haptic, type IconName } from './ui';
 
 // ---------- Empty state ----------
@@ -73,48 +63,8 @@ export function EmptyState({
 
 // ---------- Skeletons ----------
 
-const SWEEP_MS = 1400;
-
-/** A placeholder block with a shimmer sweep. */
-export function Skeleton({
-  width = '100%',
-  height,
-  radius = R.control,
-  style,
-}: {
-  width?: DimensionValue;
-  height: DimensionValue;
-  radius?: number;
-  style?: StyleProp<ViewStyle>;
-}) {
-  const reduce = useReducedMotion();
-  const w = useSharedValue(0);
-  const t = useSharedValue(0);
-  useEffect(() => {
-    if (reduce) return;
-    t.set(withRepeat(withTiming(1, { duration: SWEEP_MS, easing: Easing.bezier(0.4, 0, 0.2, 1) }), -1, false));
-  }, [reduce, t]);
-  const band = useAnimatedStyle(() => ({ transform: [{ translateX: -w.get() + t.get() * w.get() * 2 }] }));
-  const onLayout = (e: LayoutChangeEvent) => w.set(e.nativeEvent.layout.width);
-  return (
-    <View
-      onLayout={onLayout}
-      accessibilityElementsHidden
-      importantForAccessibility="no-hide-descendants"
-      style={[{ width, height, borderRadius: radius, borderCurve: 'continuous', backgroundColor: C.surface, overflow: 'hidden' }, style]}>
-      {!reduce && (
-        <Animated.View style={[StyleSheet.absoluteFill, band]}>
-          <LinearGradient
-            colors={['rgba(255,255,255,0)', 'rgba(255,255,255,0.055)', 'rgba(255,255,255,0)']}
-            start={{ x: 0, y: 0.5 }}
-            end={{ x: 1, y: 0.5 }}
-            style={StyleSheet.absoluteFill}
-          />
-        </Animated.View>
-      )}
-    </View>
-  );
-}
+/** The primitive lives in ./skeleton (Reanimated on native, CSS on the web). */
+export { Skeleton };
 
 /** Rows of a list while it loads: thumbnail + two lines. */
 export function SkeletonRows({ count = 5, thumb = 56, square }: { count?: number; thumb?: number; square?: boolean }) {

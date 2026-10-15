@@ -10,6 +10,7 @@ import * as Sharing from 'expo-sharing';
 import { Platform } from 'react-native';
 
 import { hydrateExtraSeries } from '@/data/catalog';
+import { cache as swrCache } from '@/data/swr';
 import { hasSourceBundle } from '@/manga-ext/registry';
 import { hydrateLists } from '@/store/lists';
 import { rehydrateStore } from '@/store/store';
@@ -18,8 +19,8 @@ import { MANGA_EXT_KEY, PREFIX, dropMissingSources, exportData as exportable, is
 import { rehydrateAll } from './rehydrate';
 import { hydrateSettings } from './settings';
 
-/** Caches: rebuilt from the network, cleared by "Vider le cache". */
-const CACHE_KEYS = ['huwa/catalog/v2'];
+/** Caches outside the SWR cache: rebuilt from the network, cleared by "Vider le cache". */
+const CACHE_KEYS = ['huwa/catalog/v2', 'huwa/manhwa/home/v1'];
 
 export type Backup = { app: 'huwa'; format: 1; exportedAt: string; data: Record<string, string> };
 
@@ -98,11 +99,12 @@ export async function restoreBackup(backup: Backup): Promise<{ sourcesToReinstal
   return { sourcesToReinstall };
 }
 
-/** Image caches + catalog cache. Progress, lists and settings are untouched. */
+/** Image caches + data caches (catalog, calendar, search…). Progress, lists and settings are untouched. */
 export async function clearCache() {
   await Promise.all([
     Image.clearDiskCache().catch(() => false),
     Image.clearMemoryCache().catch(() => false),
     AsyncStorage.multiRemove(CACHE_KEYS),
+    swrCache.clear(),
   ]);
 }

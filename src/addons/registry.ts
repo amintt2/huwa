@@ -29,6 +29,8 @@ import { dropDemoWhenReal } from './builtin-demo';
 import { otherWork } from './other-work';
 import { timedAddon } from '@/stats/addon-timing';
 import { getSeries } from '@/data/catalog';
+import { cache, TTL } from '@/data/swr';
+import { hashKey } from '@/data/swr-core';
 import { lazyImdbId } from '@/data/imdb-episode';
 
 import {
@@ -242,22 +244,26 @@ export function useCatalogDefs(): CatalogDef[] {
  */
 export function useCatalogRow(def: CatalogDef, genre?: string) {
   const key = `${catalogKey(def)}|${genre ?? ''}`;
-  const [res, setRes] = useState<{ key: string; state: 'loading' | 'ok' | 'error'; metas: MetaPreview[]; more: boolean; busy: boolean }>({
-    key: '', state: 'loading', metas: [], more: false, busy: false,
+  // First page through the SWR cache (data/swr.ts): shown at once on the next visit, refreshed
+  // after 30 min. Hashed key: add-on URLs may hold personal tokens.
+  const first = `addon:${hashKey(`${def.addon.baseUrl}|${def.catalog.type}|${def.catalog.id}|${genre ?? ''}`)}`;
+  const [res, setRes] = useState<{ key: string; state: 'loading' | 'ok' | 'error'; metas: MetaPreview[]; more: boolean; busy: boolean; pages: number }>({
+    key: '', state: 'loading', metas: [], more: false, busy: false, pages: 0,
   });
   const canPage = catalogSupports(def.catalog, 'skip');
 
   const load = (skip: number) => {
-    fetchCatalog(def.addon.baseUrl, def.catalog.type, def.catalog.id, { genre, skip: skip || undefined })
+    const fetchPage = () => fetchCatalog(def.addon.baseUrl, def.catalog.type, def.catalog.id, { genre, skip: skip || undefined });
+    (skip ? fetchPage() : cache.swr(first, fetchPage, TTL.addon))
       .then((metas) =>
         setRes((p) => {
-          const base = p.key === key ? p.metas : [];
+          const base = p.key === key && skip ? p.metas : [];
           const seen = new Set(base.map((m) => m.id));
           const fresh = metas.filter((m) => !seen.has(m.id));
-          return { key, state: 'ok', metas: [...base, ...fresh], more: canPage && fresh.length > 0, busy: false };
+          return { key, state: 'ok', metas: [...base, ...fresh], more: canPage && fresh.length > 0, busy: false, pages: skip ? p.pages + 1 : 1 };
         }),
       )
-      .catch(() => setRes((p) => (p.key === key && p.metas.length ? { ...p, more: false, busy: false } : { key, state: 'error', metas: [], more: false, busy: false })));
+      .catch(() => setRes((p) => (p.key === key && p.metas.length ? { ...p, more: false, busy: false } : { key, state: 'error', metas: [], more: false, busy: false, pages: 0 })));
   };
 
   useEffect(() => {
@@ -265,7 +271,23 @@ export function useCatalogRow(def: CatalogDef, genre?: string) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [key]);
 
-  const cur = res.key === key ? res : { state: 'loading' as const, metas: [] as MetaPreview[], more: false, busy: false };
+  // Background refresh of the first page: swapped in when it changed and nothing more was loaded.
+  useEffect(
+    () =>
+      cache.subscribe(first, () => {
+        const metas = cache.peek<MetaPreview[]>(first)?.value;
+        if (metas) setRes((p) => (p.key === key && p.pages <= 1 && !p.busy ? { ...p, state: 'ok', metas, more: canPage && metas.length > 0 } : p));
+      }),
+    [first, key, canPage],
+  );
+
+  const hit = res.key === key ? undefined : cache.peek<MetaPreview[]>(first)?.value;
+  const cur =
+    res.key === key
+      ? res
+      : hit
+        ? { state: 'ok' as const, metas: hit, more: canPage && hit.length > 0, busy: false }
+        : { state: 'loading' as const, metas: [] as MetaPreview[], more: false, busy: false };
   return {
     ...cur,
     loadMore: () => {

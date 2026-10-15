@@ -4,40 +4,13 @@
 import { isDemo } from '@/demo/flags';
 import { demoAiring } from '@/demo/seed';
 
-import { build, ENDPOINT, episodeCount, isManhwa, NODE, type Media } from './anilist';
+import { build, episodeCount, isManhwa, NODE, type Media } from './anilist';
+import { AniListError, gql } from './anilist-gql';
 import { getSeries, registerSeries, type Series } from './catalog';
+import { cache, TTL } from './swr';
 
-export class AniListError extends Error {
-  constructor(
-    message: string,
-    public status = 0,
-  ) {
-    super(message);
-  }
-}
-
-export async function gql<T>(
-  query: string,
-  variables: Record<string, unknown> = {},
-  opts: { signal?: AbortSignal; token?: string } = {},
-): Promise<T> {
-  if (isDemo) throw new Error('AniList désactivé en mode démo');
-  const res = await fetch(ENDPOINT, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Accept: 'application/json',
-      ...(opts.token ? { Authorization: `Bearer ${opts.token}` } : {}),
-    },
-    body: JSON.stringify({ query, variables }),
-    signal: opts.signal,
-  });
-  const json = await res.json().catch(() => null);
-  if (!res.ok || !json || json.errors) {
-    throw new AniListError(json?.errors?.[0]?.message ?? `AniList ${res.status}`, res.status);
-  }
-  return json.data as T;
-}
+// The transport lives in ./anilist-gql (no import cycle with ./anilist); same exports as before.
+export { AniListError, gql };
 
 // ---------- search ----------
 
@@ -77,7 +50,7 @@ export const GENRES = [
 ] as const;
 
 const LIGHT = `id type format status seasonYear startDate { year } episodes chapters averageScore genres
-  title { english userPreferred } coverImage { large color } nextAiringEpisode { episode airingAt }`;
+  title { english userPreferred } coverImage { extraLarge large color } nextAiringEpisode { episode airingAt }`;
 
 type LightMedia = {
   id: number;
@@ -90,7 +63,7 @@ type LightMedia = {
   averageScore: number | null;
   genres: string[] | null;
   title: { english: string | null; userPreferred: string };
-  coverImage: { large: string; color: string | null };
+  coverImage: { extraLarge?: string | null; large: string; color: string | null };
   nextAiringEpisode: { episode: number; airingAt: number } | null;
 };
 
@@ -108,7 +81,8 @@ function summarize(m: LightMedia): MediaSummary {
     anilistId: m.id,
     type: m.type,
     title: m.title.english ?? m.title.userPreferred,
-    image: m.coverImage.large,
+    // Full size: the grid slot picks the right one (components/images).
+    image: m.coverImage.extraLarge ?? m.coverImage.large,
     color: m.coverImage.color,
     year: m.seasonYear ?? m.startDate?.year ?? null,
     status: m.status,
@@ -200,11 +174,24 @@ export const seriesHref = (s: Series) => (s.anime ? (`/anime/${s.id}` as const) 
 export async function openMedia(anilistId: number, type: 'ANIME' | 'MANGA') {
   const known = getSeries(type === 'ANIME' ? `al${anilistId}` : `alm${anilistId}`);
   if (known) return seriesHref(known);
-  const data = await gql<{ Media: Media }>(`query ($id: Int) { Media(id: $id) { ${FULL} } }`, { id: anilistId });
-  const s = seriesFromMedia(data.Media);
+  const s = seriesFromMedia(await cache.load(mediaKey(anilistId), () => fetchMediaFull(anilistId), TTL.series));
   if (!s) throw new AniListError('unavailable');
   registerSeries([s]);
   return seriesHref(s);
+}
+
+/** SWR key of one AniList entry with its relations (series pages opened outside the catalog). */
+export const mediaKey = (anilistId: number) => `media:${anilistId}`;
+
+export async function fetchMediaFull(anilistId: number): Promise<Media> {
+  const data = await gql<{ Media: Media }>(`query ($id: Int) { Media(id: $id) { ${FULL} } }`, { id: anilistId });
+  return data.Media;
+}
+
+/** `al123` → anime 123, `alm45` → manga 45 (other ids: demo series, source-only pages). */
+export function anilistRef(seriesId: string): { id: number; type: 'ANIME' | 'MANGA' } | null {
+  const m = /^al(m?)(\d+)$/.exec(seriesId);
+  return m ? { id: Number(m[2]), type: m[1] ? 'MANGA' : 'ANIME' } : null;
 }
 
 // ---------- airing calendar ----------

@@ -2,14 +2,18 @@
 // Post-export step of the web build (`npm run build:web` = `expo export -p web` + this script).
 // docs/WEB_DOCKER_PLAN.md D19 (PWA) and P1.
 //
-// 1. index.html: French, dark first paint, PWA manifest, iOS home-screen tags, service-worker
-//    registration (with the "Nouvelle version disponible" handshake read by src/web/pwa.ts).
+// 1. index.html: French, dark first paint, boot skeleton, PWA manifest, iOS home-screen tags,
+//    service-worker registration (with the "Nouvelle version disponible" handshake read by
+//    src/web/pwa.ts).
 // 2. sw.js: a small hand-written service worker (no Workbox: one file, no dependency):
 //    · precache of the app shell (index.html, JS/CSS bundles, icon font, icons, manifest),
 //      versioned by a hash of their contents;
 //    · hashed static files (/_expo/static/, /assets/): cache-first, they never change;
-//    · navigations: network first (3 s), then the cached shell (SPA, works offline);
-//    · posters and other cross-origin images: fetched with CORS, kept in an LRU cache of ~50 MB;
+//    · navigations: the precached shell at once (SPA: instant repeat visits, works offline), the
+//      network only when it is missing; a deploy ships a new worker and its shell (update prompt);
+//    · posters and other cross-origin images: cache first, misses fetched with CORS and stored in
+//      the background, LRU cache of ~50 MB (AniList GraphQL is POST: cached by the app itself, in
+//      IndexedDB, see src/data/swr.ts);
 //    · /huwa-config.json, the manifest: network first, cached copy offline;
 //    · the legacy site pages (/get, /privacy.html, /.well-known/…) are never touched.
 //    A new version waits until the page says SKIP_WAITING (the update prompt).
@@ -75,13 +79,46 @@ const REGISTER = `
     })();
   </script>`;
 
+// Boot skeleton: the shape of the home (shell rail + top bar from 768 px, hero, a row of cards)
+// while the JS bundle downloads and starts. It only fades in after 350 ms, so a repeat visit
+// (shell and bundles from the service worker) goes straight to the content without a flash; the
+// app paints over it (it comes first in the DOM, at the same stacking level as the app's
+// positioned views) and removes it once its first screen is ready
+// (src/app/_layout.web.tsx). No sweep with prefers-reduced-motion.
+const BOOT_STYLE = `
+    <style id="huwa-boot-skel-css">
+      #huwa-boot-skel{position:fixed;inset:0;z-index:0;pointer-events:none;opacity:0;animation:huwa-boot-in .25s ease-out .35s forwards}
+      @keyframes huwa-boot-in{to{opacity:1}}
+      @keyframes huwa-boot-sweep{from{transform:translateX(-100%)}to{transform:translateX(100%)}}
+      #huwa-boot-skel .b{position:absolute;background:#0C111C;border-radius:12px;overflow:hidden}
+      #huwa-boot-skel .b::after{content:"";position:absolute;inset:0;transform:translateX(-100%);background:linear-gradient(90deg,rgba(255,255,255,0),rgba(255,255,255,.055),rgba(255,255,255,0));animation:huwa-boot-sweep 1.4s cubic-bezier(.4,0,.2,1) infinite}
+      #huwa-boot-skel .hero{left:0;right:0;top:0;height:clamp(520px,142vw,760px);border-radius:0}
+      #huwa-boot-skel .rail,#huwa-boot-skel .bar{display:none}
+      #huwa-boot-skel .row{position:absolute;left:16px;right:0;top:calc(clamp(520px,142vw,760px) + 72px);height:122px;display:flex;gap:16px;overflow:hidden}
+      #huwa-boot-skel .row .b{position:relative;flex:0 0 216px;height:122px}
+      @media (min-width:768px){
+        #huwa-boot-skel .rail{display:block;left:0;top:0;bottom:0;width:84px;border-radius:0;background:#05070D}
+        #huwa-boot-skel .bar{display:block;left:calc(84px + (100vw - 84px - 560px) / 2);top:10px;width:560px;max-width:calc(100vw - 340px);height:44px;border-radius:999px}
+        #huwa-boot-skel .hero{left:84px;top:64px;height:clamp(380px,40vw,560px)}
+        #huwa-boot-skel .row{left:132px;top:calc(64px + clamp(380px,40vw,560px) + 56px);height:148px}
+        #huwa-boot-skel .row .b{flex-basis:264px;height:148px}
+      }
+      @media (prefers-reduced-motion:reduce){#huwa-boot-skel .b::after{animation:none;display:none}}
+    </style>`;
+const BOOT_HTML = `
+    <div id="huwa-boot-skel" aria-hidden="true">
+      <div class="b rail"></div><div class="b bar"></div><div class="b hero"></div>
+      <div class="row"><div class="b"></div><div class="b"></div><div class="b"></div><div class="b"></div><div class="b"></div><div class="b"></div></div>
+    </div>`;
+
 let html = readFileSync(indexPath, 'utf8');
 if (!html.includes('id="huwa-boot"')) {
   html = html
     .replace('<html lang="en">', '<html lang="fr">')
     .replace(/<meta name="viewport"[^>]*>/, '<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />')
     .replace(/<meta httpEquiv="X-UA-Compatible"[^>]*>\s*/, '')
-    .replace('</title>', `</title>${HEAD}`)
+    .replace('</title>', `</title>${HEAD}${BOOT_STYLE}`)
+    .replace('<div id="root">', `${BOOT_HTML}\n    <div id="root">`)
     .replace(/You need to enable JavaScript to run this app\./, 'Huwa a besoin de JavaScript.')
     .replace('</body>', `${REGISTER}\n</body>`);
   writeFileSync(indexPath, html);
@@ -136,7 +173,8 @@ self.addEventListener('activate', (event) => {
     (async () => {
       const keep = new Set([SHELL, STATIC, DATA, POSTERS]);
       for (const k of await caches.keys()) if (k.startsWith('huwa-') && !keep.has(k)) await caches.delete(k);
-      if (self.registration.navigationPreload) await self.registration.navigationPreload.enable().catch(() => {});
+      // Navigations are answered from the shell: a preload request would be wasted.
+      if (self.registration.navigationPreload) await self.registration.navigationPreload.disable().catch(() => {});
       await self.clients.claim();
     })(),
   );
@@ -150,14 +188,19 @@ function timeout(ms) {
   return new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), ms));
 }
 
+// App shell first: the precached index.html answers at once (instant repeat visits, offline). It
+// can only be as old as this worker, whose bundles are precached with it; a deploy installs a new
+// worker with its own shell (update prompt). No cached shell (evicted): the network.
 async function navigation(event) {
+  const u = new URL(event.request.url);
+  // A real file opened in a tab (/huwa-config.json, /p2p-worker.js…): never the shell.
+  if (/\\.[a-z0-9]+$/i.test(u.pathname) && u.pathname !== '/index.html') return fetch(event.request);
+  const cached = await caches.open(SHELL).then((c) => c.match('/index.html'));
+  if (cached) return cached;
   try {
-    const preload = event.preloadResponse ? await event.preloadResponse : null;
-    if (preload) return preload;
-    return await Promise.race([fetch(event.request), timeout(3000)]);
+    return await Promise.race([fetch(event.request), timeout(8000)]);
   } catch {
-    const shell = await caches.open(SHELL);
-    return (await shell.match('/index.html')) || Response.error();
+    return Response.error();
   }
 }
 
@@ -185,18 +228,34 @@ async function networkFirst(request, name) {
   }
 }
 
-// ---------- posters: LRU by bytes ----------
+// ---------- posters: cache first, LRU by bytes ----------
+// Cross-origin images (AniList covers and banners on s4.anilist.co, add-on posters…). A hit is
+// answered from the cache without touching the network. A miss is fetched with CORS (AniList's CDN
+// allows it), handed to the page right away and stored in the background. Hosts without CORS are
+// fetched as is and not stored (an opaque response has no size to budget), and remembered so they
+// are not tried twice. The index (url → size, stored at / last used) is rebuilt from the stored
+// headers when the worker wakes up; least recently used posters go once over the budget.
 
 let index = null; // Map url -> { size, at }
-async function posterIndex(cache) {
-  if (index) return index;
-  index = new Map();
-  let t = 0;
-  for (const req of await cache.keys()) {
-    const res = await cache.match(req);
-    index.set(req.url, { size: Number(res && res.headers.get('x-huwa-size')) || 0, at: t++ });
+let indexing = null;
+const noCors = new Set();
+
+function posterIndex(cache) {
+  if (index) return Promise.resolve(index);
+  if (!indexing) {
+    indexing = (async () => {
+      const map = new Map();
+      let t = 0;
+      for (const req of await cache.keys()) {
+        const res = await cache.match(req);
+        const at = Number(res && res.headers.get('x-huwa-at')) || t++;
+        map.set(req.url, { size: Number(res && res.headers.get('x-huwa-size')) || 0, at });
+      }
+      index = map;
+      return map;
+    })();
   }
-  return index;
+  return indexing;
 }
 
 async function trimPosters(cache) {
@@ -213,33 +272,44 @@ async function trimPosters(cache) {
   }
 }
 
-async function poster(request) {
+async function storePoster(cache, url, res) {
+  const blob = await res.blob();
+  if (!blob.size || blob.size > 5 * 1024 * 1024) return;
+  // Only what an image needs: a decoded body must not keep content-encoding / content-length.
+  const headers = new Headers();
+  for (const h of ['content-type', 'last-modified', 'etag']) {
+    const v = res.headers.get(h);
+    if (v) headers.set(h, v);
+  }
+  const now = Date.now();
+  headers.set('x-huwa-size', String(blob.size));
+  headers.set('x-huwa-at', String(now));
+  await cache.put(url, new Response(blob, { status: 200, headers }));
+  const idx = await posterIndex(cache);
+  idx.set(url, { size: blob.size, at: now });
+  await trimPosters(cache);
+}
+
+async function poster(event) {
+  const url = event.request.url;
   const cache = await caches.open(POSTERS);
-  const hit = await cache.match(request.url);
+  const hit = await cache.match(url);
   if (hit) {
-    posterIndex(cache).then((idx) => {
-      const e = idx.get(request.url);
-      if (e) e.at = Date.now();
-    });
+    const e = index && index.get(url);
+    if (e) e.at = Date.now();
     return hit;
   }
+  const host = new URL(url).host;
+  if (noCors.has(host)) return fetch(event.request);
   let res;
   try {
-    res = await fetch(request.url, { mode: 'cors', credentials: 'omit' });
+    res = await fetch(url, { mode: 'cors', credentials: 'omit' });
   } catch {
-    return fetch(request); // no CORS on that host: plain request, not cached
+    noCors.add(host);
+    return fetch(event.request);
   }
-  if (!res.ok) return res;
-  const blob = await res.blob();
-  if (blob.size > 0 && blob.size < 5 * 1024 * 1024) {
-    const headers = new Headers(res.headers);
-    headers.set('x-huwa-size', String(blob.size));
-    await cache.put(request.url, new Response(blob, { status: 200, headers }));
-    const idx = await posterIndex(cache);
-    idx.set(request.url, { size: blob.size, at: Date.now() });
-    trimPosters(cache);
-  }
-  return new Response(blob, { status: res.status, headers: res.headers });
+  if (res.ok && res.type === 'cors') event.waitUntil(storePoster(cache, url, res.clone()).catch(() => {}));
+  return res;
 }
 
 self.addEventListener('fetch', (event) => {
@@ -255,7 +325,7 @@ self.addEventListener('fetch', (event) => {
     if (PRECACHE.includes(u.pathname)) return event.respondWith(caches.match(u.pathname).then((r) => r || fetch(req)));
     return;
   }
-  if (req.destination === 'image' && (u.protocol === 'https:' || u.protocol === 'http:')) event.respondWith(poster(req));
+  if (req.destination === 'image' && (u.protocol === 'https:' || u.protocol === 'http:')) event.respondWith(poster(event));
 });
 `;
 

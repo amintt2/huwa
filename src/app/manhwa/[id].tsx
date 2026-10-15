@@ -26,15 +26,19 @@ import {
 import { isDemo } from '@/demo/flags';
 import { useSourceLink } from '@/manga-ext/link';
 import { DetailBackdrop, DetailNav, DetailTabs, Synopsis } from '@/components/detail';
+import { DetailSkeleton } from '@/components/skeletons';
 import { ActionTile, Button, Chip, MetaLine, Press, Progress, Txt } from '@/components/ui';
 import { episodeForChapter } from '@/data/bridge';
 import { getSeries, type Chapter } from '@/data/catalog';
+import { useEnsureSeries } from '@/data/use-anilist';
 import { toggleMyList, useStore } from '@/store/store';
 import { C, F, R, S, TABULAR } from '@/theme/tokens';
 
 export default function ManhwaDetail() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const insets = useSafeAreaInsets();
+  // Re-renders with the catalog; opened from a link before anything is cached: fetched meanwhile.
+  const ensured = useEnsureSeries(id);
   const series = getSeries(id);
   const chapters = useStore((s) => s.chapters);
   const episodes = useStore((s) => s.episodes);
@@ -55,6 +59,7 @@ export default function ManhwaDetail() {
     return newestFirst ? [...all].reverse() : all;
   }, [series, newestFirst]);
 
+  if (!series?.manhwa && ensured.state === 'loading') return <DetailSkeleton kind="manhwa" />;
   if (!series?.manhwa) return <Txt style={{ padding: S.xl }}>Manhwa introuvable.</Txt>;
   const all = series.manhwa.chapters;
 

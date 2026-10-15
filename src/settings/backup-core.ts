@@ -6,7 +6,9 @@ export const PREFIX = 'huwa/';
 
 /** Keys never exported nor restored (and left untouched on this device by an import). */
 const EXCLUDED_KEYS = new Set([
-  'huwa/catalog/v2', // catalog cache
+  'huwa/catalog/v2', // catalog cache (before the SWR cache)
+  'huwa/manhwa/home/v1', // Manhwa tab sections (AniList)
+  'huwa/upcoming/v1', // airing schedules
   'huwa/ids/v2', // id mapping cache
   'huwa/franchise/v1', // AniList relations cache
   'huwa/franchise/seasons/v1', // AniList relations cache (whole franchises)
@@ -19,6 +21,8 @@ const EXCLUDED_KEYS = new Set([
   'huwa/cloud-backup/v1', // iCloud Keychain switch, follows the Keychain item of this device
 ]);
 const EXCLUDED_PREFIXES = [
+  'huwa/swr/', // stale-while-revalidate cache (catalog, calendar, search, browse…), re-fetchable
+  'huwa/browse/', // Anime tab pages (before the SWR cache)
   'huwa/streams/', // resolved stream links (may hold debrid download URLs)
   'huwa/cinemeta/', // episode listings (titles, air dates), re-fetchable
   'huwa/pb/state/', // extension cookies / session state

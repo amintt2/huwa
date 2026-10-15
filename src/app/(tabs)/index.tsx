@@ -6,11 +6,12 @@ import Animated, { Extrapolation, interpolate, useAnimatedScrollHandler, useAnim
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { ContinueCard, RankCard, ReleaseCard } from '@/components/cards';
-import { HeroCarousel } from '@/components/hero';
+import { HeroCarousel, HeroSkeleton } from '@/components/hero';
+import { CardRailSkeleton, RailSkeleton } from '@/components/skeletons';
 import { PRIORITY, usePresearch } from '@/components/presearch';
 import { Cover, IconButton, Press, SectionHeader, Txt, Wordmark } from '@/components/ui';
 import { continuationChapter, hasBoth } from '@/data/bridge';
-import { allSeries, animeSeries, episodeLabel, getEpisode, useCatalog } from '@/data/catalog';
+import { allSeries, animeSeries, episodeLabel, getEpisode, useCatalog, useCatalogLoading } from '@/data/catalog';
 import { animeReleases, manhwaReleases, weeklyTop } from '@/data/releases';
 import { useContinueItems } from '@/store/derived';
 import { useStore } from '@/store/store';
@@ -20,6 +21,8 @@ import { C, R, S, SHADOW } from '@/theme/tokens';
 export default function Home() {
   const insets = useSafeAreaInsets();
   const catalogVersion = useCatalog();
+  // First launch, nothing cached yet: skeletons in the shape of the page, not the demo series.
+  const loading = useCatalogLoading();
   const continueItems = useContinueItems();
   // The most recent "Reprendre" episode is pre-searched once the row has been on screen a second.
   const resume = continueItems.find((i) => i.kind === 'anime' && !i.bridged);
@@ -31,20 +34,11 @@ export default function Home() {
       : null,
     PRIORITY.continue,
   );
-  // Recomputed when AniList data replaces the cached / demo catalog.
-  const { featured, animeOut, manhwaOut, top } = useMemo(() => {
-    void catalogVersion;
-    const trending = [...animeSeries()].sort((a, b) => (a.trendRank ?? 99) - (b.trendRank ?? 99));
-    return {
-      featured: trending.slice(0, 5),
-      animeOut: animeReleases(),
-      manhwaOut: manhwaReleases(),
-      top: weeklyTop(),
-    };
-  }, [catalogVersion]);
+  // Recomputed for each catalog version: the cache, then each refresh that changed something.
+  const { featured, animeOut, manhwaOut, top } = useMemo(() => homeRows(catalogVersion), [catalogVersion]);
   const episodes = useStore((s) => s.episodes);
   // Series watched as anime that continue in the manhwa.
-  const bridges = allSeries().filter((s) => hasBoth(s) && s.anime!.episodes.some((e) => episodes[e.id]));
+  const bridges = loading ? [] : allSeries().filter((s) => hasBoth(s) && s.anime!.episodes.some((e) => episodes[e.id]));
   // The header gains a solid backdrop once the hero has scrolled away (purpose: legibility).
   const { width } = useWindowDimensions();
   const y = useSharedValue(0);
@@ -60,7 +54,7 @@ export default function Home() {
         contentInsetAdjustmentBehavior="never"
         contentContainerStyle={{ paddingBottom: insets.bottom + 110 }}
         showsVerticalScrollIndicator={false}>
-        <HeroCarousel key={featured.map((s) => s.id).join()} items={featured} />
+        {loading ? <HeroSkeleton /> : <HeroCarousel key={featured.map((s) => s.id).join()} items={featured} />}
 
         {continueItems.length > 0 && (
           <>
@@ -72,9 +66,13 @@ export default function Home() {
         )}
 
         <SectionHeader title="Prochaines sorties" action="Calendrier" onAction={() => router.push('/calendar')} />
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.rail}>
-          {animeOut.map((r) => <ReleaseCard key={r.key} release={r} />)}
-        </ScrollView>
+        {loading ? (
+          <CardRailSkeleton />
+        ) : (
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.rail}>
+            {animeOut.map((r) => <ReleaseCard key={r.key} release={r} />)}
+          </ScrollView>
+        )}
 
         {bridges.length > 0 && (
           <>
@@ -100,14 +98,22 @@ export default function Home() {
         )}
 
         <SectionHeader title="Top 10 de la semaine" />
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={[styles.rail, { gap: S.sm }]}>
-          {top.map((t, i) => <RankCard key={t.series.id} series={t.series} kind={t.kind} rank={i + 1} />)}
-        </ScrollView>
+        {loading ? (
+          <RailSkeleton tileWidth={116} title={false} />
+        ) : (
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={[styles.rail, { gap: S.sm }]}>
+            {top.map((t, i) => <RankCard key={t.series.id} series={t.series} kind={t.kind} rank={i + 1} />)}
+          </ScrollView>
+        )}
 
         <SectionHeader title="Manhwa tendance" action="Tout voir" onAction={() => router.push('/manhwa')} />
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.rail}>
-          {manhwaOut.map((r) => <ReleaseCard key={r.key} release={r} />)}
-        </ScrollView>
+        {loading ? (
+          <CardRailSkeleton />
+        ) : (
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.rail}>
+            {manhwaOut.map((r) => <ReleaseCard key={r.key} release={r} />)}
+          </ScrollView>
+        )}
       </Animated.ScrollView>
 
       {/* Header: brand + actions. Transparent over the hero, solid once content passes under it. */}
@@ -121,6 +127,21 @@ export default function Home() {
       </View>
     </View>
   );
+}
+
+/**
+ * Rails of the home for a catalog version. The version is a real argument: with the React
+ * Compiler, a `useMemo` that only mentions it as `void catalogVersion` lost it as a dependency
+ * and kept the first catalog (the demo series) after AniList answered.
+ */
+function homeRows(_version: number) {
+  const trending = [...animeSeries()].sort((a, b) => (a.trendRank ?? 99) - (b.trendRank ?? 99));
+  return {
+    featured: trending.slice(0, 5),
+    animeOut: animeReleases(),
+    manhwaOut: manhwaReleases(),
+    top: weeklyTop(),
+  };
 }
 
 const styles = StyleSheet.create({

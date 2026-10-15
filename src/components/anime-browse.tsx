@@ -215,6 +215,7 @@ function SectionRail({ def }: { def: SectionDef }) {
       loading={r.loading}
       error={r.error ? 'Hors ligne : section indisponible.' : undefined}
       keyOf={(i) => i.key}
+      image={(i) => i.image}
       tileWidth={def.id === 'trending' ? 136 : 112}
       onMore={() => router.push({ pathname: '/browse', params: { section: def.id } })}
       renderTile={(i, width) => <AnimeTile item={i} width={width} showScore={def.id !== 'upcoming'} />}

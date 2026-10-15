@@ -137,6 +137,7 @@ function HomeSections({ bottomInset, onMore }: { bottomInset: number; onMore: (s
               subtitle="Les vrais chapitres, prêts à lire"
               data={inSources}
               keyOf={(x) => x.series.id}
+              image={(x) => x.series.image}
               tileWidth={112}
               renderTile={({ link, series }, width) => (
                 <PosterTile
@@ -161,6 +162,7 @@ function HomeSections({ bottomInset, onMore }: { bottomInset: number; onMore: (s
             data={data}
             loading={home.state === 'loading'}
             keyOf={(s) => s.id}
+            image={(s) => s.image}
             tileWidth={section.id === 'trending' ? 136 : 112}
             onMore={() => onMore(section.sort)}
             renderTile={(s, width) => (

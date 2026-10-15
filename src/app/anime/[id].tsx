@@ -12,6 +12,7 @@ import { ListsButton } from '@/components/lists';
 import { isStoreBuild } from '@/config/channel';
 import { PRIORITY, usePresearch } from '@/components/presearch';
 import { DetailBackdrop, DetailNav, DetailTabs, Synopsis } from '@/components/detail';
+import { DetailSkeleton } from '@/components/skeletons';
 import { SeasonButton, SeasonSheet, SpecialsList } from '@/components/season-picker';
 import { NextEpisodeLine, toggleSeriesBell, UpcomingHeader, UpcomingRow } from '@/components/upcoming';
 import { ActionTile, Button, Chip, Cover, MetaLine, Press, Progress, Txt } from '@/components/ui';
@@ -20,6 +21,7 @@ import { approxEp, chapterRangeLabel, resumeEpisode } from '@/data/bridge';
 import { episodeLabel, getSeries, useCatalog, type Episode, type Series } from '@/data/catalog';
 import { useFranchiseSeasons, useSeasonNumber } from '@/data/franchise';
 import { useMappingSync } from '@/data/mapping-sync';
+import { useEnsureSeries } from '@/data/use-anilist';
 import { SPECIALS_KEY, useSeasonView, type SeasonView } from '@/data/season-view';
 import { ensureAired, isAiringSeries, refreshAired, useAiringNow, useUpcomingSchedule } from '@/data/upcoming';
 import { enqueueEpisodes, getItem, useDownloadItems } from '@/downloads';
@@ -32,12 +34,15 @@ import { C, F, S, TABULAR } from '@/theme/tokens';
 export default function AnimeDetail() {
   const { id } = useLocalSearchParams<{ id: string }>();
   useCatalog();
+  // Opened from a link before anything is cached: fetched while the skeleton shows.
+  const ensured = useEnsureSeries(id);
   const series = getSeries(id);
   const franchise = useFranchiseSeasons(series);
   const [picking, setPicking] = useState(false);
   // Season chosen in the picker (data/season-view.ts); by default the one to resume.
   const [pick, setPick] = useState<string>();
   const view = useSeasonView(series, franchise, pick);
+  if (ensured.state === 'loading') return <DetailSkeleton kind="anime" />;
   return (
     <>
       {/* Keyed by id: switching season starts the page afresh (episode paging, presearch, sheets). */}

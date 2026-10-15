@@ -3,13 +3,15 @@
 // (AniList, same query as the native screen), with the type filter and sort as chips.
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { router, useLocalSearchParams } from 'expo-router';
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { ActivityIndicator, FlatList, StyleSheet, View, useWindowDimensions } from 'react-native';
 
 import { ErrorState, FilterChip, StateView } from '@/components/states';
 import { Cover, TypeBadge, Txt } from '@/components/ui';
 import { palette } from '@/data/anilist';
-import { openMedia, searchMedia, type MediaSummary, type SearchParams, type SearchSort, type SearchType } from '@/data/anilist-api';
+import { openMedia, type MediaSummary, type SearchParams, type SearchSort, type SearchType } from '@/data/anilist-api';
+import { useSearchResults } from '@/data/use-anilist';
+import { PosterGridSkeleton } from '@/components/skeletons';
 import { useT } from '@/i18n';
 import { C, R, S } from '@/theme/tokens';
 import { hoverRing, HoverPress } from '@/web/hover-press';
@@ -39,33 +41,11 @@ function WideSearch({ width }: { width: number }) {
   const { q = '' } = useLocalSearchParams<{ q?: string }>();
   const [type, setType] = useState<SearchType>('all');
   const [sort, setSort] = useState<SearchSort>('relevance');
-  const [results, setResults] = useState<MediaSummary[] | null>(null);
-  const [state, setState] = useState<'loading' | 'ok' | 'error'>('loading');
-  const [attempt, setAttempt] = useState(0);
   const [opening, setOpening] = useState<number | null>(null);
-
-  useEffect(() => {
-    const ctrl = new AbortController();
-    const params: SearchParams = { query: q, type, genre: null, year: null, status: null, sort };
-    const timer = setTimeout(
-      () => {
-        setState('loading');
-        searchMedia(params, ctrl.signal)
-          .then((list) => {
-            setResults(list);
-            setState('ok');
-          })
-          .catch(() => {
-            if (!ctrl.signal.aborted) setState('error');
-          });
-      },
-      q ? 400 : 100,
-    );
-    return () => {
-      clearTimeout(timer);
-      ctrl.abort();
-    };
-  }, [q, type, sort, attempt]);
+  // Same query as the native screen, through the cache: results already seen show at once.
+  const params: SearchParams = { query: q, type, genre: null, year: null, status: null, sort };
+  const { results, busy, loading, failed, retry } = useSearchResults(params, { typing: 400, filters: 100 });
+  const state = failed ? 'error' : loading ? 'loading' : 'ok';
 
   const pad = S.xxl;
   const cols = Math.max(3, Math.floor((width - pad * 2 + S.lg) / (TILE + S.lg)));
@@ -89,7 +69,7 @@ function WideSearch({ width }: { width: number }) {
         <Txt v="display" accessibilityRole="header" numberOfLines={1} style={{ flexShrink: 1 }}>
           {q ? `Résultats pour « ${q} »` : 'Populaire en ce moment'}
         </Txt>
-        {state === 'loading' && results && <ActivityIndicator color={C.text2} />}
+        {busy && results && <ActivityIndicator color={C.text2} />}
       </View>
       <View style={styles.chips}>
         {TYPES.map((x) => (
@@ -115,9 +95,9 @@ function WideSearch({ width }: { width: number }) {
       ListHeaderComponent={header}
       ListEmptyComponent={
         state === 'error' ? (
-          <ErrorState onRetry={() => setAttempt((n) => n + 1)} />
+          <ErrorState onRetry={retry} />
         ) : state === 'loading' ? (
-          <View style={{ paddingTop: S.xxl }}><ActivityIndicator color={C.text2} /></View>
+          <PosterGridSkeleton cols={cols} rows={2} gap={S.lg} pad={0} width={tile} />
         ) : (
           <StateView icon="search-outline" title={t('search.empty')} body={t('search.emptyBody')} />
         )

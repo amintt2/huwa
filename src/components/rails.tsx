@@ -6,9 +6,11 @@ import type { ReactElement } from 'react';
 import { ActivityIndicator, FlatList, Pressable, StyleSheet, Text, View, useWindowDimensions, type ListRenderItem } from 'react-native';
 
 import type { Palette } from '@/data/catalog';
-import { C, F, R, S } from '@/theme/tokens';
+import { C, F, S } from '@/theme/tokens';
 
 import { ScoreBadge } from './cards';
+import { useImagePrefetch } from './images';
+import { RailSkeleton } from './skeletons';
 import { Cover, Press, Txt } from './ui';
 
 export const POSTER_RATIO = 1.42;
@@ -95,6 +97,7 @@ export function Rail<T>({
   loading,
   error,
   empty,
+  image,
 }: {
   title: string;
   subtitle?: string;
@@ -107,21 +110,18 @@ export function Rail<T>({
   loading?: boolean;
   error?: string;
   empty?: string;
+  /** Poster URL of an item, to prefetch the tiles not rendered yet. */
+  image?: (item: T) => string | undefined;
 }) {
   const step = tileWidth + S.md;
   const render: ListRenderItem<T> = ({ item }) => renderTile(item, tileWidth);
+  // Only the first tiles are rendered (virtualized): the rest of the row downloads ahead.
+  useImagePrefetch(image ? data.map(image) : [], tileWidth);
   return (
     <View style={{ gap: S.md }}>
       <RailHeader title={title} subtitle={subtitle} icon={icon} onMore={data.length ? onMore : undefined} />
       {loading && !data.length ? (
-        <View style={{ flexDirection: 'row', gap: S.md, paddingHorizontal: S.lg, overflow: 'hidden' }}>
-          {[0, 1, 2, 3].map((i) => (
-            <View key={i} style={{ gap: GAP }}>
-              <View style={{ width: tileWidth, height: Math.round(tileWidth * POSTER_RATIO), borderRadius: R.poster, borderCurve: 'continuous', backgroundColor: C.surface }} />
-              <View style={{ width: tileWidth * 0.7, height: 10, borderRadius: 5, backgroundColor: C.surface }} />
-            </View>
-          ))}
-        </View>
+        <RailSkeleton tileWidth={tileWidth} count={4} />
       ) : !data.length ? (
         <Txt v="footnote" style={{ paddingHorizontal: S.lg }} numberOfLines={2}>{error ?? empty ?? 'Rien pour le moment.'}</Txt>
       ) : (

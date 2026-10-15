@@ -1,6 +1,6 @@
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { router } from 'expo-router';
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { ActivityIndicator, Alert, FlatList, ScrollView, StyleSheet, TextInput, View, useWindowDimensions } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -12,13 +12,14 @@ import { palette } from '@/data/anilist';
 import {
   GENRES,
   openMedia,
-  searchMedia,
   type MediaStatus,
   type MediaSummary,
   type SearchParams,
   type SearchSort,
   type SearchType,
 } from '@/data/anilist-api';
+import { useSearchResults } from '@/data/use-anilist';
+import { useImagePrefetch } from '@/components/images';
 import { genreLabel, useT, type Key } from '@/i18n';
 import { useSettings } from '@/settings/settings';
 import { C, F, R, S } from '@/theme/tokens';
@@ -43,40 +44,17 @@ export default function Search() {
 
   const [params, setParams] = useState<SearchParams>(DEFAULTS);
   const [showFilters, setShowFilters] = useState(false);
-  const [results, setResults] = useState<MediaSummary[] | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [failed, setFailed] = useState(false);
-  const [attempt, setAttempt] = useState(0);
   const [opening, setOpening] = useState<number | null>(null);
 
   const update = (patch: Partial<SearchParams>) => setParams((p) => ({ ...p, ...patch }));
   const activeFilters = [params.genre, params.year, params.status].filter(Boolean).length;
 
-  // Live search, debounced (AniList rate-limits), previous request aborted.
-  useEffect(() => {
-    const ctrl = new AbortController();
-    const timer = setTimeout(
-      () => {
-        setLoading(true);
-        setFailed(false);
-        searchMedia(params, ctrl.signal)
-          .then((list) => {
-            setResults(list);
-            setLoading(false);
-          })
-          .catch(() => {
-            if (ctrl.signal.aborted) return;
-            setFailed(true);
-            setLoading(false);
-          });
-      },
-      params.query ? 450 : 150,
-    );
-    return () => {
-      clearTimeout(timer);
-      ctrl.abort();
-    };
-  }, [params, attempt]);
+  // Live search, debounced (AniList rate-limits); results already seen show at once (data/swr.ts).
+  const { results, busy, loading, failed, retry } = useSearchResults(params);
+  const cols = 3;
+  const cardW = Math.floor((width - S.lg * 2 - S.md * (cols - 1)) / cols);
+  // The grid is virtualized: posters further down download ahead of the scroll.
+  useImagePrefetch((results ?? []).map((m) => m.image), cardW);
 
   const open = async (m: MediaSummary) => {
     if (m.unavailable || opening) return;
@@ -90,9 +68,6 @@ export default function Search() {
       setOpening(null);
     }
   };
-
-  const cols = 3;
-  const cardW = Math.floor((width - S.lg * 2 - S.md * (cols - 1)) / cols);
 
   const header = (
     <View style={{ gap: S.md, paddingBottom: S.md }}>
@@ -114,7 +89,7 @@ export default function Search() {
           accessibilityLabel={t('search.title')}
           style={styles.input}
         />
-        {loading && results !== null && <ActivityIndicator size="small" color={C.text2} />}
+        {busy && results !== null && <ActivityIndicator size="small" color={C.text2} />}
       </View>
       </View>
 
@@ -184,7 +159,7 @@ export default function Search() {
         ListHeaderComponent={header}
         ListEmptyComponent={
           failed ? (
-            <ErrorState onRetry={() => setAttempt((n) => n + 1)} />
+            <ErrorState onRetry={retry} />
           ) : loading ? (
             <View style={{ paddingHorizontal: S.lg }}>
               <SkeletonPosters count={9} width={cardW} height={Math.round(cardW * 1.42)} />
