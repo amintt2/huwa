@@ -67,7 +67,7 @@ site (`site/`: `/get` landing page, `/privacy`, `/terms`, `/pack`, `/extensions`
 sources, `.well-known` association files served as JSON, `/addon` and `/install` universal links
 → the extensions page). The exact Coolify settings (Dockerfile build pack, base `/`, Dockerfile
 `/docker/Dockerfile.web`, port 8080, `HUWA_PUBLIC_URL`, `HUWA_TRUST_PROXY=1`, `HUWA_INDEXABLE=1`,
-`HUWA_RELAY=0`, `HUWA_DISCORD_INVITE=https://discord.gg/K9wTTr3T97`, volume `/data`) are at the top of `deploy/coolify/huwa-site.yaml`, which is also
+`HUWA_RELAY=0`, `HUWA_DISCORD_INVITE=https://discord.gg/JSwf34Kw3E`, volume `/data`) are at the top of `deploy/coolify/huwa-site.yaml`, which is also
 a Compose file for the same deployment. `HUWA_RELAY=0` because the standalone `huwa-relay` app
 (`services/blind-peer`, UDP 49738) already relays on that host.
 
@@ -212,7 +212,7 @@ authentication** (Stremio clients send none): every Stremio client shares one qu
 | `HUWA_INSTANCE_NAME` | unset | shown by the web app |
 | `HUWA_OPERATOR_CONTACT` | unset | shown by the web app (abuse / legal contact) |
 | `HUWA_ANILIST_CLIENT_ID` | unset | AniList OAuth client for this domain |
-| `HUWA_DISCORD_INVITE` | unset | community invite (`https://discord.gg/…`) shown by the web app after sign-in and in Réglages; unset or `none` = hidden. The compose file and Coolify templates set the Huwa server, `https://discord.gg/K9wTTr3T97` |
+| `HUWA_DISCORD_INVITE` | unset | community invite (`https://discord.gg/…`) shown by the web app after sign-in and in Réglages; unset or `none` = hidden. The compose file and Coolify templates set the Huwa server, `https://discord.gg/JSwf34Kw3E` |
 | `HUWA_METRICS` | `loopback` | `/metrics`: `loopback`, `1` (public), `0` (off) |
 | `HUWA_WORKER_THREADS` | CPU count | engine threads |
 | `HUWA_LOG` | `info` | log filter (`info,huwa_server=debug`) |
