@@ -168,6 +168,18 @@ async fn stream_file(
 /// `GET /{infoHash}/{file}` for a host server mounting the route under its own path (huwa-server's
 /// `/s/<token>/t/…`, after its own checks): same behaviour as the loopback route.
 pub async fn serve_file(engine: Arc<Engine>, info_hash: &str, file: &str, headers: &HeaderMap) -> Response {
+    serve_file_with(engine, info_hash, file, headers, false).await
+}
+
+/// `serve_file` for a client that reads one torrent with several independent players at once
+/// (the Stremio-compatible routes: a streaming server runs one converter per quality and per
+/// audio track, each at its own viewer's position): another reader's seek never ends this
+/// response (see `TrackedReader::shared`).
+pub async fn serve_file_shared(engine: Arc<Engine>, info_hash: &str, file: &str, headers: &HeaderMap) -> Response {
+    serve_file_with(engine, info_hash, file, headers, true).await
+}
+
+async fn serve_file_with(engine: Arc<Engine>, info_hash: &str, file: &str, headers: &HeaderMap, shared: bool) -> Response {
     let hex = info_hash.to_lowercase();
     let Some(entry) = engine.entry(&hex) else {
         return text(StatusCode::NOT_FOUND, "unknown torrent");
@@ -317,6 +329,9 @@ pub async fn serve_file(engine: Arc<Engine>, info_hash: &str, file: &str, header
     entry.first_byte_sent.store(true, Ordering::Relaxed);
     let guard = StreamGuard { entry: entry.clone(), end };
     let mut tracked = TrackedReader::new(stream.take(to_send), playback, start);
+    if shared {
+        tracked.shared();
+    }
     if narrow || unverified {
         tracked.on_quiet(Box::new(move |r: &mut tokio::io::Take<librqbit::FileStream>| {
             let s = r.get_mut();
