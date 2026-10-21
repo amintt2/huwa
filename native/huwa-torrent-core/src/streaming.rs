@@ -841,6 +841,11 @@ pub struct TrackedReader<R> {
     start: u64,
     waiting: bool,
     id: u64,
+    /// Never ended as stale after another reader's seek (`shared`): several independent players
+    /// read this torrent at once (a Stremio-protocol server: one converter per quality / audio
+    /// track, each viewer at its own position). Ending one of them is not a seek of *that* player:
+    /// ffmpeg takes the early end for the end of the file (audio is padded with silence for good).
+    shared: bool,
     /// Run once, on bytes served after the playback went quiet (`settled_for(QUIET_AFTER_DATA)`):
     /// the server widens a narrowed look-ahead there.
     on_quiet: Option<Box<dyn FnOnce(&mut R) + Send>>,
@@ -857,7 +862,12 @@ impl<R> TrackedReader<R> {
             p.open_responses.fetch_add(1, Ordering::AcqRel);
             id = p.next_reader.fetch_add(1, Ordering::Relaxed);
         }
-        Self { inner, playback, generation, pos: start, start, waiting: false, id, on_quiet: None }
+        Self { inner, playback, generation, pos: start, start, waiting: false, id, shared: false, on_quiet: None }
+    }
+
+    /// See `shared`: this response is never ended because another reader seeked.
+    pub fn shared(&mut self) {
+        self.shared = true;
     }
 
     pub fn on_quiet(&mut self, f: Box<dyn FnOnce(&mut R) + Send>) {
@@ -903,7 +913,7 @@ impl<R: AsyncRead + Unpin> AsyncRead for TrackedReader<R> {
             self.set_waiting(false);
             return Poll::Ready(Err(std::io::Error::new(std::io::ErrorKind::ConnectionAborted, "stream released")));
         }
-        if self.playback.as_ref().is_some_and(|p| p.is_stale(self.generation, self.pos)) {
+        if !self.shared && self.playback.as_ref().is_some_and(|p| p.is_stale(self.generation, self.pos)) {
             // Seeked away: end this body so its `FileStream` (and its 32 MiB queue) goes away now
             // instead of competing with the new position until the player closes the connection.
             debug!(pos = self.pos, "stale response ended after a seek");

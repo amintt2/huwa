@@ -336,7 +336,8 @@ async fn stream(st: Arc<AppState>, hash: String, idx: String, q: Option<String>,
     }
     let guard = s.open_stream(&hex);
     let seg = file.map_or("auto".to_string(), |f| f.to_string());
-    let resp = huwa_torrent_core::server::serve_file(eng.engine.clone(), &hex, &seg, &headers).await;
+    // A Stremio-protocol client reads with several players at once (see `serve_file_shared`).
+    let resp = huwa_torrent_core::server::serve_file_shared(eng.engine.clone(), &hex, &seg, &headers).await;
     Ok(media_headers(engine_api::guarded_body(resp, guard)))
 }
 
