@@ -23,7 +23,7 @@ services:
       # HUWA_INSTANCE_NAME: "Chez moi"
       # HUWA_OPERATOR_CONTACT: "admin@example.org"
       # Huwa community invite shown by the web app ("none" hides it; the binary default is empty).
-      HUWA_DISCORD_INVITE: "https://discord.gg/K9wTTr3T97"
+      HUWA_DISCORD_INVITE: "https://discord.gg/JSwf34Kw3E"
       # HUWA_STREMIO_COMPAT: "1"         # Stremio streaming-server routes (shared anonymous bucket)
       # HUWA_HWACCEL: "vaapi"            # with the devices below (auto probes them)
       # HUWA_TRANSCODES_MAX: "2"

@@ -11,6 +11,7 @@
   <meta property="og:image" content="/altstore/icon.png">
   <link rel="icon" href="/favicon.png" type="image/png">
   <link rel="apple-touch-icon" href="/apple-touch-icon.png">
+  <script src="/inapp-browser.js" defer></script>
   <style>
     :root {
       --bg: #05070D; --surface: #0C111C; --elevated: #141B2B; --border: rgba(120,140,180,.18);
@@ -29,6 +30,9 @@
     .brand { display: flex; align-items: center; gap: 10px; color: var(--text); font-weight: 900; letter-spacing: .04em; text-decoration: none; font-size: 20px; }
     .brand img { width: 32px; height: 32px; }
     .gh { color: var(--text2); text-decoration: none; font-size: 14px; }
+    .links { display: flex; align-items: center; gap: 16px; }
+    .links .discord-link { display: inline-flex; align-items: center; gap: 6px; color: #fff; background: #5865F2; padding: 6px 12px; border-radius: 999px; font-weight: 700; }
+    .links .discord-link svg { width: 16px; height: 16px; }
     .hero { padding: 56px 0 40px; display: grid; gap: 28px; }
     h1 { margin: 0; color: var(--text); font-size: clamp(36px, 7vw, 64px); line-height: 1.02; font-weight: 900; text-transform: uppercase; letter-spacing: -.01em; }
     h1 span { color: var(--accent-text); }
@@ -63,6 +67,21 @@
     .btn-discord { background: #5865F2; color: #fff; }
     .btn-discord:hover { background: #6873f5; }
     .card.match { border-color: rgba(127,176,255,.55); box-shadow: 0 0 0 1px rgba(127,176,255,.25); }
+    .btn-android { background: #3DDC84; color: #05210F; }
+    .btn-android:hover { background: #55e597; }
+    .featured { grid-column: 1 / -1; border-color: rgba(61,220,132,.45); background: linear-gradient(135deg, rgba(61,220,132,.10), var(--surface) 60%); }
+    .featured .tag { color: #3DDC84; }
+    .featured-body { display: flex; flex-wrap: wrap; gap: 20px; align-items: center; justify-content: space-between; }
+    .featured-body > div:first-child { flex: 1 1 320px; display: grid; gap: 14px; }
+    .qr { display: none; background: #fff; padding: 10px; border-radius: 14px; text-align: center; }
+    .qr.on { display: block; }
+    .qr p { margin: 6px 0 0; font-size: 12px; color: #05070D; max-width: 160px; }
+    .perks { display: flex; flex-wrap: wrap; gap: 8px; margin: 0; padding: 0; list-style: none; }
+    .perks li { font-size: 13px; color: var(--text); background: var(--elevated); border: 1px solid var(--border); border-radius: 999px; padding: 4px 12px; }
+    .community { display: flex; flex-wrap: wrap; gap: 20px; align-items: center; justify-content: space-between; background: linear-gradient(135deg, rgba(88,101,242,.28), rgba(88,101,242,.06)); border: 1px solid rgba(88,101,242,.5); border-radius: 20px; padding: 28px; }
+    .community > div { flex: 1 1 320px; display: grid; gap: 12px; }
+    .community h2 { margin: 0; }
+    .community p { margin: 0; }
     .copy { font: inherit; font-size: 13px; color: var(--accent-text); background: none; border: 1px solid rgba(127,176,255,.3); border-radius: 8px; padding: 2px 8px; margin-left: 4px; cursor: pointer; }
     @media (prefers-reduced-motion: reduce) { .btn { transition: none; } }
   </style>
@@ -71,52 +90,51 @@
   <div class="wrap">
     <header>
       <a class="brand" href="/"><img src="/apple-touch-icon.png" alt="" width="32" height="32" style="border-radius:8px">HUWA</a>
-      <a class="gh" href="https://github.com/amintt2/huwa">Code source</a>
+      <nav class="links">
+        <a class="gh" href="https://github.com/amintt2/huwa">Code source</a>
+        <a class="gh discord-link" href="https://discord.gg/JSwf34Kw3E" rel="noopener"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M20.3 4.4A19.6 19.6 0 0 0 15.4 3l-.6 1.3a18.2 18.2 0 0 0-5.6 0L8.6 3a19.5 19.5 0 0 0-4.9 1.5C.6 9.1-.3 13.6.1 18.1a19.8 19.8 0 0 0 6 3l1.3-2a12.8 12.8 0 0 1-2-1l.5-.4a14 14 0 0 0 12.2 0l.5.4c-.6.4-1.3.7-2 1l1.3 2a19.7 19.7 0 0 0 6-3c.5-5.2-.8-9.7-3.6-13.7ZM8 15.4c-1.2 0-2.2-1.1-2.2-2.4S6.8 10.6 8 10.6s2.2 1.1 2.2 2.4-1 2.4-2.2 2.4Zm8 0c-1.2 0-2.2-1.1-2.2-2.4s1-2.4 2.2-2.4 2.2 1.1 2.2 2.4-1 2.4-2.2 2.4Z"/></svg>Discord</a>
+      </nav>
     </header>
 
     <div class="hero">
       <h1>Anime et manhwa,<br><span>enfin reliés.</span></h1>
       <p class="lead">Fini l’anime ? Huwa te dit à quel chapitre reprendre le manhwa, et inversement. Tes sources viennent des addons que tu choisis, ta communauté passe de pair à pair. Pas de compte, pas de pub, pas de serveur central.</p>
       <div class="cta">
-        <a class="btn btn-primary" id="smart-cta" href="#installer">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4v11m0 0-4.5-4.5M12 15l4.5-4.5M5 20h14"/></svg>
-          <span>Installer Huwa</span>
+        <a class="btn btn-android" id="smart-cta" href="https://github.com/amintt2/huwa/releases/latest">
+          <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M17.6 9.48l1.84-3.18a.38.38 0 0 0-.66-.38l-1.86 3.22a11.4 11.4 0 0 0-9.84 0L5.22 5.92a.38.38 0 0 0-.66.38L6.4 9.48A10.8 10.8 0 0 0 1 18h22a10.8 10.8 0 0 0-5.4-8.52ZM7 15.25a1.25 1.25 0 1 1 0-2.5 1.25 1.25 0 0 1 0 2.5Zm10 0a1.25 1.25 0 1 1 0-2.5 1.25 1.25 0 0 1 0 2.5Z"/></svg>
+          <span>Télécharger l’app Android</span>
         </a>
-        <a class="btn btn-soft" id="smart-alt" href="/">Ouvrir Huwa Web</a>
-        <a class="btn btn-discord" href="https://discord.gg/K9wTTr3T97" rel="noopener">
+        <a class="btn btn-discord" href="https://discord.gg/JSwf34Kw3E" rel="noopener">
           <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M20.3 4.4A19.6 19.6 0 0 0 15.4 3l-.6 1.3a18.2 18.2 0 0 0-5.6 0L8.6 3a19.5 19.5 0 0 0-4.9 1.5C.6 9.1-.3 13.6.1 18.1a19.8 19.8 0 0 0 6 3l1.3-2a12.8 12.8 0 0 1-2-1l.5-.4a14 14 0 0 0 12.2 0l.5.4c-.6.4-1.3.7-2 1l1.3 2a19.7 19.7 0 0 0 6-3c.5-5.2-.8-9.7-3.6-13.7ZM8 15.4c-1.2 0-2.2-1.1-2.2-2.4S6.8 10.6 8 10.6s2.2 1.1 2.2 2.4-1 2.4-2.2 2.4Zm8 0c-1.2 0-2.2-1.1-2.2-2.4s1-2.4 2.2-2.4 2.2 1.1 2.2 2.4-1 2.4-2.2 2.4Z"/></svg>
           Rejoindre le Discord
         </a>
+        <a class="btn btn-soft" id="smart-alt" href="/">Ouvrir Huwa Web</a>
       </div>
       <p class="cta-note" id="smart-note"></p>
     </div>
 
-    <section>
-      <h2>Ce que fait Huwa</h2>
-      <div class="grid">
-        <div class="card"><h3>Le pont épisode ↔ chapitre</h3><p>Chaque épisode sait quels chapitres il adapte. Reprends l’histoire dans l’autre format sans chercher.</p></div>
-        <div class="card"><h3>Addons de flux</h3><p>Compatible avec les addons au format Stremio : tu ajoutes l’URL, Huwa lance la meilleure source et passe à une meilleure qualité dès qu’elle arrive.</p></div>
-        <div class="card"><h3>Lecteur complet</h3><p>Paysage plein écran, passer l’intro et le générique, épisode suivant préchargé, sous-titres, gestes volume et luminosité.</p></div>
-        <div class="card"><h3>Communauté pair à pair</h3><p>Commentaires, messages privés et profil signés par ta clé. Ils passent directement entre fans ; un relais désactivable en garde une copie (messages chiffrés) pour que ton compte reste récupérable.</p></div>
-        <div class="card"><h3>Rang vérifiable</h3><p>Ce que tu regardes et lis te fait progresser. Chacun peut recalculer ton rang depuis ton journal signé.</p></div>
-        <div class="card"><h3>Catalogue et calendrier</h3><p>Tendances, recherche et sorties de la semaine depuis AniList, avec rappel pour les nouveaux épisodes.</p></div>
-      </div>
-    </section>
-
     <section id="installer">
       <h2>Installer</h2>
       <div class="install">
-        <div class="card" data-os="android">
-          <span class="tag">Android</span>
-          <h3>APK direct ou Obtainium</h3>
-          <ol>
-            <li>Télécharge le fichier <code>.apk</code> de la dernière version.</li>
-            <li>Autorise l’installation depuis ton navigateur si Android le demande.</li>
-            <li>Avec Obtainium, les mises à jour arrivent toutes seules.</li>
-          </ol>
-          <div class="cta">
-            <a class="btn btn-primary" href="https://github.com/amintt2/huwa/releases/latest">Télécharger l’APK</a>
-            <a class="btn btn-soft" href="obtainium://add/https://github.com/amintt2/huwa">Ajouter à Obtainium</a>
+        <div class="card featured" id="android" data-os="android">
+          <div class="featured-body">
+            <div>
+              <span class="tag">Android · recommandé</span>
+              <h3>L’app complète, gratuite et open source</h3>
+              <ul class="perks">
+                <li>Lecteur natif</li><li>Téléchargements hors ligne</li><li>Notifications de sorties</li><li>Mises à jour intégrées</li>
+              </ul>
+              <ol>
+                <li>Télécharge le fichier <code>.apk</code> de la dernière version.</li>
+                <li>Autorise l’installation depuis ton navigateur si Android le demande.</li>
+                <li>Avec Obtainium, les mises à jour arrivent toutes seules.</li>
+              </ol>
+              <div class="cta">
+                <a class="btn btn-android" id="apk-link" href="https://github.com/amintt2/huwa/releases/latest"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M17.6 9.48l1.84-3.18a.38.38 0 0 0-.66-.38l-1.86 3.22a11.4 11.4 0 0 0-9.84 0L5.22 5.92a.38.38 0 0 0-.66.38L6.4 9.48A10.8 10.8 0 0 0 1 18h22a10.8 10.8 0 0 0-5.4-8.52ZM7 15.25a1.25 1.25 0 1 1 0-2.5 1.25 1.25 0 0 1 0 2.5Zm10 0a1.25 1.25 0 1 1 0-2.5 1.25 1.25 0 0 1 0 2.5Z"/></svg><span>Télécharger l’APK</span></a>
+                <a class="btn btn-soft" href="obtainium://add/https://github.com/amintt2/huwa">Ajouter à Obtainium</a>
+              </div>
+            </div>
+            <div class="qr" id="apk-qr" aria-hidden="true"><div id="apk-qr-code"></div><p>Scanne avec ton téléphone Android</p></div>
           </div>
         </div>
 
@@ -154,6 +172,29 @@
       <p class="note">La version AltStore PAL arrive après la notarisation d’Apple ; en attendant, le sideload fonctionne partout, UE comprise.</p>
     </section>
 
+    <section id="discord">
+      <div class="community">
+        <div>
+          <span class="tag" style="color:#C9CEFF">Communauté</span>
+          <h2>Rejoins le Discord Huwa</h2>
+          <p>De l’aide pour installer l’app ou une extension, les nouveautés en avant-première, tes suggestions et un coin pour partager tes packs.</p>
+        </div>
+        <a class="btn btn-discord" href="https://discord.gg/JSwf34Kw3E" rel="noopener"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M20.3 4.4A19.6 19.6 0 0 0 15.4 3l-.6 1.3a18.2 18.2 0 0 0-5.6 0L8.6 3a19.5 19.5 0 0 0-4.9 1.5C.6 9.1-.3 13.6.1 18.1a19.8 19.8 0 0 0 6 3l1.3-2a12.8 12.8 0 0 1-2-1l.5-.4a14 14 0 0 0 12.2 0l.5.4c-.6.4-1.3.7-2 1l1.3 2a19.7 19.7 0 0 0 6-3c.5-5.2-.8-9.7-3.6-13.7ZM8 15.4c-1.2 0-2.2-1.1-2.2-2.4S6.8 10.6 8 10.6s2.2 1.1 2.2 2.4-1 2.4-2.2 2.4Zm8 0c-1.2 0-2.2-1.1-2.2-2.4s1-2.4 2.2-2.4 2.2 1.1 2.2 2.4-1 2.4-2.2 2.4Z"/></svg>Rejoindre le Discord</a>
+      </div>
+    </section>
+
+    <section>
+      <h2>Ce que fait Huwa</h2>
+      <div class="grid">
+        <div class="card"><h3>Le pont épisode ↔ chapitre</h3><p>Chaque épisode sait quels chapitres il adapte. Reprends l’histoire dans l’autre format sans chercher.</p></div>
+        <div class="card"><h3>Addons de flux</h3><p>Compatible avec les addons au format Stremio : tu ajoutes l’URL, Huwa lance la meilleure source et passe à une meilleure qualité dès qu’elle arrive.</p></div>
+        <div class="card"><h3>Lecteur complet</h3><p>Paysage plein écran, passer l’intro et le générique, épisode suivant préchargé, sous-titres, gestes volume et luminosité.</p></div>
+        <div class="card"><h3>Communauté pair à pair</h3><p>Commentaires, messages privés et profil signés par ta clé. Ils passent directement entre fans ; un relais désactivable en garde une copie (messages chiffrés) pour que ton compte reste récupérable.</p></div>
+        <div class="card"><h3>Rang vérifiable</h3><p>Ce que tu regardes et lis te fait progresser. Chacun peut recalculer ton rang depuis ton journal signé.</p></div>
+        <div class="card"><h3>Catalogue et calendrier</h3><p>Tendances, recherche et sorties de la semaine depuis AniList, avec rappel pour les nouveaux épisodes.</p></div>
+      </div>
+    </section>
+
     <section>
       <h2>Ce que Huwa ne fait pas</h2>
       <div class="card">
@@ -162,13 +203,14 @@
     </section>
 
     <footer>
-      Huwa · open source · <a href="https://discord.gg/K9wTTr3T97" rel="noopener">Discord</a> · <a href="/extensions">Ajouter une extension</a> · <a href="/privacy.html">Confidentialité</a> · <a href="/terms.html">Conditions d’utilisation</a> · <a href="https://github.com/amintt2/huwa/blob/huwa-v1/distribution/LEGAL.md">Cadre juridique et notifications (DMCA)</a>
+      Huwa · open source · <a href="https://discord.gg/JSwf34Kw3E" rel="noopener">Discord</a> · <a href="/extensions">Ajouter une extension</a> · <a href="/privacy.html">Confidentialité</a> · <a href="/terms.html">Conditions d’utilisation</a> · <a href="https://github.com/amintt2/huwa/blob/huwa-v1/distribution/LEGAL.md">Cadre juridique et notifications (DMCA)</a>
     </footer>
   </div>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js" integrity="sha512-CNgIRecGo7nphbeZ04Sc13ka07paqdeTu0WR1IM4kNcpmBAUSHSQX0FslNhTDadL4O5SAGapGt4FodqL8My0mA==" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
   <script>
     // Smart primary button: same rules as the web app (src/web/install-suggest.ts). Android → the
     // APK of the latest release (arm64 build when published), iPhone / iPad → Huwa Web on the home
-    // screen, desktop → Huwa Web (installable from the browser).
+    // screen, desktop → the Android card with a QR code for the phone (Huwa Web second).
     (function () {
       var ua = navigator.userAgent || '';
       var hints = navigator.userAgentData || null;
@@ -180,6 +222,7 @@
       var alt = document.getElementById('smart-alt');
       var note = document.getElementById('smart-note');
       var label = cta.querySelector('span');
+      var apkLink = document.getElementById('apk-link');
       var RELEASES = 'https://github.com/amintt2/huwa/releases/latest';
       var os = android ? 'android' : ios ? 'ios' : '';
       if (os) {
@@ -203,21 +246,32 @@
             if (a && /^https:\/\/github\.com\/amintt2\/huwa\//.test(a.browser_download_url)) {
               cta.href = a.browser_download_url;
               label.textContent = 'Installer l’app Android (' + v + ')';
+              apkLink.href = a.browser_download_url;
+              apkLink.querySelector('span').textContent = 'Télécharger l’APK (' + v + ')';
             }
           })
           .catch(function () {});
       } else if (ios) {
+        // No Android app to push on an iPhone: Huwa Web on the home screen first.
+        cta.className = 'btn btn-primary';
+        cta.querySelector('svg').outerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 4v11m0 0-4.5-4.5M12 15l4.5-4.5M5 20h14"/></svg>';
         label.textContent = 'Ajouter à l’écran d’accueil';
         cta.href = '/';
         alt.textContent = 'App native (AltStore)';
         alt.href = '#installer';
         note.textContent = 'Ouvre Huwa Web, puis Partager → Sur l’écran d’accueil. L’app native arrive sur AltStore PAL (UE).';
       } else {
-        label.textContent = 'Ouvrir Huwa Web';
-        cta.href = '/';
-        alt.textContent = 'Apps mobiles';
-        alt.href = '#installer';
-        note.textContent = 'Installe-la ensuite depuis ton navigateur (Chrome, Edge : icône d’installation dans la barre d’adresse).';
+        label.textContent = 'Télécharger l’app Android';
+        cta.href = '#android';
+        note.textContent = 'Scanne le code de la section Android avec ton téléphone. Sur ordinateur, Huwa Web s’installe depuis Chrome ou Edge.';
+        var qr = document.getElementById('apk-qr');
+        var draw = function () {
+          if (!window.QRCode) return;
+          new QRCode(document.getElementById('apk-qr-code'), { text: location.origin + '/get', width: 140, height: 140, correctLevel: QRCode.CorrectLevel.M });
+          qr.classList.add('on');
+        };
+        if (window.QRCode) draw();
+        else window.addEventListener('load', draw);
       }
     })();
 

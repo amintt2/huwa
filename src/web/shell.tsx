@@ -8,6 +8,8 @@ import { router, useGlobalSearchParams, usePathname } from 'expo-router';
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 
+import { useDiscordInvite } from '@/community/invite';
+import { openDiscord } from '@/components/discord-invite';
 import { Avatar } from '@/components/social';
 import { Txt } from '@/components/ui';
 import { useMe } from '@/p2p/hooks';
@@ -160,6 +162,25 @@ function AccountButton() {
   );
 }
 
+/** Top bar shortcut to the community (only when the instance has an invite). */
+function DiscordButton() {
+  const invite = useDiscordInvite();
+  if (!invite) return null;
+  return (
+    <Pressable
+      onPress={() => void openDiscord(invite)}
+      accessibilityRole="link"
+      accessibilityLabel="Rejoindre le Discord Huwa"
+      style={(s) => {
+        const st = s as WebState;
+        return [styles.discord, st.hovered && styles.discordHover, st.focused && styles.focusRing];
+      }}>
+      <Ionicons name="logo-discord" size={18} color="#FFFFFF" />
+      <Txt v="label" color="#FFFFFF">Discord</Txt>
+    </Pressable>
+  );
+}
+
 function TopBar({ right }: { right?: ReactNode }) {
   return (
     <View style={styles.top} role="banner">
@@ -170,6 +191,7 @@ function TopBar({ right }: { right?: ReactNode }) {
       </View>
       <View style={styles.topRight}>
         {right}
+        <DiscordButton />
         <AccountButton />
       </View>
     </View>
@@ -234,4 +256,9 @@ const styles = StyleSheet.create({
   },
   signIn: { paddingLeft: 12, backgroundColor: C.elevated, borderColor: C.border, boxShadow: SHADOW.inset },
   accountHover: { backgroundColor: 'rgba(255,255,255,0.06)' },
+  discord: {
+    flexDirection: 'row', alignItems: 'center', gap: S.sm, height: 40, paddingHorizontal: 14,
+    borderRadius: R.pill, backgroundColor: '#5865F2', boxShadow: SHADOW.insetStrong, ...transition,
+  },
+  discordHover: { backgroundColor: '#6873F5' },
 });

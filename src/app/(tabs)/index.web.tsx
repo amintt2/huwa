@@ -20,6 +20,7 @@ import { animeReleases, manhwaReleases, weeklyTop } from '@/data/releases';
 import { useContinueItems } from '@/store/derived';
 import { useStore } from '@/store/store';
 import { C, R, S, SHADOW } from '@/theme/tokens';
+import { HomePromo } from '@/web/home-promo';
 import { InstallBanner } from '@/web/install';
 import { ScrollRow } from '@/web/scroll-row';
 import { WIDE } from '@/web/viewport';
@@ -46,6 +47,9 @@ export default function Home() {
         {loading ? <HeroSkeleton /> : <HeroCarousel key={featured.map((s) => s.id).join()} items={featured} />}
 
         <View style={wide ? styles.wideBody : undefined}>
+          {/* L'app Android and the Discord, pushed first (src/web/home-promo.tsx). */}
+          <HomePromo pad={pad} />
+
           {continueItems.length > 0 && (
             <Section title="Reprendre" action="Historique" onAction={() => router.navigate('/library')} pad={pad}>
               <ScrollRow label="Reprendre" padding={pad}>

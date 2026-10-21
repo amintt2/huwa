@@ -2,7 +2,7 @@
 // created, restored or linked), and a permanent row in Réglages. Native app and web.
 //
 // The invite link is configuration, never hard-coded:
-//   · native: app.json `expo.extra.discordInvite` (https://discord.gg/K9wTTr3T97; or
+//   · native: app.json `expo.extra.discordInvite` (https://discord.gg/JSwf34Kw3E; or
 //     HUWA_DISCORD_INVITE at build time, see app.config.js), read by ./invite.ts;
 //   · web: `/huwa-config.json` → `community.discord` (huwa-server: HUWA_DISCORD_INVITE), read by
 //     ./invite.web.ts.

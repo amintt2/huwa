@@ -19,7 +19,7 @@
 #     HUWA_TRUST_PROXY=1               Traefik terminates TLS and sets X-Forwarded-For
 #     HUWA_INDEXABLE=1                 public site: no X-Robots-Tag noindex, robots.txt allows
 #     HUWA_RELAY=0                     the standalone `huwa-relay` app already relays (UDP 49738)
-#     HUWA_DISCORD_INVITE=https://discord.gg/K9wTTr3T97   "Rejoins la communauté" (none = hidden)
+#     HUWA_DISCORD_INVITE=https://discord.gg/JSwf34Kw3E   "Rejoins la communauté" (none = hidden)
 #     HUWA_INSTANCE_NAME=Huwa          optional
 #     HUWA_OPERATOR_CONTACT=           optional, mailto:… or https://…
 #   Persistent Storage
@@ -65,7 +65,7 @@ services:
       # huwa-relay (services/blind-peer, UDP 49738) is the relay of this host: no second one.
       - HUWA_RELAY=${HUWA_RELAY:-0}
       - HUWA_RELAY_MAX_STORAGE_MB=${HUWA_RELAY_MAX_STORAGE_MB:-2048}
-      - HUWA_DISCORD_INVITE=${HUWA_DISCORD_INVITE:-https://discord.gg/K9wTTr3T97}
+      - HUWA_DISCORD_INVITE=${HUWA_DISCORD_INVITE:-https://discord.gg/JSwf34Kw3E}
       - HUWA_INSTANCE_NAME=${HUWA_INSTANCE_NAME:-Huwa}
       - HUWA_OPERATOR_CONTACT=${HUWA_OPERATOR_CONTACT:-}
       - HUWA_LOG=${HUWA_LOG:-info}
