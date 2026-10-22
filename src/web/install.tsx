@@ -2,7 +2,9 @@
 // · `InstallBanner`: discreet card on the home page, after a few seconds on a first visit, at once
 //   on the next ones; "Plus tard" hides it for 30 days; never once installed.
 // · `InstallRow`: the permanent entry in Réglages → Application.
-// · `InstallDialog`: the per-platform guide both open (APK how-to, illustrated iOS steps, PWA).
+// · `InstallDialog`: the per-platform guide both open (APK how-to, illustrated iOS steps, PWA);
+//   `android` forces the APK guide (home "L'app Android" card), with a QR code off Android.
+// No banner inside the built-in browser of X, Instagram…: ./in-app-prompt.tsx asks to leave it.
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { ScrollView, StyleSheet, View } from 'react-native';
@@ -17,6 +19,7 @@ import type { LatestRelease } from '@/updates/release';
 
 import { useWebConfig } from './config';
 import { WebDialog } from './dialog';
+import { detectInAppBrowser } from './in-app-browser';
 import {
   androidAbis,
   apkDownload,
@@ -63,7 +66,7 @@ export function useInstallSuggestion(): InstallSuggestion {
 
 // ---------- Android APK link (GitHub "latest release", cached for this tab) ----------
 
-type Apk = { url: string; version?: string; direct: boolean };
+export type Apk = { url: string; version?: string; direct: boolean };
 const APK_CACHE = 'huwa/install/apk/v1';
 let apkPromise: Promise<Apk> | null = null;
 
@@ -95,7 +98,7 @@ function fetchApk(): Promise<Apk> {
   return apkPromise;
 }
 
-function useApk(enabled: boolean): Apk {
+export function useApk(enabled: boolean): Apk {
   const [apk, setApk] = useState<Apk>({ url: RELEASES_URL, direct: false });
   useEffect(() => {
     if (!enabled) return;
@@ -112,7 +115,7 @@ const open = (url: string) => {
   if (typeof window !== 'undefined') window.open(url, '_blank', 'noopener');
 };
 /** A direct APK link downloads in place (no stray tab); the release page opens in a new tab. */
-const download = (apk: Apk) => {
+export const download = (apk: Apk) => {
   if (typeof window === 'undefined') return;
   if (apk.direct) window.location.assign(apk.url);
   else open(apk.url);
@@ -137,8 +140,9 @@ function bannerCopy(s: InstallSuggestion): { icon: IconName; title: string; body
 
 // ---------- guide dialog ----------
 
-export function InstallDialog({ visible, onClose }: { visible: boolean; onClose: () => void }) {
-  const s = useInstallSuggestion();
+export function InstallDialog({ visible, onClose, android = false }: { visible: boolean; onClose: () => void; android?: boolean }) {
+  const detected = useInstallSuggestion();
+  const s: InstallSuggestion = android ? { kind: 'android-apk' } : detected;
   const { height } = useWindowSize();
   const label = s.kind === 'android-apk' ? 'Installer l’app Android' : s.kind === 'ios-home-screen' ? 'Ajouter à l’écran d’accueil' : 'Installer Huwa';
   return (
@@ -146,7 +150,7 @@ export function InstallDialog({ visible, onClose }: { visible: boolean; onClose:
       {/* Taller than a phone screen: the guide scrolls, "Fermer" stays. */}
       <ScrollView style={{ maxHeight: Math.max(280, height * 0.78 - 90) }} contentContainerStyle={{ gap: S.lg }} showsVerticalScrollIndicator={false}>
       {s.kind === 'android-apk' ? (
-        <AndroidGuide />
+        <AndroidGuide onAndroid={detected.kind === 'android-apk'} />
       ) : s.kind === 'ios-home-screen' ? (
         <IOSGuide browser={s.browser} />
       ) : s.kind === 'desktop-pwa' ? (
@@ -185,12 +189,25 @@ function Step({ n, children }: { n: number; children: ReactNode }) {
   );
 }
 
-function AndroidGuide() {
+/** `onAndroid` false: opened from a computer (or a PWA), the QR code brings the phone here. */
+function AndroidGuide({ onAndroid = true }: { onAndroid?: boolean }) {
   const apk = useApk(true);
   const canPrompt = useCanInstall();
+  const url = typeof location === 'undefined' ? 'https://huwa.mciut.fr/get' : `${location.origin}${LANDING_PATH}`;
   return (
     <>
       <Head icon="logo-android" title="Installer l’app Android" body="L’app complète, gratuite et open source, depuis la dernière version publiée sur GitHub." />
+      {!onAndroid && (
+        <View style={[styles.aside, styles.phone]}>
+          <View style={styles.qr}>
+            <QRCode value={url} size={104} color="#05070D" backgroundColor="#FFFFFF" ecl="M" quietZone={6} />
+          </View>
+          <View style={{ flex: 1, gap: S.xs }}>
+            <Txt v="label">Sur ton téléphone Android</Txt>
+            <Txt v="small" color={C.text2}>Scanne ce code avec l’appareil photo : la page propose l’APK en un geste.</Txt>
+          </View>
+        </View>
+      )}
       <Button large icon="download-outline" label={apk.direct ? `Télécharger l’APK${apk.version ? ` (${apk.version})` : ''}` : 'Ouvrir la page de téléchargement'} onPress={() => download(apk)} />
       <View style={{ gap: S.md }}>
         <Step n={1}><Txt v="body" color={C.body}>Télécharge le fichier <Txt v="label">.apk</Txt>, puis ouvre-le depuis la notification de téléchargement.</Txt></Step>
@@ -202,7 +219,7 @@ function AndroidGuide() {
         <Txt v="small" color={C.text2}>Avec Obtainium, chaque nouvelle version s’installe sans repasser par ici.</Txt>
         <Button small variant="soft" label="Ajouter à Obtainium" onPress={() => window.location.assign(OBTAINIUM_URL)} style={{ alignSelf: 'flex-start' }} />
       </View>
-      {canPrompt && (
+      {canPrompt && onAndroid && (
         <Button small variant="plain" label="Ou installer la version web, plus légère" onPress={() => void promptInstall()} />
       )}
     </>
@@ -327,7 +344,8 @@ export function InstallBanner() {
   const [visible, setVisible] = useState(false);
   const [guide, setGuide] = useState(false);
   const apk = useApk(suggestion.kind === 'android-apk');
-  const enabled = config.features.install;
+  const inApp = useMemo(() => typeof navigator !== 'undefined' && !!detectInAppBrowser(navigator.userAgent), []);
+  const enabled = config.features.install && !inApp;
 
   useEffect(() => {
     if (!enabled) return;

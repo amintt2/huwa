@@ -10,6 +10,8 @@
 //   - the rest of the account screens stay behind Stack.Protected.
 // · Runtime config (/huwa-config.json), `?streamingServer=` confirmation, service-worker update
 //   prompt, persistent storage request.
+// · Inside the built-in browser of X, Instagram, TikTok…: "Ouvre Huwa dans ton navigateur"
+//   (src/web/in-app-prompt.tsx).
 import { DarkTheme, Stack, ThemeProvider } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
 import { StatusBar } from 'expo-status-bar';
@@ -32,6 +34,7 @@ import { useListsHydrated } from '@/store/lists';
 import { useHydrated } from '@/store/store';
 import { C } from '@/theme/tokens';
 import { loadWebConfig, useWebConfig } from '@/web/config';
+import { InAppBrowserPrompt } from '@/web/in-app-prompt';
 import { ServerParamPrompt, UpdatePrompt } from '@/web/prompts';
 import { isStandalone, requestPersistence } from '@/web/pwa';
 import { WebShell } from '@/web/shell';
@@ -179,6 +182,7 @@ export default function RootLayout() {
       <ToastHost />
       <ServerParamPrompt />
       <UpdatePrompt />
+      <InAppBrowserPrompt />
       {/* Once, right after signing in for the first time (after the phrase backup). */}
       {me ? <DiscordInviteCard blocked={backupPending} /> : null}
     </ThemeProvider>
