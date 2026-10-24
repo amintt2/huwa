@@ -1,5 +1,5 @@
 # Release Android : APK signé construit dans Actions (expo prebuild + Gradle, sans serveur EAS),
-# attaché à la GitHub Release du tag `v*`.
+# attaché à la GitHub Release du tag `v*`, et AAB pour Google Play (job `play`, artefact seulement).
 #
 # Secrets du dépôt (posés par scripts/android-keystore.sh) :
 #   HUWA_KEYSTORE_B64        keystore de release (PKCS12) encodé en base64
@@ -278,6 +278,102 @@ jobs:
             APK signé pour installation directe (Obtainium : `obtainium://add/https://github.com/${{ github.repository }}`).
             `Huwa-<version>.apk` fonctionne partout ; `-arm64-v8a` est plus léger pour les téléphones récents.
             Vérifiez le SHA-256 fourni. Huwa ne contient et ne fournit aucun contenu.
+
+  # Google Play : AAB de la version complète (HUWA_PLAY=1 : pas de proposition d'APK GitHub, Play
+  # seul met l'app à jour). Signé avec la même clé, qui sert de clé d'importation : Google signe
+  # l'app avec sa propre clé (Play App Signing). Artefact du workflow seulement, jamais attaché à
+  # la Release : il s'envoie dans la Play Console.
+  play:
+    name: AAB Google Play
+    needs: torrent
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+    env:
+      HUWA_LITE: "0"
+      HUWA_TORRENT: "1"
+      HUWA_PLAY: "1"
+    steps:
+      - name: Libérer de la place disque
+        run: |
+          sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/.ghcup /usr/local/share/boost /opt/hostedtoolcache/CodeQL || true
+          df -h /
+
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - uses: android-actions/setup-android@v3
+        with:
+          packages: "platform-tools ndk;${{ env.NDK_VERSION }}"
+          log-accepted-android-sdk-licenses: false
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: jnilibs-*
+          merge-multiple: true
+          path: native/huwa-torrent-core/dist/jniLibs
+
+      - run: npm ci
+
+      - name: Version
+        id: ver
+        run: |
+          V="$(node -p "require('./app.json').expo.version")"
+          if [ "$GITHUB_REF_TYPE" = "tag" ]; then
+            V="${GITHUB_REF_NAME#v}"
+          fi
+          echo "version=$V" >> "$GITHUB_OUTPUT"
+
+      # Pas de clé jetable ici : un AAB signé avec une autre clé serait refusé par la Play Console.
+      - name: Clé d'importation
+        env:
+          KS_B64: ${{ secrets.HUWA_KEYSTORE_B64 }}
+        run: |
+          [ -n "$KS_B64" ] || { echo "::error::Secrets HUWA_KEYSTORE_* manquants (bash scripts/android-keystore.sh)."; exit 1; }
+          printf '%s' "$KS_B64" | base64 -d > "$RUNNER_TEMP/huwa-release.keystore"
+          test -s "$RUNNER_TEMP/huwa-release.keystore"
+
+      - name: Prebuild Android (CNG)
+        run: npx expo prebuild --platform android --clean --no-install
+
+      - name: Gradle bundleRelease
+        working-directory: android
+        env:
+          HUWA_KEYSTORE_PASSWORD: ${{ secrets.HUWA_KEYSTORE_PASSWORD }}
+          HUWA_KEY_ALIAS: ${{ secrets.HUWA_KEY_ALIAS }}
+          HUWA_KEY_PASSWORD: ${{ secrets.HUWA_KEY_PASSWORD }}
+        run: |
+          export HUWA_KEYSTORE_FILE="$RUNNER_TEMP/huwa-release.keystore"
+          ./gradlew :app:bundleRelease --no-daemon \
+            -Dorg.gradle.jvmargs="-Xmx6g -XX:MaxMetaspaceSize=1g -Dfile.encoding=UTF-8"
+
+      - name: Renommer, hacher, vérifier
+        env:
+          V: ${{ steps.ver.outputs.version }}
+        run: |
+          mkdir -p dist-aab
+          cp android/app/build/outputs/bundle/release/app-release.aab "dist-aab/Huwa-$V-play.aab"
+          cd dist-aab
+          sha256sum "Huwa-$V-play.aab" > "Huwa-$V-play.aab.sha256"
+          jarsigner -verify "Huwa-$V-play.aab" | tail -1
+          echo "--- moteur torrent : $(unzip -l "Huwa-$V-play.aab" | grep -c 'libhuwa_torrent_core.so') ABI"
+          ls -la
+          echo "### AAB Google Play $V : $(du -h "Huwa-$V-play.aab" | cut -f1)" >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: huwa-aab-${{ steps.ver.outputs.version }}
+          path: dist-aab/*
 
   # Test de fumée : l'APK x86_64 s'installe et démarre sans crash dans un émulateur, et le moteur
   # torrent fait un GET HTTPS (certificat valide accepté, expiré refusé), voir scripts/android-smoke.sh.

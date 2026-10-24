@@ -21,6 +21,9 @@ module.exports = ({ config }) => {
   }
   // Build flavor read by src/config/channel.ts.
   const channel = process.env.HUWA_LITE === '1' ? 'store' : 'full';
+  // Where the binary is distributed, read by src/config/channel.ts: 'play' (HUWA_PLAY=1, Google
+  // Play AAB: Play alone updates the app) or 'direct' (APK, AltStore, App Store, dev).
+  const distribution = process.env.HUWA_PLAY === '1' ? 'play' : 'direct';
   // Optional GIPHY API key for the comment GIF search (never committed: set HUWA_GIF_API_KEY at build
   // time). Without it, the picker only takes pasted GIPHY / Tenor links.
   const gifApiKey = process.env.HUWA_GIF_API_KEY || undefined;
@@ -34,5 +37,5 @@ module.exports = ({ config }) => {
   // Discord invite shown after onboarding and in Réglages (src/community/discord.ts): app.json
   // `extra.discordInvite`, or HUWA_DISCORD_INVITE at build time. Empty = hidden.
   const discordInvite = String(process.env.HUWA_DISCORD_INVITE ?? config.extra?.discordInvite ?? '').trim();
-  return { ...config, updates, extra: { ...config.extra, channel, gifApiKey, relayKeys, discordInvite } };
+  return { ...config, updates, extra: { ...config.extra, channel, distribution, gifApiKey, relayKeys, discordInvite } };
 };

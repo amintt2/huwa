@@ -7,7 +7,7 @@ import * as Device from 'expo-device';
 import { useEffect } from 'react';
 import { Alert, Linking, Platform } from 'react-native';
 
-import { isStoreBuild } from '@/config/channel';
+import { isPlayBuild, isStoreBuild } from '@/config/channel';
 
 import { apkUpdate, type LatestRelease } from './release';
 
@@ -46,10 +46,11 @@ async function check() {
   );
 }
 
-/** Root layout: looks for a newer APK once the app has settled (Android sideload builds only). */
+/** Root layout: looks for a newer APK once the app has settled (Android sideload builds only, not Play). */
 export function useApkUpdateCheck(enabled: boolean) {
   useEffect(() => {
-    if (!enabled || Platform.OS !== 'android' || isStoreBuild || __DEV__) return;
+    // Google Play forbids an app updating itself outside Play (Device and Network Abuse policy).
+    if (!enabled || Platform.OS !== 'android' || isStoreBuild || isPlayBuild || __DEV__) return;
     const t = setTimeout(() => {
       check().catch(() => {});
     }, DELAY_MS);
