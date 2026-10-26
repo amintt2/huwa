@@ -15,8 +15,11 @@ export async function bundleRuntime() {
     platform: 'browser',
     // WKWebView on iOS 15.1+ (Expo 57 minimum).
     target: 'safari15',
-    minify: true,
-    legalComments: 'none',
+    // Readable on purpose: App Review flags minified code shipped as a string and run in a WebView
+    // as obfuscation (guideline 2.5.19). The size cost (~2x) does not matter for a local bundle.
+    minify: false,
+    keepNames: true,
+    legalComments: 'inline',
     write: false,
   });
   return result.outputFiles[0].text;
