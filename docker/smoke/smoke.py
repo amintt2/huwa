@@ -14,7 +14,7 @@
     sessions per IP (429);
   - with --compat: Stremio routes (settings, create with guessedFileIdx, stream 206, stats,
     /hlsv2/probe and master).
-`web` (the `huwa:<v>-web` image): no engine (404), web app and config served.
+`web` (the `huwa:<v>-web` image): no engine (404), install site (no web app) and config served.
 """
 
 import argparse
@@ -293,12 +293,14 @@ def web(args):
     check(st == 201, "session")
     st, _, _ = req("POST", "/api/v1/engine/list", {}, {"authorization": f"Bearer {s['token']}"})
     check(st == 404, "/api/v1/engine is a 404 in the -web image")
-    st, _, b = req("GET", "/")
-    check(st == 200 and b"<html" in b.lower(), "web app at /")
-    st, _, b = req("GET", "/some/spa/route")
-    check(st == 200 and b"<html" in b.lower(), "SPA fallback")
+    # The site only asks to install the app: no web app (no Expo root), on / and on old app routes.
+    for p in ["/", "/get", "/anime/21"]:
+        st, _, b = req("GET", p)
+        check(st == 200 and b'id="apk-link"' in b and b'id="root"' not in b, f"{p} is the install page")
+    st, _, b = req("GET", "/sw.js")
+    check(st == 200 and b"unregister()" in b, "/sw.js retires the web app's service worker")
     check(j(req("GET", "/huwa-config.json")[2])["features"]["torrent"] is False, "/huwa-config.json")
-    # Legacy site of huwa.mciut.fr (site/ copied under the app, rules of site/nginx.conf).
+    # Site of huwa.mciut.fr (site/, rules of site/nginx.conf).
     for p in ["/.well-known/apple-app-site-association", "/.well-known/assetlinks.json", "/altstore-source.json", "/sideload-source.json"]:
         st, h, b = req("GET", p)
         check(st == 200 and h.get("content-type", "").startswith("application/json") and j(b) is not None, f"{p} is JSON")
@@ -306,8 +308,8 @@ def web(args):
     check(b"/addon*" in b and b"/pack*" in b, "AASA lists the universal-link paths")
     st, h, _ = req("GET", "/altstore/icon.png")
     check(st == 200 and h.get("content-type") == "image/png", "/altstore/icon.png")
-    check(req("GET", "/altstore/nope")[0] == 404, "/altstore/* never falls back to the app")
-    for p, marker in [("/get", b"altstore-source.json"), ("/privacy", b"<html"), ("/privacy.html", b"<html"), ("/terms.html", b"<html"),
+    check(req("GET", "/altstore/nope")[0] == 404, "/altstore/* never falls back to the install page")
+    for p, marker in [("/privacy", b"<html"), ("/privacy.html", b"<html"), ("/terms.html", b"<html"),
                       ("/pack", b"<html"), ("/extensions", b"<html"), ("/addon?url=https%3A%2F%2Fa.example%2Fmanifest.json", b"<html"),
                       ("/install?url=x", b"<html")]:
         st, _, b = req("GET", p)

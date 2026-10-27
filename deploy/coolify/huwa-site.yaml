@@ -1,6 +1,6 @@
-# huwa.mciut.fr: the public Huwa web app + P2P gateway + the legacy site, from docker/Dockerfile.web
-# (huwa-server built without the torrent engine, the fetch proxy and ffmpeg). Replaces the
-# nginx-only site/Dockerfile: web login needs the gateway at /p2p, which nginx did not have.
+# huwa.mciut.fr: the install site (site/: "installe l'app", /pack, /extensions, legal pages,
+# universal-link files) + P2P gateway, from docker/Dockerfile.web (huwa-server built without the
+# torrent engine, the fetch proxy and ffmpeg; no web app). Replaces the nginx-only site/Dockerfile.
 #
 # ─── Coolify: settings of the existing huwa.mciut.fr application ────────────────────────────────
 # (The current app builds site/Dockerfile. Change these fields, keep the domain.)

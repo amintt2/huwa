@@ -2,7 +2,7 @@ name: Docker
 
 # Images Huwa Server (docs/WEB_DOCKER_PLAN.md §5, D20 ; docs/SELF_HOSTING.md) :
 #   ghcr.io/<owner>/huwa:<v>        image complète (moteur torrent, proxy HTTP, jellyfin-ffmpeg)
-#   ghcr.io/<owner>/huwa:<v>-web    huwa.mciut.fr : appli web + passerelle P2P, sans moteur ni ffmpeg
+#   ghcr.io/<owner>/huwa:<v>-web    huwa.mciut.fr : site d'installation + passerelle P2P, sans appli web, moteur ni ffmpeg
 #   :latest (complète) et :<v> seulement sur une étiquette v* ; :sha-<court>[-web] sinon.
 # Export web construit une fois ; Rust compilé sur des runners natifs amd64 et arm64 ; push par
 # digest puis fusion du manifeste multi-arch ; SBOM + provenance ; fumée ; Trivy.
@@ -269,7 +269,7 @@ jobs:
       - name: Journal (image complète)
         if: always()
         run: docker logs huwa 2>&1 | tail -200 || true
-      - name: Image -web (pas de moteur, pas de ffmpeg)
+      - name: Image -web (site d'installation, pas de moteur, pas de ffmpeg)
         run: |
           set -x
           docker rm -f huwa || true

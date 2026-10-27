@@ -7,8 +7,9 @@ the server never holds a user's keys.
 
 - Image: `ghcr.io/amintt2/huwa:<version>` (`latest` = the latest release), `linux/amd64` and
   `linux/arm64`.
-- The `-web` variant (`ghcr.io/amintt2/huwa:<version>-web`) is the web app and P2P gateway
-  only: no torrent engine, no ffmpeg, no proxy. That is what huwa.mciut.fr runs.
+- The `-web` variant (`ghcr.io/amintt2/huwa:<version>-web`) is what huwa.mciut.fr runs: the
+  install site (`site/`) and the P2P gateway only, with no web app, no torrent engine, no ffmpeg,
+  no proxy. To host the web app yourself, use the full image.
 - API reference: `docs/server-api.md`. Design: `docs/WEB_DOCKER_PLAN.md`.
 
 ## 1. Quick start (`docker run`)
@@ -59,11 +60,12 @@ Updating: `docker compose pull && docker compose up -d`.
    service's Environment Variables, then deploy.
 4. Open UDP 49737 on the host firewall if you want the relay to help the network (optional).
 
-### huwa.mciut.fr (the public web app)
+### huwa.mciut.fr (the install site)
 
 huwa.mciut.fr runs the `-web` image (`docker/Dockerfile.web`): huwa-server without the engine,
-ffmpeg or fetch proxy, the web app, the P2P gateway at `/p2p` (web login needs it) and the legacy
-site (`site/`: `/get` landing page, `/privacy`, `/terms`, `/pack`, `/extensions`, AltStore
+ffmpeg, fetch proxy or web app, the P2P gateway at `/p2p` and the site (`site/`: the home page
+that asks to install the app (APK; Google Play and App Store pending, Discord), also at `/get`,
+`site/sw.js` retiring the old web app's service worker, `/privacy`, `/terms`, `/pack`, `/extensions`, AltStore
 sources, `.well-known` association files served as JSON, `/addon` and `/install` universal links
 → the extensions page). The exact Coolify settings (Dockerfile build pack, base `/`, Dockerfile
 `/docker/Dockerfile.web`, port 8080, `HUWA_PUBLIC_URL`, `HUWA_TRUST_PROXY=1`, `HUWA_INDEXABLE=1`,
