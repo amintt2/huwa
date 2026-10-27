@@ -85,7 +85,7 @@ export function translatedTrack(source: Track, target: string): Track {
 // ---------- what ----------
 
 /** Song lyrics in romaji / kanji and karaoke lines: left as they are. */
-const KEEP_STYLE = /romaji|kanji|karaoke|\bkara\b|\bjp\b|\bjpn\b|japanese/i;
+export const KEEP_STYLE = /romaji|kanji|karaoke|\bkara\b|\bjp\b|\bjpn\b|japanese/i;
 const LETTERS = /\p{L}{2,}/u;
 
 /** Text units of an event: one per line for "- A / - B" dialogue, else the whole event on one line. */

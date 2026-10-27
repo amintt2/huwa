@@ -36,7 +36,14 @@ export type MpvStateEvent = {
  * Subtitle line shown now on the selected track (also when hidden): its text (tags stripped) and
  * times on the playback clock; -1 when unknown. `time`: playback position when it was read.
  */
-export type MpvSubTextEvent = { text: string; start: number; end: number; time: number };
+export type MpvSubTextEvent = {
+  text: string;
+  start: number;
+  end: number;
+  time: number;
+  /** `sub-text/ass-full`: one "Dialogue: …" line per event on screen ("" on older builds). */
+  ass?: string;
+};
 
 /** Imperative API of the native view (ref). All calls are fire-and-forget on the mpv queue. */
 export type MpvViewHandle = {

@@ -2,7 +2,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
-import { addCue } from '../live';
+import { addCue, spokenCues } from '../live';
 import { buildTracks, chooseTrack, syncTier } from '../select';
 import { cuesDoc } from '../text';
 import { translatedOnly, translatedTrack, translationSources, translationTarget } from '../translate';
@@ -63,4 +63,23 @@ test('live translation shows translated lines only', () => {
   ]);
   const out = translatedOnly(doc, new Map([['Where are you going?', 'Où vas-tu ?']]));
   assert.deepEqual(out.events.map((e) => e.plain), ['Où vas-tu ?']);
+});
+
+test('live lines from full ASS events: spoken lines only, each with its own times', () => {
+  const page = 'Hygiene in daily life. '.repeat(20);
+  const raw = [
+    'Dialogue: 0,0:18:49.10,0:18:52.00,Default,,0000,0000,0000,,{\\i1}Where are you{\\i0}\\Ngoing?',
+    'Dialogue: 0,0:18:49.10,0:18:55.00,Default,Kobayashi,0000,0000,0000,,Wait, Tohru!',
+    'Dialogue: 5,0:18:49.10,0:18:55.00,Default,,0000,0000,0000,,{\\pos(640,120)\\fs40}Hygiene search',
+    'Dialogue: 5,0:18:49.10,0:18:55.00,Sign-Web,,0000,0000,0000,,Results',
+    `Dialogue: 0,0:18:49.10,0:18:55.00,Default,,0000,0000,0000,,${page}`,
+    'Dialogue: 0,0:18:49.10,0:18:55.00,OP-Romaji,,0000,0000,0000,,Chorogonzu',
+  ].join('\n');
+  const cues = spokenCues(raw);
+  assert.deepEqual(cues.map((c) => c.text), ['Where are you\ngoing?', 'Wait, Tohru!']);
+  assert.equal(cues[0].start, 18 * 60 + 49.1);
+  assert.equal(cues[1].end, 18 * 60 + 55);
+  // Lines with their own times do not cut each other short.
+  const list = cues.reduce((l, c) => addCue(l, c, false), [] as typeof cues);
+  assert.deepEqual(list.map((c) => c.end), [18 * 60 + 52, 18 * 60 + 55]);
 });

@@ -1,12 +1,13 @@
 // Live translation of an embedded subtitle track (mpv engine). Embedded tracks are made for the
 // video, so they are always in sync, but their text is inside the video file: mpv gives each line
 // as it is shown (`onSubText`, track selected but hidden) and the line is translated on the device
-// right away. Only translated lines are drawn (the original never flashes first); translating one
-// line takes a fraction of a second. Lines and translations are kept, so seeking back shows them
+// right away. Only spoken lines are translated (mpv also gives each event as a full ASS line: signs,
+// on-screen text placed by the typesetter, and song lyrics are left out). Only translated lines are
+// drawn (the original never flashes first); translating one line takes a fraction of a second. Lines and translations are kept, so seeking back shows them
 // at once, and translations are cached on disk per episode and track.
 import { useEffect, useMemo, useRef, useState } from 'react';
 
-import { addCue, type LiveCue } from '@/subtitles/live';
+import { addCue, spokenCues, type LiveCue } from '@/subtitles/live';
 import { cuesDoc } from '@/subtitles/text';
 import { bcp47, eventSegments, translatedOnly, translationCacheKey } from '@/subtitles/translate';
 
@@ -20,6 +21,8 @@ export type LiveTextSource = { subscribe: (l: (line: MpvSubTextEvent) => void) =
 const DEFAULT_LEN = 4;
 /** Segments per native call: the newest first, so the line on screen is never kept waiting. */
 const BATCH = 8;
+/** Failed calls in a row before giving up (one failure only skips its lines). */
+const MAX_FAILURES = 4;
 
 export function useLiveTranslation(source: LiveTextSource | null, id: string | undefined, from: string | undefined, to: string | undefined, active: boolean) {
   const key = active && source && id && from && to && HuwaTranslate ? translationCacheKey(`live:${id}`, from, to) : '';
@@ -27,6 +30,9 @@ export function useLiveTranslation(source: LiveTextSource | null, id: string | u
   const [dict, setDict] = useState<{ key: string; map: Map<string, string>; ready: boolean }>({ key: '', map: new Map(), ready: false });
   const [error, setError] = useState('');
   const busy = useRef('');
+  // Lines the translator failed on (not retried, not drawn), failed calls in a row, and one line
+  // per call after a failed batch (finds the line at fault) until the backlog is empty.
+  const failed = useRef<{ key: string; set: Set<string>; row: number; solo: boolean }>({ key: '', set: new Set(), row: 0, solo: false });
   // Bumped when a batch ends: lines that arrived meanwhile are translated next.
   const [tick, setTick] = useState(0);
 
@@ -42,14 +48,21 @@ export function useLiveTranslation(source: LiveTextSource | null, id: string | u
   useEffect(() => {
     if (!key || !source) return;
     return source.subscribe((line) => {
-      const start = line.start >= 0 ? line.start : line.time;
-      if (!(start >= 0)) return;
-      const end = line.end > start ? line.end : start + DEFAULT_LEN;
-      const text = line.text.replace(/\r/g, '').trim();
-      if (!text) return;
+      let add: LiveCue[];
+      let replaces = false;
+      if (line.ass) add = spokenCues(line.ass);
+      else {
+        // Older build: the plain text of everything on screen, signs included.
+        const start = line.start >= 0 ? line.start : line.time;
+        const text = line.text.replace(/\r/g, '').trim();
+        if (!(start >= 0) || !text) return;
+        add = [{ start, end: line.end > start ? line.end : start + DEFAULT_LEN, text }];
+        replaces = true;
+      }
+      if (!add.length) return;
       setCues((c) => {
         const list = c.key === key ? c.list : [];
-        const next = addCue(list, { start, end, text });
+        const next = add.reduce((l, cue) => addCue(l, cue, replaces), list);
         return next === list && c.key === key ? c : { key, list: next };
       });
     });
@@ -61,12 +74,18 @@ export function useLiveTranslation(source: LiveTextSource | null, id: string | u
 
   useEffect(() => {
     if (!key || !src || !cur || busy.current === key || error === key || !HuwaTranslate) return;
-    const missing = [...new Set(src.events.flatMap((e) => eventSegments(e) ?? []))].filter((s) => !cur.map.has(s));
-    if (!missing.length) return;
-    const segs = missing.slice(-BATCH);
+    if (failed.current.key !== key) failed.current = { key, set: new Set(), row: 0, solo: false };
+    const fail = failed.current;
+    const missing = [...new Set(src.events.flatMap((e) => eventSegments(e) ?? []))].filter((s) => !cur.map.has(s) && !fail.set.has(s));
+    if (!missing.length) {
+      fail.solo = false;
+      return;
+    }
+    const segs = missing.slice(fail.solo ? -1 : -BATCH);
     busy.current = key;
     HuwaTranslate.translateBatch(segs, bcp47(from!), bcp47(to!))
       .then((out) => {
+        fail.row = 0;
         setDict((d) => {
           if (d.key !== key) return d;
           const map = new Map(d.map);
@@ -75,7 +94,12 @@ export function useLiveTranslation(source: LiveTextSource | null, id: string | u
           return { key, map, ready: true };
         });
       })
-      .catch(() => setError(key))
+      .catch(() => {
+        // A bad line is skipped; the next lines are still translated.
+        if (segs.length > 1) fail.solo = true;
+        else fail.set.add(segs[0]);
+        if (++fail.row >= MAX_FAILURES) setError(key);
+      })
       .finally(() => {
         if (busy.current === key) busy.current = '';
         setTick((t) => t + 1);

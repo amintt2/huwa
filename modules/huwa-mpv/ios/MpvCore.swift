@@ -380,7 +380,10 @@ final class MpvCore {
       let start = getDouble(ctx, "sub-start") ?? -1
       let end = getDouble(ctx, "sub-end") ?? -1
       let at = getDouble(ctx, "time-pos") ?? -1
-      main { $0.mpvSubText(["text": text, "start": start, "end": end, "time": at]) }
+      // Every event on screen as a full ASS line (style, override tags, own times): tells dialogue
+      // from signs (on-screen text). Empty when this mpv lacks the property.
+      let ass = getString(ctx, "sub-text/ass-full") ?? ""
+      main { $0.mpvSubText(["text": text, "start": start, "end": end, "time": at, "ass": ass]) }
     default:
       break
     }
