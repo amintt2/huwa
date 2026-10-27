@@ -1,7 +1,7 @@
-// "Ouvre Huwa dans ton navigateur" for the site pages (/get, /pack, /extensions): same rules as
+// "Ouvre Huwa dans ton navigateur" for the site pages (/, /pack, /extensions): same rules as
 // the web app (src/web/in-app-browser.ts, tested there). Links tapped in X, Instagram, TikTok…
-// open in the app's built-in browser, where the APK download, huwa:// links and AltStore
-// buttons often do nothing. Shown once per tab; "Continuer ici" closes it.
+// open in the app's built-in browser, where the APK download and huwa:// links often do
+// nothing. Shown once per tab; "Continuer ici" closes it.
 (function () {
   var ua = navigator.userAgent || '';
   var APPS = [
@@ -39,7 +39,7 @@
   var limits = android
     ? 'Ici, l’app Android ne peut pas s’installer et les boutons d’installation ne marchent pas.'
     : ios
-      ? 'Ici, les boutons AltStore et l’ajout à l’écran d’accueil ne marchent pas.'
+      ? 'Ici, les liens vers l’app Huwa ne marchent pas.'
       : 'Ici, les boutons d’installation ne marchent pas.';
 
   var css =
