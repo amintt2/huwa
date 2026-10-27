@@ -18,6 +18,7 @@ import { recordDub } from '@/stats/store';
 import { useAnimeIds } from '@/addons/ids';
 import type { NoSourceAction } from '@/addons/no-source';
 import { useSubtitles } from '@/addons/registry';
+import { useVideoHash } from '@/subtitles/use-video-hash';
 import { subtitleExtraOf } from '@/subtitles/request';
 import { isTorrent } from '@/addons/protocol';
 import type { Quality } from '@/addons/quality';
@@ -122,7 +123,15 @@ function WatchScreen({ id, at }: { id: string; at?: number }) {
   // translation and its sync offset carry on). A source picked by hand asks again.
   const [firstVideo, setFirstVideo] = useState(playingVideo);
   if (!firstVideo && playingVideo) setFirstVideo(playingVideo);
-  const video = src.auto ? (firstVideo ?? playingVideo) : playingVideo;
+  const baseVideo = src.auto ? (firstVideo ?? playingVideo) : playingVideo;
+  // No hash from the source (torrents): computed from the file itself, like Stremio's server, so
+  // the addons return the files made for this release. Same file as `baseVideo` (the first one
+  // while sources switch automatically).
+  const [firstUrl, setFirstUrl] = useState(src.url);
+  if (!firstUrl && src.url) setFirstUrl(src.url);
+  const hashUrl = !offline && !baseVideo?.videoHash ? (src.auto ? (firstUrl ?? src.url) : src.url) : undefined;
+  const computed = useVideoHash(hashUrl, src.headers, src.current?.behaviorHints?.videoSize);
+  const video = useMemo(() => (computed ? { ...baseVideo, ...computed } : baseVideo), [baseVideo, computed]);
   const addonSubs = useSubtitles(series.id, episode.number, !offline, video, langPrefs.subLangs);
   // Start timings (tap → sources → choice → first frame) → on-device stats, see addons/timing.ts.
   useWatchTrace(id, src);

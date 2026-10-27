@@ -1,8 +1,8 @@
 // Subtitle track list (embedded + external + local files) and automatic choice.
 // Auto choice: full dialogue tracks first — first preferred language that has one; within it the
-// best source (embedded in the video, then the stream's own subtitles, then subtitle addons in
-// their order, an on-device translation last). "Forced" / "Signs & Songs" tracks only when no
-// preferred language has a full track.
+// track most likely in sync with this video (embedded, then files made for this exact file, then
+// a translation of an in-sync track, then other files), then the source order. "Forced" / "Signs &
+// Songs" tracks only when no preferred language has a full track.
 import { fromLangPhrase, langMatches, langName, normLang } from './lang';
 import { formatFromName } from './parse';
 import type { SubtitleFormat } from './types';
@@ -24,13 +24,40 @@ export type Track = {
   sourceRank: number;
   url?: string;
   embeddedIndex?: number;
-  /** Translated track: language of the file it is translated from. */
+  /** External file made for this very video (OpenSubtitles hash, or the same release name). */
+  match?: 'hash' | 'release';
+  /** Translated track: language of the track it is translated from. */
   fromLang?: string;
+  /** Translated track: its source is in sync with the video (embedded or matched file). */
+  fromSynced?: boolean;
+  /** Translated track read live from an embedded track (its index): no file, mpv gives the lines. */
+  fromEmbedded?: number;
 };
+
+/**
+ * How likely a track is in sync with the playing video, lower = surer. A subtitle file from an
+ * addon that was not made for this release (other cut, other intro, Blu-ray vs web) is often off
+ * by seconds: it comes after any in-sync track, a translated one included.
+ */
+export function syncTier(t: Track): number {
+  switch (t.kind) {
+    case 'local':
+      return -1;
+    case 'embedded':
+      return 0;
+    case 'external':
+      return t.match === 'hash' ? 1 : t.match === 'release' ? 2 : 4;
+    case 'translated':
+      return t.fromSynced ? 3 : 5;
+  }
+}
+
+/** The track is known to fit this video (embedded, or a file made for it). */
+export const inSync = (t: Track) => syncTier(t) <= 2;
 
 const FORCED = /\b(forced|forcés?|signs?(?:\s*&\s*songs?)?|panneaux)\b/i;
 
-export type ExternalInput = { url: string; lang: string; label?: string; source?: string; format?: SubtitleFormat; forced?: boolean };
+export type ExternalInput = { url: string; lang: string; label?: string; source?: string; format?: SubtitleFormat; forced?: boolean; match?: 'hash' | 'release' };
 export type EmbeddedInput = { language?: string; label?: string; name?: string; isDefault?: boolean; forced?: boolean };
 
 export function buildTracks(embedded: EmbeddedInput[], external: ExternalInput[], local: Track[] = []): Track[] {
@@ -62,6 +89,7 @@ export function buildTracks(embedded: EmbeddedInput[], external: ExternalInput[]
       name: x.label,
       sourceRank: 1 + sources.indexOf(source),
       url: x.url,
+      match: x.match,
     });
   });
   return [...local, ...out];
@@ -87,6 +115,7 @@ export function chooseTrack(tracks: Track[], prefs: AutoPrefs): string {
         (a, b) =>
           Number(a.t.lang !== p) - Number(b.t.lang !== p) ||
           Number(a.t.forced) - Number(b.t.forced) ||
+          syncTier(a.t) - syncTier(b.t) ||
           a.t.sourceRank - b.t.sourceRank ||
           a.i - b.i,
       );
@@ -116,7 +145,7 @@ export function groupTracks(tracks: Track[], languages: string[]): TrackGroup[] 
     return i < 0 ? Infinity : i;
   };
   return [...map.entries()]
-    .map(([lang, list]) => ({ lang, title: langName(lang), tracks: list.sort((a, b) => a.sourceRank - b.sourceRank || Number(a.forced) - Number(b.forced)) }))
+    .map(([lang, list]) => ({ lang, title: langName(lang), tracks: list.sort((a, b) => syncTier(a) - syncTier(b) || a.sourceRank - b.sourceRank || Number(a.forced) - Number(b.forced)) }))
     .sort((a, b) => prefIndex(a.lang) - prefIndex(b.lang) || (a.lang === 'und' ? 1 : 0) - (b.lang === 'und' ? 1 : 0) || a.title.localeCompare(b.title, 'fr'));
 }
 
@@ -125,6 +154,11 @@ export const FORMAT_LABEL: Record<SubtitleFormat, string> = { ass: 'ASS', ssa: '
 /** "SRT · OpenSubtitles · forcés" */
 export function trackHint(t: Track, loadedFormat?: SubtitleFormat): string {
   const fmt = loadedFormat ?? t.format;
-  if (t.kind === 'translated') return `Traduit sur l’appareil ${fromLangPhrase(t.fromLang ?? 'und')}`;
-  return [t.kind === 'embedded' ? 'Intégré' : fmt ? FORMAT_LABEL[fmt] : null, t.kind === 'embedded' ? null : t.source, t.forced ? 'Forcés' : null].filter(Boolean).join(' · ');
+  if (t.kind === 'translated') return [`Traduit sur l’appareil ${fromLangPhrase(t.fromLang ?? 'und')}`, t.fromEmbedded !== undefined ? 'piste intégrée' : null].filter(Boolean).join(' · ');
+  return [
+    t.kind === 'embedded' ? 'Intégré' : fmt ? FORMAT_LABEL[fmt] : null,
+    t.kind === 'embedded' ? null : t.source,
+    t.forced ? 'Forcés' : null,
+    t.kind === 'external' && !t.match ? 'peut être décalé' : null,
+  ].filter(Boolean).join(' · ');
 }

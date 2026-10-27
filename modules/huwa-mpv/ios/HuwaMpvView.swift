@@ -20,6 +20,7 @@ public final class HuwaMpvView: ExpoView {
   let onProgress = EventDispatcher()
   let onStateChange = EventDispatcher()
   let onTracks = EventDispatcher()
+  let onSubText = EventDispatcher()
   let onEnd = EventDispatcher()
   let onMpvError = EventDispatcher()
   /// Sent once the view is in a window: from then on JS can call its functions (Fabric mounts
@@ -186,6 +187,7 @@ extension HuwaMpvView: MpvCoreDelegate {
   func mpvProgress(_ info: [String: Any]) { onProgress(info) }
   func mpvState(_ info: [String: Any]) { onStateChange(info) }
   func mpvTracks(_ tracksJson: String) { onTracks(["tracks": tracksJson]) }
+  func mpvSubText(_ info: [String: Any]) { onSubText(info) }
   func mpvEnded() { onEnd([:]) }
   func mpvError(_ message: String) { onMpvError(["message": message]) }
 }

@@ -8,6 +8,8 @@ export type HardwareDecoders = { av1?: boolean; hevc?: boolean; vp9?: boolean; h
 
 export declare class HuwaMpvNativeModule extends NativeModule<Record<never, never>> {
   mpvVersion: string;
+  /** The view sends `onSubText` (missing on builds older than this API). */
+  subTextEvents?: boolean;
   isAvailable(): boolean;
   hardwareDecoders(): HardwareDecoders;
 }

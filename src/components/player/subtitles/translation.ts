@@ -121,7 +121,7 @@ export async function prepareModel(from: string, to: string): Promise<TranslateS
 
 const cacheDir = () => new Directory(Paths.cache, 'subtitles-translated');
 
-async function readCache(key: string): Promise<Map<string, string>> {
+export async function readCache(key: string): Promise<Map<string, string>> {
   try {
     const f = new File(cacheDir(), `${key}.json`);
     if (!f.exists) return new Map();
@@ -133,7 +133,7 @@ async function readCache(key: string): Promise<Map<string, string>> {
 }
 
 const writes = new Map<string, ReturnType<typeof setTimeout>>();
-function writeCache(key: string, map: Map<string, string>) {
+export function writeCache(key: string, map: Map<string, string>) {
   clearTimeout(writes.get(key));
   writes.set(
     key,

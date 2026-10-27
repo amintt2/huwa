@@ -3,9 +3,11 @@
 //     external files from addons (drawn by SubtitleOverlay), local files picked by the user
 //   - automatic choice from the preferred languages until the user picks a track
 //   - per-episode sync offset
-//   - on-device translation (./translation): no full track in the primary language but one in
-//     another → a "Français (traduit automatiquement)" track, chosen by default when the model is
-//     there (or not offered yet: its system download prompt then shows once)
+//   - on-device translation (./translation): no in-sync full track in the primary language but one
+//     in another → a "Français (traduit automatiquement)" track, chosen by default when the model
+//     is there (or not offered yet: its system download prompt then shows once). Its source is the
+//     track most likely in sync: an embedded one read live from mpv (./live-translation) when the
+//     engine allows it, else a file made for this release, else any file.
 import * as DocumentPicker from 'expo-document-picker';
 import { File } from 'expo-file-system';
 import { useEffect, useMemo, useState } from 'react';
@@ -19,6 +21,7 @@ import { buildTracks, chooseTrack, fullTrackLangs, groupTracks, type EmbeddedInp
 import { translatedTrack, translationSources, translationTarget } from '@/subtitles/translate';
 import type { SubtitleDoc, SubtitleFormat } from '@/subtitles/types';
 
+import { useLiveTranslation, type LiveTextSource } from './live-translation';
 import { prepareModel, statusOf, usePrompted, useTranslatedDoc, useTranslateStatuses } from './translation';
 
 export type ExternalSubtitle = {
@@ -93,6 +96,7 @@ export function useSubtitleController({
   mediaKey,
   time = 0,
   dubLangs,
+  liveText = null,
 }: {
   external: ExternalSubtitle[];
   embedded: EmbeddedInput[];
@@ -106,6 +110,8 @@ export function useSubtitleController({
    * dub mode (a VOSTFR played because no dub exists). Undefined: the watch mode decides.
    */
   dubLangs?: string[] | null;
+  /** Lines of the selected embedded track as shown (mpv): embedded tracks become translatable. */
+  liveText?: LiveTextSource | null;
 }) {
   const prefs = useSubtitlePrefs();
   const settings = useSettings();
@@ -121,7 +127,7 @@ export function useSubtitleController({
     () =>
       buildTracks(
         embedded,
-        external.map((x) => ({ url: x.url, lang: x.lang, label: x.label, source: x.source, format: x.format, forced: x.forced })),
+        external.map((x) => ({ url: x.url, lang: x.lang, label: x.label, source: x.source, format: x.format, forced: x.forced, match: x.match })),
         locals.map((l) => l.track),
       ),
     [embedded, external, locals],
@@ -129,7 +135,7 @@ export function useSubtitleController({
 
   // ---- translation: first source file whose language pair the device can translate ----
   const target = translationTarget(baseTracks, { subLangs, watchMode });
-  const sources = useMemo(() => translationSources(baseTracks, { subLangs, watchMode }), [baseTracks, subLangs, watchMode]);
+  const sources = useMemo(() => translationSources(baseTracks, { subLangs, watchMode }, !!liveText), [baseTracks, subLangs, watchMode, liveText]);
   const pairs = useMemo(() => [...new Set(sources.map((t) => t.lang))].map((l) => [l, target!] as [string, string]), [sources, target]);
   const statuses = useTranslateStatuses(pairs);
   const trSource = sources.find((t) => {
@@ -156,6 +162,8 @@ export function useSubtitleController({
   }, [tracks, baseTracks, autoTranslated, autoLangs]);
   const selected = tracks.find((t) => t.key === key);
   const translating = selected?.kind === 'translated';
+  /** Translation of an embedded track, read live from the engine (no file). */
+  const live = translating && selected?.fromEmbedded !== undefined;
 
   // Translated track selected but its model is missing: the system download sheet, once per pair.
   const askModel = translating && trStatus === 'supported' && prompted === false;
@@ -178,8 +186,11 @@ export function useSubtitleController({
   }, [url]);
   const current = !!url && load.url === url;
   const local = selected?.kind === 'local' ? locals.find((l) => l.track.key === selected.key) : undefined;
-  const tr = useTranslatedDoc(current ? load.doc : null, url, selected?.fromLang, selected?.lang, time, translating && trStatus === 'installed');
-  const doc = local ? local.doc : !current ? null : translating ? tr.doc : load.doc;
+  const fileTr = useTranslatedDoc(current ? load.doc : null, url, selected?.fromLang, selected?.lang, time, translating && !live && trStatus === 'installed');
+  const liveId = live ? `${mediaKey ?? ''}|${selected?.fromEmbedded}|${selected?.fromLang}` : undefined;
+  const liveTr = useLiveTranslation(liveText, liveId, selected?.fromLang, selected?.lang, live && trStatus === 'installed');
+  const tr = live ? liveTr : fileTr;
+  const doc = local ? local.doc : live ? liveTr.doc : !current ? null : translating ? tr.doc : load.doc;
   // Text of the file as is (not for a translation): what mpv's libass draws for styled ASS.
   const docText = local ? local.text : current && !translating ? load.text : undefined;
   const trError = translating && trStatus !== undefined && trStatus !== 'installed' && prompted
@@ -250,17 +261,20 @@ export function useSubtitleController({
     doc,
     /** Decoded text of that document's file (undefined for a translation). */
     docText,
-    loading: !!url && !current,
-    error: current ? load.error ?? trError : pickError,
+    loading: !!url && !current && !live,
+    error: live ? trError : current ? load.error ?? trError : pickError,
     /** Short notice over the video (translated subtitles shown for the first time). */
     badge: badge.text,
     /** Languages with a full track (embedded included once the video is loaded, translation included). */
     fullLangs: fullTrackLangs(tracks),
     /** Index in `availableSubtitleTracks` to enable natively, -1 for none. */
-    embeddedIndex: selected?.kind === 'embedded' ? selected.embeddedIndex ?? -1 : -1,
-    offset,
+    embeddedIndex: selected?.kind === 'embedded' ? selected.embeddedIndex ?? -1 : live ? selected!.fromEmbedded! : -1,
+    /** The enabled embedded track is read for its lines, not drawn (live translation). */
+    embeddedHidden: live,
+    offset: live ? 0 : offset,
     setOffset: (v: number) => setSubtitleOffset(mediaKey, v),
-    canOffset: !!mediaKey,
+    // A live translation follows the embedded track, which fits the video: nothing to shift.
+    canOffset: !!mediaKey && !live,
     addLocalFile,
     picking,
     loadedFormat: doc?.format,

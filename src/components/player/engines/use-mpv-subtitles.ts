@@ -33,13 +33,14 @@ function subtitleFile(text: string): string | null {
   }
 }
 
-export function useMpvSubtitles(player: HybridPlayer, doc: SubtitleDoc | null, docText: string | undefined, lang: string, offset: number): boolean {
+/** `hidden`: the selected embedded track is only read for its lines (live translation), not drawn. */
+export function useMpvSubtitles(player: HybridPlayer, doc: SubtitleDoc | null, docText: string | undefined, lang: string, offset: number, hidden = false): boolean {
   const prefs = useSubtitlePrefs();
   const engine = useSyncExternalStore(player.subscribeEngine, player.getEngine, player.getEngine);
 
   useEffect(() => {
-    player.setMpvSubtitleOptions(mpvSubtitleOptions(prefs, offset));
-  }, [player, prefs, offset]);
+    player.setMpvSubtitleOptions({ ...mpvSubtitleOptions(prefs, hidden ? 0 : offset), 'sub-visibility': hidden ? 'no' : 'yes' });
+  }, [player, prefs, offset, hidden]);
 
   const wanted = engine === 'mpv' && !!docText && libassRenders(doc, prefs) && player.canDrawSubtitleFiles();
   const path = useMemo(() => (wanted && docText ? subtitleFile(docText) : null), [wanted, docText]);

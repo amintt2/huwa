@@ -4,6 +4,7 @@ export {
   type MpvLoadedEvent,
   type MpvProgressEvent,
   type MpvStateEvent,
+  type MpvSubTextEvent,
   type MpvTrack,
   type MpvViewHandle,
   type MpvViewProps,

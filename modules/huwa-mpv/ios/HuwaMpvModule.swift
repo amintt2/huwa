@@ -20,8 +20,13 @@ public class HuwaMpvModule: Module {
       MpvCapabilities.version
     }
 
+    /// The view sends `onSubText` (lines of the selected subtitle track, for live translation).
+    Constant("subTextEvents") {
+      MpvCapabilities.isLinked
+    }
+
     View(HuwaMpvView.self) {
-      Events("onReady", "onLoaded", "onProgress", "onStateChange", "onTracks", "onEnd", "onMpvError")
+      Events("onReady", "onLoaded", "onProgress", "onStateChange", "onTracks", "onSubText", "onEnd", "onMpvError")
 
       AsyncFunction("load") { (view: HuwaMpvView, url: String, headers: [String: String], start: Double, autoplay: Bool) in
         view.load(url: url, headers: headers, start: start, autoplay: autoplay)

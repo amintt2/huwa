@@ -6,7 +6,7 @@ import type { EventEmitter } from 'expo-modules-core/types';
 import { createVideoPlayer, type AudioTrack, type SubtitleTrack, type VideoPlayer, type VideoPlayerEvents, type VideoPlayerStatus, type VideoSource, type VideoTrack } from 'expo-video';
 import { Platform } from 'react-native';
 
-import HuwaMpv, { getMpvNativeView, type MpvLoadedEvent, type MpvProgressEvent, type MpvStateEvent, type MpvTrack, type MpvViewHandle } from '../../../../modules/huwa-mpv';
+import HuwaMpv, { getMpvNativeView, type MpvLoadedEvent, type MpvProgressEvent, type MpvStateEvent, type MpvSubTextEvent, type MpvTrack, type MpvViewHandle } from '../../../../modules/huwa-mpv';
 
 import { describeProxyError, httpProxy, isProxiable, type ProxyHandle, type ProxyPrefetch } from './http-proxy';
 import './local-probe';
@@ -163,6 +163,7 @@ export type MpvSlotProps = {
   onProgress: (e: { nativeEvent: MpvProgressEvent }) => void;
   onStateChange: (e: { nativeEvent: MpvStateEvent }) => void;
   onTracks: (e: { nativeEvent: { tracks: string } }) => void;
+  onSubText: (e: { nativeEvent: MpvSubTextEvent }) => void;
   onEnd: () => void;
   onMpvError: (e: { nativeEvent: { message: string } }) => void;
 };
@@ -211,6 +212,8 @@ export class HybridPlayer implements EventEmitter<VideoPlayerEvents> {
   private mpvStart = 0;
   /** mpv's first frame of the current file (start timings; expo-video has `onFirstFrameRender`). */
   private firstFrameListeners = new Set<() => void>();
+  /** Lines of the selected mpv subtitle track as they are shown (live translation). */
+  private subTextListeners = new Set<(line: MpvSubTextEvent) => void>();
   /** The first native player belongs to `useVideoPlayer` (released by the hook); later ones to us. */
   private ownsNative = false;
   /** `sub-…` options for the subtitles mpv draws (user's look, sync offset). */
@@ -290,6 +293,20 @@ export class HybridPlayer implements EventEmitter<VideoPlayerEvents> {
       this.firstFrameListeners.delete(l);
     };
   };
+  /**
+   * Each line of the selected embedded subtitle track as mpv shows it (also when hidden with
+   * `setMpvSubtitleOptions({ 'sub-visibility': 'no' })`). Only on mpv, see canReadSubtitleText.
+   */
+  onSubtitleText = (l: (line: MpvSubTextEvent) => void) => {
+    this.subTextListeners.add(l);
+    return () => {
+      this.subTextListeners.delete(l);
+    };
+  };
+  /** The current engine gives the text of embedded subtitle lines (mpv build with the event). */
+  canReadSubtitleText(): boolean {
+    return this.engine === 'mpv' && HuwaMpv?.subTextEvents === true;
+  }
   /** Native players to render (EngineView), stable between changes. */
   getViews = () => this.views;
   /** mpv surfaces to render (EngineView), stable between changes. */
@@ -353,6 +370,10 @@ export class HybridPlayer implements EventEmitter<VideoPlayerEvents> {
         (st, e: { nativeEvent: { tracks: string } }) => {
           st.tracks = parseTracks(e.nativeEvent.tracks);
         },
+      ),
+      onSubText: route(
+        (e: { nativeEvent: MpvSubTextEvent }) => this.mpv.onSubText(e),
+        () => {},
       ),
       onEnd: route(
         () => this.mpv.onEnd(),
@@ -1376,6 +1397,11 @@ export class HybridPlayer implements EventEmitter<VideoPlayerEvents> {
     },
     onTracks: (e: { nativeEvent: { tracks: string } }) => {
       if (this.mpvLive()) this.applyTracks(parseTracks(e.nativeEvent.tracks));
+    },
+    onSubText: (e: { nativeEvent: MpvSubTextEvent }) => {
+      if (!this.mpvLive()) return;
+      const line = e.nativeEvent;
+      this.subTextListeners.forEach((l) => l(line));
     },
     onEnd: () => {
       if (!this.mpvLive()) return;

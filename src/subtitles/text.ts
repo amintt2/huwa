@@ -81,6 +81,16 @@ const doc = (format: 'srt' | 'vtt', events: SubEvent[]): SubtitleDoc => ({
   events: events.sort((a, b) => a.start - b.start || a.id - b.id),
 });
 
+/** Plain lines with their times (subtitle lines read live from the video engine). */
+export function cuesDoc(cues: readonly { start: number; end: number; text: string }[]): SubtitleDoc {
+  const events: SubEvent[] = [];
+  cues.forEach((c, i) => {
+    const ev = isFinite(c.start) && c.end > c.start ? buildEvent(i, c.start, c.end, c.text, null) : null;
+    if (ev) events.push(ev);
+  });
+  return doc('srt', events);
+}
+
 /** SubRip. Tolerates missing indexes, `.` instead of `,`, extra coordinates and blank lines inside cues. */
 export function parseSrt(raw: string): SubtitleDoc {
   const lines = raw.replace(/^﻿/, '').replace(/\r\n?/g, '\n').split('\n');

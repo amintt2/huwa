@@ -92,6 +92,7 @@ function MpvSurface({ player, slot, main }: { player: HybridPlayer; slot: number
       onProgress={p.onProgress}
       onStateChange={p.onStateChange}
       onTracks={p.onTracks}
+      onSubText={p.onSubText}
       onEnd={p.onEnd}
       onMpvError={p.onMpvError}
     />

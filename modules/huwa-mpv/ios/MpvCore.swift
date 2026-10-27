@@ -8,6 +8,8 @@ protocol MpvCoreDelegate: AnyObject {
   func mpvProgress(_ info: [String: Any])
   func mpvState(_ info: [String: Any])
   func mpvTracks(_ tracksJson: String)
+  /// Text of the subtitle line shown now (selected track, even hidden), with its times.
+  func mpvSubText(_ info: [String: Any])
   func mpvEnded()
   func mpvError(_ message: String)
 }
@@ -140,6 +142,9 @@ final class MpvCore {
     mpv_observe_property(ctx, 0, "eof-reached", MPV_FORMAT_FLAG)
     mpv_observe_property(ctx, 0, "track-list", MPV_FORMAT_NODE)
     mpv_observe_property(ctx, 0, "duration", MPV_FORMAT_DOUBLE)
+    // Lines of the selected subtitle track, also when hidden (sub-visibility=no): the app
+    // translates an embedded track on the device and draws the translation itself.
+    mpv_observe_property(ctx, 0, "sub-text", MPV_FORMAT_STRING)
 
     let b = Unmanaged.passRetained(WakeupBox(self))
     box = b
@@ -366,6 +371,16 @@ final class MpvCore {
       guard loaded else { return }
       let tracks = MpvCore.json(readTracks(ctx))
       main { $0.mpvTracks(tracks) }
+    case "sub-text":
+      guard prop.format == MPV_FORMAT_STRING, let d = prop.data,
+            let c = d.assumingMemoryBound(to: UnsafePointer<CChar>?.self).pointee else { return }
+      let text = String(cString: c)
+      guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+      // Times of the line on the playback clock (sub-delay included); -1 when mpv has none.
+      let start = getDouble(ctx, "sub-start") ?? -1
+      let end = getDouble(ctx, "sub-end") ?? -1
+      let at = getDouble(ctx, "time-pos") ?? -1
+      main { $0.mpvSubText(["text": text, "start": start, "end": end, "time": at]) }
     default:
       break
     }

@@ -32,6 +32,12 @@ export type MpvStateEvent = {
   firstFrame?: boolean;
 };
 
+/**
+ * Subtitle line shown now on the selected track (also when hidden): its text (tags stripped) and
+ * times on the playback clock; -1 when unknown. `time`: playback position when it was read.
+ */
+export type MpvSubTextEvent = { text: string; start: number; end: number; time: number };
+
 /** Imperative API of the native view (ref). All calls are fire-and-forget on the mpv queue. */
 export type MpvViewHandle = {
   load(url: string, headers: Record<string, string>, start: number, autoplay: boolean): Promise<void>;
@@ -65,6 +71,7 @@ export type MpvViewProps = ViewProps & {
   onProgress?: (e: NativeSyntheticEvent<MpvProgressEvent>) => void;
   onStateChange?: (e: NativeSyntheticEvent<MpvStateEvent>) => void;
   onTracks?: (e: NativeSyntheticEvent<{ tracks: string }>) => void;
+  onSubText?: (e: NativeSyntheticEvent<MpvSubTextEvent>) => void;
   onEnd?: (e: NativeSyntheticEvent<Record<string, never>>) => void;
   onMpvError?: (e: NativeSyntheticEvent<{ message: string }>) => void;
 };

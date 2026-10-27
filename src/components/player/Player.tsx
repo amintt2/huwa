@@ -25,7 +25,7 @@ import {
   type SubtitleTrack,
   type VideoView,
 } from 'expo-video';
-import { useEffect, useImperativeHandle, useMemo, useRef, useState, type ReactNode, type Ref } from 'react';
+import { useEffect, useImperativeHandle, useMemo, useRef, useState, useSyncExternalStore, type ReactNode, type Ref } from 'react';
 import { ActivityIndicator, BackHandler, Platform, Pressable, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
 import Animated, { FadeIn, FadeOut, SlideInLeft, SlideInRight, SlideOutLeft, SlideOutRight } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -577,7 +577,13 @@ export function Player({
   }, [player, prefs.rate]);
 
   // ---------- subtitles ----------
-  const subs = useSubtitleController({ external: subtitles, embedded, mediaKey, time: time.t, dubLangs: audioLangs?.length ? audioLangs : null });
+  // mpv gives the lines of the embedded track it plays: embedded tracks can then be translated.
+  const engineNow = useSyncExternalStore(player.subscribeEngine, player.getEngine, player.getEngine);
+  const liveText = useMemo(
+    () => (engineNow === 'mpv' && player.canReadSubtitleText() ? { subscribe: player.onSubtitleText } : null),
+    [player, engineNow],
+  );
+  const subs = useSubtitleController({ external: subtitles, embedded, mediaKey, time: time.t, dubLangs: audioLangs?.length ? audioLangs : null, liveText });
   const subLangsKey = subs.fullLangs.join(',');
   const onSubLangsRef = useRef(onSubtitleLangs);
   useEffect(() => {
@@ -587,7 +593,7 @@ export function Player({
     onSubLangsRef.current?.(subLangsKey ? subLangsKey.split(',') : []);
   }, [subLangsKey, source?.uri]);
   // mpv engine: the user's look on the tracks it draws; styled ASS files drawn by libass.
-  const libass = useMpvSubtitles(player, subs.doc, subs.docText, subs.selected?.lang ?? 'und', subs.offset);
+  const libass = useMpvSubtitles(player, subs.doc, subs.docText, subs.selected?.lang ?? 'und', subs.offset, subs.embeddedHidden);
   const shownNotice = notice || subs.badge || undefined;
   const embIndex = subs.embeddedIndex;
   useEffect(() => {

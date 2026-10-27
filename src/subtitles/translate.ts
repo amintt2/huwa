@@ -6,7 +6,7 @@
 //     put back into the event afterwards (event-level overrides — \pos, \an, \fad, style — kept)
 //   - cache keys per (subtitle URL, source, target)
 import { langMatches, langName, normLang } from './lang';
-import type { Track } from './select';
+import { inSync, syncTier, type Track } from './select';
 import type { Span, SubEvent, SubtitleDoc } from './types';
 
 // ---------- when ----------
@@ -18,21 +18,26 @@ export type TranslatePlanPrefs = {
   watchMode: 'sub' | 'dub';
 };
 
-/** Target language: the primary subtitle language, or null when translation makes no sense. */
+/**
+ * Target language: the primary subtitle language, or null when translation makes no sense (dub,
+ * or a full track in that language that fits this video). A file in that language that was not
+ * made for this release does not count: a translation of an in-sync track beats it.
+ */
 export function translationTarget(tracks: Track[], prefs: Pick<TranslatePlanPrefs, 'subLangs' | 'watchMode'>): string | null {
   if (prefs.watchMode === 'dub' || !prefs.subLangs.length) return null;
   const target = normLang(prefs.subLangs[0]);
   if (target === 'und') return null;
-  const native = tracks.some((t) => t.kind !== 'local' && t.kind !== 'translated' && !t.forced && langMatches(t.lang, target));
+  const native = tracks.some((t) => t.kind !== 'local' && t.kind !== 'translated' && !t.forced && inSync(t) && langMatches(t.lang, target));
   return native ? null : target;
 }
 
 /**
- * Tracks that could be translated into the primary language, best first: only external files
- * (their text is readable; embedded tracks are drawn by the video engine), full tracks only, the
- * user's other languages in order, then English, then anything else; source order within one.
+ * Tracks that could be translated into the primary language, best first: in sync with the video
+ * first (embedded when the engine gives its lines — `embeddedReadable` —, then files made for this
+ * release, then other files), then the user's other languages in order, then English, then
+ * anything else; source order within one. Full tracks only.
  */
-export function translationSources(tracks: Track[], prefs: Pick<TranslatePlanPrefs, 'subLangs' | 'watchMode'>): Track[] {
+export function translationSources(tracks: Track[], prefs: Pick<TranslatePlanPrefs, 'subLangs' | 'watchMode'>, embeddedReadable = false): Track[] {
   const target = translationTarget(tracks, prefs);
   if (!target) return [];
   const order = [...prefs.subLangs.slice(1).map((l) => normLang(l)), 'en'];
@@ -40,10 +45,11 @@ export function translationSources(tracks: Track[], prefs: Pick<TranslatePlanPre
     const i = order.findIndex((p) => langMatches(lang, p));
     return i < 0 ? order.length : i;
   };
+  const readable = (t: Track) => (t.kind === 'external' && !!t.url) || (t.kind === 'embedded' && embeddedReadable);
   return tracks
     .map((t, i) => ({ t, i }))
-    .filter(({ t }) => t.kind === 'external' && !!t.url && !t.forced && t.lang !== 'und' && !langMatches(t.lang, target))
-    .sort((a, b) => rank(a.t.lang) - rank(b.t.lang) || a.t.sourceRank - b.t.sourceRank || a.i - b.i)
+    .filter(({ t }) => readable(t) && !t.forced && t.lang !== 'und' && !langMatches(t.lang, target))
+    .sort((a, b) => syncTier(a.t) - syncTier(b.t) || rank(a.t.lang) - rank(b.t.lang) || a.t.sourceRank - b.t.sourceRank || a.i - b.i)
     .map(({ t }) => t);
 }
 
@@ -56,11 +62,12 @@ export function bcp47(lang: string): string {
   return region ? `${base}-${region.toUpperCase()}` : base;
 }
 
-export const translatedTrackKey = (target: string, sourceUrl: string) => `tr:${target}:${sourceUrl}`;
+/** `source`: the source file URL, or the key of an embedded track. */
+export const translatedTrackKey = (target: string, source: string) => `tr:${target}:${source}`;
 
 export function translatedTrack(source: Track, target: string): Track {
   return {
-    key: translatedTrackKey(target, source.url!),
+    key: translatedTrackKey(target, source.url ?? source.key),
     kind: 'translated',
     lang: target,
     source: 'Traduction',
@@ -70,6 +77,8 @@ export function translatedTrack(source: Track, target: string): Track {
     sourceRank: 99,
     url: source.url,
     fromLang: source.lang,
+    fromSynced: inSync(source),
+    fromEmbedded: source.kind === 'embedded' ? source.embeddedIndex : undefined,
   };
 }
 
@@ -145,6 +154,21 @@ export function translateDoc(doc: SubtitleDoc, dict: ReadonlyMap<string, string>
     return applyTranslation(e, segs.map((s) => dict.get(s)!));
   });
   return changed ? { ...doc, events } : doc;
+}
+
+/**
+ * Live translation (lines read from an embedded track as they are shown): only the events whose
+ * text is translated already, so the original never flashes before its translation. Events with
+ * nothing to translate (romaji / karaoke styles, no letters) stay as they are.
+ */
+export function translatedOnly(doc: SubtitleDoc, dict: ReadonlyMap<string, string>): SubtitleDoc {
+  const events: SubEvent[] = [];
+  for (const e of doc.events) {
+    const segs = eventSegments(e);
+    if (!segs) events.push(e);
+    else if (segs.every((s) => dict.has(s))) events.push(applyTranslation(e, segs.map((s) => dict.get(s)!)));
+  }
+  return { ...doc, events };
 }
 
 // ---------- when (time) ----------
