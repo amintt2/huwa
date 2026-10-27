@@ -17,6 +17,7 @@ import { useSettings } from '@/settings/settings';
 import { fromLangPhrase } from '@/subtitles/lang';
 import { formatFromName, parseSubtitleBytes, parseSubtitleText, SubtitleParseError, type ParsedFile } from '@/subtitles/parse';
 import { preferLanguage, setSubtitleOffset, useSubtitleOffset, useSubtitlePrefs } from '@/subtitles/prefs';
+import { SIGN_BG_LEVELS } from '@/subtitles/live';
 import { buildTracks, chooseTrack, fullTrackLangs, groupTracks, type EmbeddedInput, type Track } from '@/subtitles/select';
 import { translatedTrack, translationSources, translationTarget } from '@/subtitles/translate';
 import type { SubtitleDoc, SubtitleFormat } from '@/subtitles/types';
@@ -115,7 +116,7 @@ export function useSubtitleController({
 }) {
   const prefs = useSubtitlePrefs();
   const settings = useSettings();
-  const { subLangs, autoTranslateSubs, translateSigns } = settings;
+  const { subLangs, autoTranslateSubs, translateSigns, signNoteBg } = settings;
   const watchMode = dubLangs === undefined ? settings.watchMode : dubLangs ? 'dub' : 'sub';
   const autoLangs = watchMode === 'dub' ? (dubLangs ?? settings.dubLangs) : subLangs;
   const [locals, setLocals] = useState<LocalTrack[]>([]);
@@ -189,7 +190,7 @@ export function useSubtitleController({
   const local = selected?.kind === 'local' ? locals.find((l) => l.track.key === selected.key) : undefined;
   const fileTr = useTranslatedDoc(current ? load.doc : null, url, selected?.fromLang, selected?.lang, time, translating && !live && trStatus === 'installed');
   const liveId = live ? `${mediaKey ?? ''}|${selected?.fromEmbedded}|${selected?.fromLang}` : undefined;
-  const liveTr = useLiveTranslation(liveText, liveId, selected?.fromLang, selected?.lang, live && trStatus === 'installed', translateSigns);
+  const liveTr = useLiveTranslation(liveText, liveId, selected?.fromLang, selected?.lang, live && trStatus === 'installed', translateSigns, SIGN_BG_LEVELS[signNoteBg]?.alpha);
   const tr = live ? liveTr : fileTr;
   const doc = local ? local.doc : live ? liveTr.doc : !current ? null : translating ? tr.doc : load.doc;
   // Text of the file as is (not for a translation): what mpv's libass draws for styled ASS.

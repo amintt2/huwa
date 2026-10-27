@@ -24,8 +24,16 @@ const BATCH = 8;
 /** Failed calls in a row before giving up (one failure only skips its lines). */
 const MAX_FAILURES = 4;
 
-/** `signs`: on-screen text translated too (Réglages → Sous-titres). */
-export function useLiveTranslation(source: LiveTextSource | null, id: string | undefined, from: string | undefined, to: string | undefined, active: boolean, signs = true) {
+/** `signs`: on-screen text translated too, `signBg`: opacity of the box behind it (Réglages → Sous-titres). */
+export function useLiveTranslation(
+  source: LiveTextSource | null,
+  id: string | undefined,
+  from: string | undefined,
+  to: string | undefined,
+  active: boolean,
+  signs = true,
+  signBg?: number,
+) {
   const key = active && source && id && from && to && HuwaTranslate ? translationCacheKey(`live:${id}`, from, to) : '';
   const [lines, setLines] = useState<{ key: string; header: string; list: string[] }>({ key: '', header: '', list: [] });
   const [dict, setDict] = useState<{ key: string; map: Map<string, string>; ready: boolean }>({ key: '', map: new Map(), ready: false });
@@ -109,7 +117,7 @@ export function useLiveTranslation(source: LiveTextSource | null, id: string | u
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [key, src, cur, error, tick]);
 
-  const doc = useMemo(() => (key && live && cur ? translatedLive(live, cur.map) : null), [key, live, cur]);
+  const doc = useMemo(() => (key && live && cur ? translatedLive(live, cur.map, signBg) : null), [key, live, cur, signBg]);
   return {
     doc,
     started: !!doc && doc.events.length > 0,

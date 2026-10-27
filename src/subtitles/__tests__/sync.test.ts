@@ -101,6 +101,9 @@ test('live translation: spoken lines as subtitles, signs as small notes where th
   assert.ok(placed.style.fontSize < 90 && placed.style.fontSize >= 1080 * 0.03);
   // A sign without \pos: anchored where its alignment and margins put it (top centre).
   assert.deepEqual(slotted.pos, { x: 960, y: 40 });
+  // Darker box on demand (Réglages → Sous-titres).
+  const dark = translatedLive(live, new Map([['Results', 'Résultats']]), 0.94);
+  assert.equal(dark.events[0].style.outline.a, 0.94);
   // A one-frame sign (motion tracking) stays long enough to be read.
   assert.ok(slotted.end - slotted.start >= 2);
 });

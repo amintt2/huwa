@@ -107,13 +107,20 @@ export function liveDoc(header: string, lines: readonly string[], withSigns = tr
   return { doc: { ...doc, events }, signs };
 }
 
+/** Opacity of the box behind a note (Réglages → Sous-titres): darker reads better over white text. */
+export const SIGN_BG_LEVELS = [
+  { label: 'Léger', alpha: 0.5 },
+  { label: 'Sombre', alpha: 0.78 },
+  { label: 'Opaque', alpha: 0.94 },
+] as const;
+
 /** Light yellow on a dark box, the user's font: reads as a note, not as the picture's own text. */
 const NOTE: AssStyle = {
   ...DEFAULT_STYLE,
   name: 'Huwa-Note',
   fontName: '',
   primary: { r: 255, g: 238, b: 170, a: 1 },
-  outline: { r: 0, g: 0, b: 0, a: 0.62 },
+  outline: { r: 0, g: 0, b: 0, a: SIGN_BG_LEVELS[1].alpha },
   back: { r: 0, g: 0, b: 0, a: 0 },
   borderStyle: 3,
   shadow: 0,
@@ -136,15 +143,15 @@ function anchorOf(e: SubEvent, doc: SubtitleDoc): { x: number; y: number } {
   return { x, y };
 }
 
-/** A translated sign drawn as a note: same place, smaller, in a box. */
-export function signNote(e: SubEvent, doc: SubtitleDoc): SubEvent {
+/** A translated sign drawn as a note: same place, smaller, in a box (`bg`: its opacity). */
+export function signNote(e: SubEvent, doc: SubtitleDoc, bg: number = SIGN_BG_LEVELS[1].alpha): SubEvent {
   const size = Math.min(doc.playResY * 0.045, Math.max(doc.playResY * 0.03, (e.style.fontSize || 20) * 0.65));
-  const style: AssStyle = { ...NOTE, fontSize: size, outlineWidth: size * 0.25 };
+  const style: AssStyle = { ...NOTE, fontSize: size, outlineWidth: size * 0.25, outline: { ...NOTE.outline, a: bg } };
   return { ...e, style, spans: e.spans.map((s) => ({ text: s.text, style: {} })), pos: e.pos ?? anchorOf(e, doc), layer: e.layer + 100 };
 }
 
 /** What is drawn: translated lines only (the original never flashes first), signs as notes. */
-export function translatedLive(live: LiveDoc, dict: ReadonlyMap<string, string>): SubtitleDoc {
+export function translatedLive(live: LiveDoc, dict: ReadonlyMap<string, string>, bg?: number): SubtitleDoc {
   const out = translatedOnly(live.doc, dict);
-  return { ...out, events: out.events.map((e) => (live.signs.has(e.id) ? signNote(e, live.doc) : e)) };
+  return { ...out, events: out.events.map((e) => (live.signs.has(e.id) ? signNote(e, live.doc, bg) : e)) };
 }

@@ -11,6 +11,7 @@ import { Button, Txt } from '@/components/ui';
 import { prepareModel, statusOf, translationSupported, useTranslateStatuses } from '@/components/player/subtitles/translation';
 import { LANG_CODES, setSetting, useSettings } from '@/settings/settings';
 import { langName } from '@/subtitles/lang';
+import { SIGN_BG_LEVELS } from '@/subtitles/live';
 import { resetSubtitleStyle, setSubtitlePrefs, useSubtitlePrefs } from '@/subtitles/prefs';
 import { C, S } from '@/theme/tokens';
 
@@ -18,7 +19,7 @@ export default function SubtitleSettings() {
   const insets = useSafeAreaInsets();
   const prefs = useSubtitlePrefs();
   // Same list as onboarding / Général → Langues (`subLangs`, 1 to 5 languages).
-  const { subLangs: langs, autoTranslateSubs, translateSigns } = useSettings();
+  const { subLangs: langs, autoTranslateSubs, translateSigns, signNoteBg } = useSettings();
   const setLangs = (v: string[]) => setSetting('subLangs', v);
   const move = (i: number, d: -1 | 1) => {
     const next = [...langs];
@@ -86,6 +87,16 @@ export default function SubtitleSettings() {
               value={translateSigns}
               onChange={(v) => setSetting('translateSigns', v)}
             />
+            {translateSigns && (
+              <>
+                <Txt v="caption">Fond des textes à l’écran traduits</Txt>
+                <View style={styles.wrap}>
+                  {SIGN_BG_LEVELS.map((l, i) => (
+                    <FilterChip key={l.label} label={l.label} selected={signNoteBg === i} onPress={() => setSetting('signNoteBg', i)} />
+                  ))}
+                </View>
+              </>
+            )}
             <TranslationModels target={langs[0]} />
           </View>
         </Group>

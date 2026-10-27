@@ -43,6 +43,8 @@ export type Settings = {
   autoTranslateSubs: boolean;
   /** Live translation: on-screen text (signs) translated too, as small notes where it is. */
   translateSigns: boolean;
+  /** Box behind those notes: index of SIGN_BG_LEVELS (@/subtitles/live). */
+  signNoteBg: number;
   /** Reads manhwa at all (bridge prompts and manhwa suggestions). */
   readsManhwa: boolean;
   /** Chapter languages, primary first (chapter lists are filtered with it). */
@@ -79,6 +81,7 @@ export const DEFAULT_SETTINGS: Settings = {
   dubAutoFallback: false,
   autoTranslateSubs: true,
   translateSigns: true,
+  signNoteBg: 1,
   readsManhwa: true,
   mangaLangs: ['fr', 'en'],
   cellularData: 'balanced',
@@ -123,6 +126,7 @@ function sanitize(raw: unknown): Settings {
     dubAutoFallback: pick('dubAutoFallback', bool),
     autoTranslateSubs: pick('autoTranslateSubs', bool),
     translateSigns: pick('translateSigns', bool),
+    signNoteBg: pick('signNoteBg', (x) => x === 0 || x === 1 || x === 2),
     readsManhwa: pick('readsManhwa', bool),
     mangaLangs: pick('mangaLangs', langs),
     cellularData: pick('cellularData', (x) => CELLULAR_DATA.includes(x as CellularData)),
