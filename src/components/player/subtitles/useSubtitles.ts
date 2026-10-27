@@ -16,7 +16,7 @@ import { Platform } from 'react-native';
 import { useSettings } from '@/settings/settings';
 import { fromLangPhrase } from '@/subtitles/lang';
 import { formatFromName, parseSubtitleBytes, parseSubtitleText, SubtitleParseError, type ParsedFile } from '@/subtitles/parse';
-import { preferLanguage, setSubtitleOffset, setSubtitlePrefs, useSubtitleOffset, useSubtitlePrefs } from '@/subtitles/prefs';
+import { preferLanguage, setSubtitleOffset, useSubtitleOffset, useSubtitlePrefs } from '@/subtitles/prefs';
 import { buildTracks, chooseTrack, fullTrackLangs, groupTracks, type EmbeddedInput, type Track } from '@/subtitles/select';
 import { translatedTrack, translationSources, translationTarget } from '@/subtitles/translate';
 import type { SubtitleDoc, SubtitleFormat } from '@/subtitles/types';
@@ -115,7 +115,7 @@ export function useSubtitleController({
 }) {
   const prefs = useSubtitlePrefs();
   const settings = useSettings();
-  const { subLangs, autoTranslateSubs } = settings;
+  const { subLangs, autoTranslateSubs, translateSigns } = settings;
   const watchMode = dubLangs === undefined ? settings.watchMode : dubLangs ? 'dub' : 'sub';
   const autoLangs = watchMode === 'dub' ? (dubLangs ?? settings.dubLangs) : subLangs;
   const [locals, setLocals] = useState<LocalTrack[]>([]);
@@ -149,17 +149,18 @@ export function useSubtitleController({
   // Picked automatically when the model is there, or before its one-time download prompt.
   const autoTranslated = !!trTrack && autoTranslateSubs && (trStatus === 'installed' || (trStatus === 'supported' && prompted === false));
 
-  const autoKey = useMemo(
-    () => chooseTrack(autoTranslated ? tracks : baseTracks, { enabled: prefs.enabled, languages: autoLangs, forcedOnly: watchMode === 'dub' }),
-    [tracks, baseTracks, autoTranslated, prefs.enabled, autoLangs, watchMode],
-  );
-  const key = userKey && (userKey === 'off' || tracks.some((t) => t.key === userKey)) ? userKey : autoKey;
   // Track the "sous-titres" toggle of the player turns on: the best full track in the user's
-  // languages, else the first one.
+  // languages, else English, else the first one.
   const onKey = useMemo(() => {
-    const k = chooseTrack(autoTranslated ? tracks : baseTracks, { enabled: true, languages: autoLangs, forcedOnly: false });
+    const k = chooseTrack(autoTranslated ? tracks : baseTracks, { enabled: true, languages: [...autoLangs, 'en'], forcedOnly: false });
     return k !== 'off' ? k : tracks.find((t) => !t.forced)?.key ?? tracks[0]?.key;
   }, [tracks, baseTracks, autoTranslated, autoLangs]);
+  const autoKey = useMemo(() => {
+    const k = chooseTrack(autoTranslated ? tracks : baseTracks, { enabled: prefs.enabled, languages: autoLangs, forcedOnly: watchMode === 'dub' });
+    // Watching the original with subtitles: a track in another language beats none at all.
+    return k === 'off' && prefs.enabled && watchMode === 'sub' && onKey ? onKey : k;
+  }, [tracks, baseTracks, autoTranslated, prefs.enabled, autoLangs, watchMode, onKey]);
+  const key = userKey && (userKey === 'off' || tracks.some((t) => t.key === userKey)) ? userKey : autoKey;
   const selected = tracks.find((t) => t.key === key);
   const translating = selected?.kind === 'translated';
   /** Translation of an embedded track, read live from the engine (no file). */
@@ -188,7 +189,7 @@ export function useSubtitleController({
   const local = selected?.kind === 'local' ? locals.find((l) => l.track.key === selected.key) : undefined;
   const fileTr = useTranslatedDoc(current ? load.doc : null, url, selected?.fromLang, selected?.lang, time, translating && !live && trStatus === 'installed');
   const liveId = live ? `${mediaKey ?? ''}|${selected?.fromEmbedded}|${selected?.fromLang}` : undefined;
-  const liveTr = useLiveTranslation(liveText, liveId, selected?.fromLang, selected?.lang, live && trStatus === 'installed');
+  const liveTr = useLiveTranslation(liveText, liveId, selected?.fromLang, selected?.lang, live && trStatus === 'installed', translateSigns);
   const tr = live ? liveTr : fileTr;
   const doc = local ? local.doc : live ? liveTr.doc : !current ? null : translating ? tr.doc : load.doc;
   // Text of the file as is (not for a translation): what mpv's libass draws for styled ASS.
@@ -214,7 +215,8 @@ export function useSubtitleController({
   const select = (k: string) => {
     setUserKey(k);
     setPickError(undefined);
-    if (k === 'off') return setSubtitlePrefs({ enabled: false });
+    // Off for this episode only: the default stays the one set in Réglages.
+    if (k === 'off') return;
     const t = tracks.find((x) => x.key === k);
     if (t && t.kind !== 'local' && t.kind !== 'translated') preferLanguage(t.lang);
     // Picking the translation by hand before the model is there: offer the download now.

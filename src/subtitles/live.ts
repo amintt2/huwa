@@ -68,8 +68,11 @@ function fieldsOf(line: string): { style: string; text: string } | null {
 /** `sub-ass-extradata` without its [Events] section (Matroska's has its own Format line). */
 const headerOf = (header: string) => header.split(/^\s*\[Events\]\s*$/im)[0];
 
-/** The lines seen so far as one ASS document; `signs`: ids of its on-screen text events. */
-export function liveDoc(header: string, lines: readonly string[]): LiveDoc {
+/**
+ * The lines seen so far as one ASS document; `signs`: ids of its on-screen text events.
+ * `withSigns` false: spoken lines only.
+ */
+export function liveDoc(header: string, lines: readonly string[], withSigns = true): LiveDoc {
   const kept: string[] = [];
   const signs = new Set<number>();
   for (const line of lines) {
@@ -78,7 +81,7 @@ export function liveDoc(header: string, lines: readonly string[]): LiveDoc {
     const plain = plainOf(f.text);
     if (!plain || isTexture(plain)) continue;
     const sign = PLACED.test(f.text) || SIGN_STYLE.test(f.style);
-    if (plain.length > (sign ? MAX_SIGN : MAX_SPOKEN)) continue;
+    if ((sign && !withSigns) || plain.length > (sign ? MAX_SIGN : MAX_SPOKEN)) continue;
     // parseAss numbers events by their line: the id says which kind it is.
     if (sign) signs.add(kept.length);
     kept.push(line);

@@ -13,6 +13,9 @@ export type SubtitlePrefs = {
   /** Subtitles on by default when a track in a preferred language exists.
    *  The languages themselves are the app setting `subLangs` (onboarding / Général → Langues). */
   enabled: boolean;
+  /** `enabled` was set in Réglages. Older builds also saved it from the player's "off" button: such
+   *  a value is not kept (turning subtitles off in the player is for that episode only). */
+  enabledChosen: boolean;
   font: FontId;
   /** 0..5 (see SIZE_LEVELS). */
   size: number;
@@ -89,6 +92,7 @@ export const BG_OPACITIES = [0.35, 0.55, 0.75, 0.9] as const;
 
 export const DEFAULT_SUBTITLE_PREFS: SubtitlePrefs = {
   enabled: true,
+  enabledChosen: false,
   font: 'nunito',
   size: 2,
   color: '#FFFFFF',
@@ -110,7 +114,8 @@ export function sanitizeSubtitlePrefs(raw: unknown): SubtitlePrefs {
   const d = DEFAULT_SUBTITLE_PREFS;
   const int = (x: unknown, max: number, fb: number) => (typeof x === 'number' && Number.isInteger(x) && x >= 0 && x <= max ? x : fb);
   return {
-    enabled: typeof v.enabled === 'boolean' ? v.enabled : d.enabled,
+    enabled: v.enabledChosen === true && typeof v.enabled === 'boolean' ? v.enabled : d.enabled,
+    enabledChosen: v.enabledChosen === true,
     font: FONTS.includes(v.font as FontId) ? (v.font as FontId) : d.font,
     size: int(v.size, SIZE_LEVELS.length - 1, d.size),
     color: typeof v.color === 'string' && HEX.test(v.color) ? v.color : d.color,
@@ -158,7 +163,7 @@ export function setSubtitlePrefs(patch: Partial<SubtitlePrefs>) {
 }
 
 export function resetSubtitleStyle() {
-  setSubtitlePrefs({ ...DEFAULT_SUBTITLE_PREFS, enabled: prefs.enabled });
+  setSubtitlePrefs({ ...DEFAULT_SUBTITLE_PREFS, enabled: prefs.enabled, enabledChosen: prefs.enabledChosen });
 }
 
 /** Picking a track teaches the preferred language: moved to the front of `subLangs` (max 5). */

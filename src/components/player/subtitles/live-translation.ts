@@ -24,7 +24,8 @@ const BATCH = 8;
 /** Failed calls in a row before giving up (one failure only skips its lines). */
 const MAX_FAILURES = 4;
 
-export function useLiveTranslation(source: LiveTextSource | null, id: string | undefined, from: string | undefined, to: string | undefined, active: boolean) {
+/** `signs`: on-screen text translated too (Réglages → Sous-titres). */
+export function useLiveTranslation(source: LiveTextSource | null, id: string | undefined, from: string | undefined, to: string | undefined, active: boolean, signs = true) {
   const key = active && source && id && from && to && HuwaTranslate ? translationCacheKey(`live:${id}`, from, to) : '';
   const [lines, setLines] = useState<{ key: string; header: string; list: string[] }>({ key: '', header: '', list: [] });
   const [dict, setDict] = useState<{ key: string; map: Map<string, string>; ready: boolean }>({ key: '', map: new Map(), ready: false });
@@ -69,7 +70,7 @@ export function useLiveTranslation(source: LiveTextSource | null, id: string | u
   }, [key, source]);
 
   const cur0 = lines.key === key ? lines : null;
-  const live = useMemo(() => (cur0 ? liveDoc(cur0.header, cur0.list) : null), [cur0]);
+  const live = useMemo(() => (cur0 ? liveDoc(cur0.header, cur0.list, signs) : null), [cur0, signs]);
   const src = live?.doc ?? null;
   const cur = dict.key === key && dict.ready ? dict : null;
 

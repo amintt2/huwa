@@ -18,7 +18,7 @@ export default function SubtitleSettings() {
   const insets = useSafeAreaInsets();
   const prefs = useSubtitlePrefs();
   // Same list as onboarding / Général → Langues (`subLangs`, 1 to 5 languages).
-  const { subLangs: langs, autoTranslateSubs } = useSettings();
+  const { subLangs: langs, autoTranslateSubs, translateSigns } = useSettings();
   const setLangs = (v: string[]) => setSetting('subLangs', v);
   const move = (i: number, d: -1 | 1) => {
     const next = [...langs];
@@ -39,7 +39,7 @@ export default function SubtitleSettings() {
               label="Afficher les sous-titres"
               hint="Choisit automatiquement la meilleure piste : dialogues complets dans ta langue préférée, puis la meilleure source ; pistes « forcées » (panneaux, chansons) seulement s’il n’y a rien d’autre."
               value={prefs.enabled}
-              onChange={(enabled) => setSubtitlePrefs({ enabled })}
+              onChange={(enabled) => setSubtitlePrefs({ enabled, enabledChosen: true })}
             />
             {langs.map((l, i) => (
               <View key={l} style={styles.langRow}>
@@ -79,6 +79,12 @@ export default function SubtitleSettings() {
               hint={`Pas de sous-titres en ${langName(langs[0]).toLowerCase()} mais en anglais (ou une autre langue) : ils sont traduits sur ton iPhone pendant la lecture. Rien n’est envoyé en ligne.`}
               value={autoTranslateSubs}
               onChange={(v) => setSetting('autoTranslateSubs', v)}
+            />
+            <SwitchLine
+              label="Traduire aussi les textes à l’écran"
+              hint="Panneaux, titres, écrans… : traduits en petit, à leur place dans l’image, dans un encadré. Pour les sous-titres intégrés à la vidéo traduits en direct."
+              value={translateSigns}
+              onChange={(v) => setSetting('translateSigns', v)}
             />
             <TranslationModels target={langs[0]} />
           </View>

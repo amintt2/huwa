@@ -41,6 +41,8 @@ export type Settings = {
   dubAutoFallback: boolean;
   /** No subtitle in the primary language but one in another: translate it on the device. */
   autoTranslateSubs: boolean;
+  /** Live translation: on-screen text (signs) translated too, as small notes where it is. */
+  translateSigns: boolean;
   /** Reads manhwa at all (bridge prompts and manhwa suggestions). */
   readsManhwa: boolean;
   /** Chapter languages, primary first (chapter lists are filtered with it). */
@@ -76,6 +78,7 @@ export const DEFAULT_SETTINGS: Settings = {
   dubLangs: ['fr'],
   dubAutoFallback: false,
   autoTranslateSubs: true,
+  translateSigns: true,
   readsManhwa: true,
   mangaLangs: ['fr', 'en'],
   cellularData: 'balanced',
@@ -119,6 +122,7 @@ function sanitize(raw: unknown): Settings {
     dubLangs: pick('dubLangs', langs),
     dubAutoFallback: pick('dubAutoFallback', bool),
     autoTranslateSubs: pick('autoTranslateSubs', bool),
+    translateSigns: pick('translateSigns', bool),
     readsManhwa: pick('readsManhwa', bool),
     mangaLangs: pick('mangaLangs', langs),
     cellularData: pick('cellularData', (x) => CELLULAR_DATA.includes(x as CellularData)),

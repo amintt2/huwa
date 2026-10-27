@@ -4,6 +4,7 @@ import { test } from 'node:test';
 
 import { liveDoc, plainLine, translatedLive } from '../live';
 import { buildTracks, chooseTrack, syncTier } from '../select';
+import { sanitizeSubtitlePrefs } from '../prefs';
 import { translatedTrack, translationSources, translationTarget } from '../translate';
 
 const prefs = { subLangs: ['fr', 'en'], watchMode: 'sub' as const };
@@ -108,4 +109,19 @@ test('live lines from an older engine (plain text only)', () => {
   const live = liveDoc('', [plainLine(62.34, 65, 'Hello\nthere')]);
   assert.equal(live.doc.events[0].plain, 'Hello\nthere');
   assert.equal(live.doc.events[0].start, 62.34);
+});
+
+test('on-screen text can be left out of the live translation', () => {
+  const lines = [
+    line('0:00:01.00', '0:00:03.00', 'Default', 'Where are you going?'),
+    line('0:00:01.00', '0:00:03.00', 'Sign-Web', 'Results'),
+  ];
+  const live = liveDoc(HEADER, lines, false);
+  assert.deepEqual(live.doc.events.map((e) => e.plain), ['Where are you going?']);
+  assert.equal(live.signs.size, 0);
+});
+
+test("subtitles stay on unless turned off in Réglages (the player's off button was saved by older builds)", () => {
+  assert.equal(sanitizeSubtitlePrefs({ enabled: false }).enabled, true);
+  assert.equal(sanitizeSubtitlePrefs({ enabled: false, enabledChosen: true }).enabled, false);
 });
