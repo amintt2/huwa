@@ -1,15 +1,15 @@
 // Live translation of an embedded subtitle track (mpv engine). Embedded tracks are made for the
 // video, so they are always in sync, but their text is inside the video file: mpv gives each line
 // as it is shown (`onSubText`, track selected but hidden) and the line is translated on the device
-// right away. Only spoken lines are translated (mpv also gives each event as a full ASS line: signs,
-// on-screen text placed by the typesetter, and song lyrics are left out). Only translated lines are
-// drawn (the original never flashes first); translating one line takes a fraction of a second. Lines and translations are kept, so seeking back shows them
-// at once, and translations are cached on disk per episode and track.
+// right away. Each event comes as a full ASS line with the track's header (@/subtitles/live): spoken
+// lines are drawn as subtitles, signs (on-screen text) as small notes where they are. Only
+// translated lines are drawn (the original never flashes first); translating one line takes a
+// fraction of a second. Lines and translations are kept, so seeking back shows them at once, and
+// translations are cached on disk per episode and track.
 import { useEffect, useMemo, useRef, useState } from 'react';
 
-import { addCue, spokenCues, type LiveCue } from '@/subtitles/live';
-import { cuesDoc } from '@/subtitles/text';
-import { bcp47, eventSegments, translatedOnly, translationCacheKey } from '@/subtitles/translate';
+import { assLines, liveDoc, plainLine, translatedLive } from '@/subtitles/live';
+import { bcp47, eventSegments, translationCacheKey } from '@/subtitles/translate';
 
 import type { MpvSubTextEvent } from '../../../../modules/huwa-mpv';
 import { HuwaTranslate } from '../../../../modules/huwa-translate';
@@ -26,7 +26,7 @@ const MAX_FAILURES = 4;
 
 export function useLiveTranslation(source: LiveTextSource | null, id: string | undefined, from: string | undefined, to: string | undefined, active: boolean) {
   const key = active && source && id && from && to && HuwaTranslate ? translationCacheKey(`live:${id}`, from, to) : '';
-  const [cues, setCues] = useState<{ key: string; list: LiveCue[] }>({ key: '', list: [] });
+  const [lines, setLines] = useState<{ key: string; header: string; list: string[] }>({ key: '', header: '', list: [] });
   const [dict, setDict] = useState<{ key: string; map: Map<string, string>; ready: boolean }>({ key: '', map: new Map(), ready: false });
   const [error, setError] = useState('');
   const busy = useRef('');
@@ -48,28 +48,29 @@ export function useLiveTranslation(source: LiveTextSource | null, id: string | u
   useEffect(() => {
     if (!key || !source) return;
     return source.subscribe((line) => {
-      let add: LiveCue[];
-      let replaces = false;
-      if (line.ass) add = spokenCues(line.ass);
+      let add: string[];
+      if (line.ass) add = assLines(line.ass);
       else {
         // Older build: the plain text of everything on screen, signs included.
         const start = line.start >= 0 ? line.start : line.time;
         const text = line.text.replace(/\r/g, '').trim();
         if (!(start >= 0) || !text) return;
-        add = [{ start, end: line.end > start ? line.end : start + DEFAULT_LEN, text }];
-        replaces = true;
+        add = [plainLine(start, line.end > start ? line.end : start + DEFAULT_LEN, text)];
       }
-      if (!add.length) return;
-      setCues((c) => {
-        const list = c.key === key ? c.list : [];
-        const next = add.reduce((l, cue) => addCue(l, cue, replaces), list);
-        return next === list && c.key === key ? c : { key, list: next };
+      setLines((c) => {
+        const cur = c.key === key ? c : { key, header: '', list: [] };
+        const seen = new Set(cur.list);
+        const fresh = add.filter((l) => !seen.has(l));
+        const header = line.header || cur.header;
+        if (!fresh.length && header === cur.header) return cur === c ? c : cur;
+        return { key, header, list: fresh.length ? [...cur.list, ...fresh] : cur.list };
       });
     });
   }, [key, source]);
 
-  const list = cues.key === key ? cues.list : null;
-  const src = useMemo(() => (list ? cuesDoc(list) : null), [list]);
+  const cur0 = lines.key === key ? lines : null;
+  const live = useMemo(() => (cur0 ? liveDoc(cur0.header, cur0.list) : null), [cur0]);
+  const src = live?.doc ?? null;
   const cur = dict.key === key && dict.ready ? dict : null;
 
   useEffect(() => {
@@ -107,7 +108,7 @@ export function useLiveTranslation(source: LiveTextSource | null, id: string | u
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [key, src, cur, error, tick]);
 
-  const doc = useMemo(() => (key && src && cur ? translatedOnly(src, cur.map) : null), [key, src, cur]);
+  const doc = useMemo(() => (key && live && cur ? translatedLive(live, cur.map) : null), [key, live, cur]);
   return {
     doc,
     started: !!doc && doc.events.length > 0,

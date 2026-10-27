@@ -2,10 +2,9 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
-import { addCue, spokenCues } from '../live';
+import { liveDoc, plainLine, translatedLive } from '../live';
 import { buildTracks, chooseTrack, syncTier } from '../select';
-import { cuesDoc } from '../text';
-import { translatedOnly, translatedTrack, translationSources, translationTarget } from '../translate';
+import { translatedTrack, translationSources, translationTarget } from '../translate';
 
 const prefs = { subLangs: ['fr', 'en'], watchMode: 'sub' as const };
 
@@ -49,37 +48,64 @@ test('translation sources: in-sync files before other ones, whatever the languag
   assert.deepEqual(translationSources(tracks, prefs).map((t) => t.lang), ['es', 'en']);
 });
 
-test('live lines: a newer line ends the one it replaces, repeats are ignored', () => {
-  let list = addCue([], { start: 10, end: 14, text: 'Hello' });
-  list = addCue(list, { start: 12, end: 15, text: 'Hello\nSign' });
-  assert.deepEqual(list.map((c) => [c.start, c.end]), [[10, 12], [12, 15]]);
-  assert.equal(addCue(list, { start: 12.01, end: 15, text: 'Hello\nSign' }), list);
-});
+const HEADER = [
+  '[Script Info]',
+  'PlayResX: 1920',
+  'PlayResY: 1080',
+  '[V4+ Styles]',
+  'Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding',
+  'Style: Default,Gandhi Sans,72,&H00FFFFFF,&H000000FF,&H00000000,&H00000000,0,0,0,0,100,100,0,0,1,3,1,2,80,80,50,1',
+  'Style: Sign-Web,Arial,60,&H00000000,&H000000FF,&H00FFFFFF,&H00000000,0,0,0,0,100,100,0,0,1,0,0,8,10,10,40,1',
+  '[Events]',
+  'Format: ReadOrder, Layer, Style, Name, MarginL, MarginR, MarginV, Effect, Text',
+].join('\n');
 
-test('live translation shows translated lines only', () => {
-  const doc = cuesDoc([
-    { start: 1, end: 2, text: 'Where are you going?' },
-    { start: 3, end: 4, text: 'Wait!' },
+const line = (start: string, end: string, style: string, text: string, layer = 0) => `Dialogue: ${layer},${start},${end},${style},,0000,0000,0000,,${text}`;
+
+test('live lines: spoken lines and signs, drawings, lyrics and screens of text left out', () => {
+  const live = liveDoc(HEADER, [
+    line('0:18:49.10', '0:18:52.00', 'Default', '{\\i1}Where are you{\\i0}\\Ngoing?'),
+    line('0:18:49.10', '0:18:55.00', 'Default', '{\\pos(960,300)\\fs90}Hygiene search'),
+    line('0:18:49.10', '0:18:55.00', 'Sign-Web', 'Results'),
+    line('0:18:49.10', '0:18:55.00', 'Default', `{\\pos(960,500)}${'Hygiene in daily life. '.repeat(20)}`),
+    line('0:18:49.10', '0:18:55.00', 'Default', '{\\p1}m 0 0 l 100 0 l 100 100{\\p0}'),
+    line('0:18:49.10', '0:18:55.00', 'Default', '{\\pos(10,10)}LLLLLLLLLLLLLLLL'),
+    line('0:18:49.10', '0:18:55.00', 'OP-Romaji', 'Chorogonzu'),
   ]);
-  const out = translatedOnly(doc, new Map([['Where are you going?', 'Où vas-tu ?']]));
-  assert.deepEqual(out.events.map((e) => e.plain), ['Où vas-tu ?']);
+  assert.deepEqual(live.doc.events.map((e) => e.plain), ['Where are you\ngoing?', 'Hygiene search', 'Results']);
+  assert.equal(live.doc.playResY, 1080);
+  assert.equal(live.signs.size, 2);
+  assert.equal(live.doc.events[0].start, 18 * 60 + 49.1);
 });
 
-test('live lines from full ASS events: spoken lines only, each with its own times', () => {
-  const page = 'Hygiene in daily life. '.repeat(20);
-  const raw = [
-    'Dialogue: 0,0:18:49.10,0:18:52.00,Default,,0000,0000,0000,,{\\i1}Where are you{\\i0}\\Ngoing?',
-    'Dialogue: 0,0:18:49.10,0:18:55.00,Default,Kobayashi,0000,0000,0000,,Wait, Tohru!',
-    'Dialogue: 5,0:18:49.10,0:18:55.00,Default,,0000,0000,0000,,{\\pos(640,120)\\fs40}Hygiene search',
-    'Dialogue: 5,0:18:49.10,0:18:55.00,Sign-Web,,0000,0000,0000,,Results',
-    `Dialogue: 0,0:18:49.10,0:18:55.00,Default,,0000,0000,0000,,${page}`,
-    'Dialogue: 0,0:18:49.10,0:18:55.00,OP-Romaji,,0000,0000,0000,,Chorogonzu',
-  ].join('\n');
-  const cues = spokenCues(raw);
-  assert.deepEqual(cues.map((c) => c.text), ['Where are you\ngoing?', 'Wait, Tohru!']);
-  assert.equal(cues[0].start, 18 * 60 + 49.1);
-  assert.equal(cues[1].end, 18 * 60 + 55);
-  // Lines with their own times do not cut each other short.
-  const list = cues.reduce((l, c) => addCue(l, c, false), [] as typeof cues);
-  assert.deepEqual(list.map((c) => c.end), [18 * 60 + 52, 18 * 60 + 55]);
+test('live translation: spoken lines as subtitles, signs as small notes where they are', () => {
+  const live = liveDoc(HEADER, [
+    line('0:00:01.00', '0:00:03.00', 'Default', 'Where are you going?'),
+    line('0:00:01.00', '0:00:03.00', 'Default', '{\\pos(960,300)\\fs90}Hygiene search'),
+    line('0:00:01.00', '0:00:01.04', 'Sign-Web', 'Results'),
+    line('0:00:04.00', '0:00:05.00', 'Default', 'Wait!'),
+  ]);
+  const out = translatedLive(live, new Map([
+    ['Where are you going?', 'Où vas-tu ?'],
+    ['Hygiene search', "Recherche d'hygiène"],
+    ['Results', 'Résultats'],
+  ]));
+  // "Wait!" is not translated yet: not drawn.
+  assert.deepEqual(out.events.map((e) => e.plain), ['Où vas-tu ?', "Recherche d'hygiène", 'Résultats']);
+  const [spoken, placed, slotted] = out.events;
+  assert.equal(spoken.pos, undefined);
+  assert.equal(spoken.style.name, 'Default');
+  assert.deepEqual(placed.pos, { x: 960, y: 300 });
+  assert.equal(placed.style.borderStyle, 3);
+  assert.ok(placed.style.fontSize < 90 && placed.style.fontSize >= 1080 * 0.03);
+  // A sign without \pos: anchored where its alignment and margins put it (top centre).
+  assert.deepEqual(slotted.pos, { x: 960, y: 40 });
+  // A one-frame sign (motion tracking) stays long enough to be read.
+  assert.ok(slotted.end - slotted.start >= 2);
+});
+
+test('live lines from an older engine (plain text only)', () => {
+  const live = liveDoc('', [plainLine(62.34, 65, 'Hello\nthere')]);
+  assert.equal(live.doc.events[0].plain, 'Hello\nthere');
+  assert.equal(live.doc.events[0].start, 62.34);
 });

@@ -43,6 +43,8 @@ export type MpvSubTextEvent = {
   time: number;
   /** `sub-text/ass-full`: one "Dialogue: …" line per event on screen ("" on older builds). */
   ass?: string;
+  /** `sub-ass-extradata`: the track's ASS header (script size, styles). */
+  header?: string;
 };
 
 /** Imperative API of the native view (ref). All calls are fire-and-forget on the mpv queue. */
