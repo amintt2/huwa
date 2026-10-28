@@ -48,6 +48,8 @@ export function reusableWin(win: PeerWin | undefined, nowMs: number, candidateKe
 
 /** What the decision needs from a probe (+ when it ended, ms since the race started). */
 export type PeerProbe = Pick<ProbeStatus, 'state' | 'peers' | 'connected' | 'local' | 'pieceLength'> & {
+  /** Size of the file found for the episode (bytes). */
+  fileSize?: number | null;
   fileIdx?: number | null;
   doneAtMs?: number;
 };
@@ -191,6 +193,25 @@ export function shouldWiden(probes: (PeerProbe | undefined)[], elapsedMs: number
 /** Keys whose torrent does not contain the episode: never started. */
 export const wrongTorrents = (probes: Record<string, PeerProbe | undefined>) =>
   Object.keys(probes).filter((k) => probes[k]?.state === 'noFile');
+
+/** Below this average bitrate (Mb/s) no encode is watchable: the file is an extra, not the episode. */
+const MIN_EPISODE_MBPS = 0.2;
+/** Episodes shorter than this (minutes) are not checked: shorts vary too much. */
+const MIN_CHECKED_MIN = 8;
+
+/**
+ * Torrents whose file is far too small for an episode of `officialMin` minutes: a special, a
+ * creditless opening or a preview a pack (or the addon's file index) designates instead of the
+ * episode (a 17 MB, 1 min 25 bonus for a 24 min episode). Never started.
+ */
+export function tooSmallTorrents(probes: Record<string, PeerProbe | undefined>, officialMin?: number): string[] {
+  if (!officialMin || officialMin < MIN_CHECKED_MIN) return [];
+  const min = (officialMin * 60 * MIN_EPISODE_MBPS * 1e6) / 8;
+  return Object.keys(probes).filter((k) => {
+    const size = probes[k]?.fileSize;
+    return size != null && size > 0 && size < min;
+  });
+}
 
 export type PeerVerdict = 'fast' | 'ok' | 'slow' | 'dead';
 

@@ -114,7 +114,11 @@ function WatchScreen({ id, at }: { id: string; at?: number }) {
 
   // ---- Source: auto (first that works, then better quality) or manual via the menu ----
   const torrentSettings = useTorrentSettings();
-  const src = useSource(series.id, episode.number, { enabled: !offline, engineAvailable: torrentEngineLinked() && !torrentSettings.enabled });
+  const src = useSource(series.id, episode.number, {
+    enabled: !offline,
+    engineAvailable: torrentEngineLinked() && !torrentSettings.enabled,
+    officialMin: episode.officialMin,
+  });
   // Subtitle addons, asked again with the playing file (hash / size / name) for exact matches.
   const playing = src.current;
   const playingVideo = useMemo(() => subtitleExtraOf(playing), [playing]);
@@ -641,7 +645,7 @@ function WatchScreen({ id, at }: { id: string; at?: number }) {
           subtitles={subtitlesForDownload}
         />
       )}
-      {next && <PrefetchNext seriesId={series.id} episode={next.number} armed={prefetchArmed} buffer={prewarmNext} onDub={setNextDub} />}
+      {next && <PrefetchNext seriesId={series.id} episode={next.number} officialMin={next.officialMin} armed={prefetchArmed} buffer={prewarmNext} onDub={setNextDub} />}
       {/* Hidden, not unmounted, in fullscreen: keeps the comment draft and scroll position. */}
       <View style={{ flex: 1, display: full ? 'none' : 'flex' }}>
         <CommentsPanel

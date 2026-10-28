@@ -14,6 +14,7 @@ import {
   shouldWiden,
   SOFT_COMMIT_MS,
   WIDEN_AFTER_MS,
+  tooSmallTorrents,
   wrongTorrents,
   type PeerCandidate,
   type PeerProbe,
@@ -153,3 +154,16 @@ test('exhausted race (5G device data): widen first, never a blind start when a p
   assert.equal(afterExhausted([c('a', 0, p('failed')), c('b', 0, p('noFile', { connected: 4 }))], true, 8), null);
 });
 
+
+test("a pack's bonus file is not taken for a 24 min episode", () => {
+  const probes = {
+    special: p('healthy', { fileSize: 17e6 }),
+    episode: p('healthy', { fileSize: 497e6 }),
+    lightEncode: p('weak', { fileSize: 60e6 }),
+    unknown: p('resolving'),
+  };
+  assert.deepEqual(tooSmallTorrents(probes, 24), ['special']);
+  // Length unknown, or a short: no check.
+  assert.deepEqual(tooSmallTorrents(probes, undefined), []);
+  assert.deepEqual(tooSmallTorrents(probes, 3), []);
+});

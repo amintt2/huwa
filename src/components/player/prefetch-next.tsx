@@ -19,14 +19,16 @@ import { WarmPlayer } from './warm-player';
 
 export type NextDubReport = { phase: DubPhase; fallback: string | null };
 
-export function PrefetchNext({ seriesId, episode, armed, buffer, onDub }: {
+export function PrefetchNext({ seriesId, episode, officialMin, armed, buffer, onDub }: {
   seriesId: string;
   episode: number;
+  /** Official length (minutes): a pack's bonus file is not taken for the episode. */
+  officialMin?: number;
   armed: boolean;
   buffer: boolean;
   onDub?: (r: NextDubReport) => void;
 }) {
-  const src = useSource(seriesId, episode, { enabled: armed });
+  const src = useSource(seriesId, episode, { enabled: armed, officialMin });
   useSubtitles(seriesId, episode, armed);
   const { phase, fallback } = src.dub;
   useEffect(() => {

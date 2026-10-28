@@ -46,6 +46,7 @@ import {
   reusableWin,
   shouldWiden,
   unpackKeys,
+  tooSmallTorrents,
   wrongTorrents,
   type PeerCandidate,
   type PeerProbe,
@@ -100,6 +101,13 @@ const wallClock = () => Date.now();
  * in the engine's probe cache). See `reusableWin`.
  */
 const peerWins = new Map<string, PeerWin>();
+/**
+ * Sources shown to hold another file than the episode (wrong length, file far too small, episode
+ * not in the pack), by episode (`seriesId:episode`): the next-episode prefetch learns it before
+ * the tap, and the watch screen (or a replay) never starts them again.
+ */
+const wrongFiles = new Map<string, Set<string>>();
+const MAX_WRONG_SCOPES = 100;
 
 export type SourceOptions = {
   /** false = idle (used to prefetch the next episode only once armed). */
@@ -108,6 +116,8 @@ export type SourceOptions = {
   preview?: boolean;
   /** The on-device torrent engine exists but is switched off (for the "no source" reason). */
   engineAvailable?: boolean;
+  /** Official length of the episode (minutes): torrent files far too small for it are left out. */
+  officialMin?: number;
 };
 
 /** Copy of `rec` without `k` (a cleared resolution must re-trigger resolving, not block it). */
@@ -118,7 +128,7 @@ function dropKey<T>(rec: Record<string, T>, k: string): Record<string, T> {
   return next;
 }
 
-export function useSource(seriesId: string, episode: number, { enabled = true, preview = false, engineAvailable = false }: SourceOptions = {}) {
+export function useSource(seriesId: string, episode: number, { enabled = true, preview = false, engineAvailable = false, officialMin }: SourceOptions = {}) {
   const { streams, infos, pending, failed, asked, refreshed, refresh } = useStreams(seriesId, episode, enabled);
   const prefs = useAddonPrefs();
   const { watchMode, subLangs, dubLangs, autoTranslateSubs, dubAutoFallback } = useSettings();
@@ -187,7 +197,16 @@ export function useSource(seriesId: string, episode: number, { enabled = true, p
   const [suspended, setSuspended] = useState<{ keys: string[]; gen: number }>({ keys: [], gen: -1 });
   /** Torrents the probes showed not to contain this episode (never started), per episode. */
   const [wrong, setWrong] = useState<{ scope: string; keys: string[] }>({ scope: peerScope, keys: [] });
-  const wrongKeys = wrong.scope === peerScope ? wrong.keys : [];
+  // Plus the ones found wrong elsewhere (next-episode prefetch, an earlier visit).
+  const wrongKeys = [...new Set([...(wrong.scope === peerScope ? wrong.keys : []), ...(wrongFiles.get(peerScope) ?? [])])];
+  const addWrong = (keys: string[]) => {
+    const known = wrongFiles.get(peerScope) ?? new Set<string>();
+    keys.forEach((k) => known.add(k));
+    wrongFiles.delete(peerScope);
+    wrongFiles.set(peerScope, known);
+    if (wrongFiles.size > MAX_WRONG_SCOPES) wrongFiles.delete(wrongFiles.keys().next().value!);
+    setWrong({ scope: peerScope, keys: [...new Set([...wrongKeys, ...keys])] });
+  };
   /** Cached links already given their second chance. */
   const retried = useRef(new Set<string>());
   // The fresh answer arrived: suspended links compete again (same link = retried once).
@@ -452,8 +471,9 @@ export function useSource(seriesId: string, episode: number, { enabled = true, p
     return () => clearTimeout(t);
   }, [peerWaitMs, peer.probes]);
   // Wrong torrent (episode not inside): out of the pool, the next candidate gets probed.
-  const newlyWrong = wrongTorrents(peer.probes).filter((k) => !wrongKeys.includes(k));
-  if (newlyWrong.length) setWrong({ scope: peerScope, keys: [...wrongKeys, ...newlyWrong] });
+  // Or its file is far too small to be the episode (a bonus of the pack).
+  const newlyWrong = [...new Set([...wrongTorrents(peer.probes), ...tooSmallTorrents(peer.probes, officialMin)])].filter((k) => !wrongKeys.includes(k));
+  if (newlyWrong.length) addWrong(newlyWrong);
   // Dub mode: a dubbed torrent whose probe failed (no metadata / no peer) is not waited for.
   const newlyDead = dubMode ? Object.keys(peer.probes).filter((k) => peer.probes[k]?.state === 'failed' && !deadSwarmKeys.includes(k)) : [];
   if (newlyDead.length) setDeadSwarms({ scope: peerScope, keys: [...deadSwarmKeys, ...newlyDead] });
@@ -556,6 +576,8 @@ export function useSource(seriesId: string, episode: number, { enabled = true, p
       return;
     }
     setBad((b) => (b.includes(k) ? b : [...b, k]));
+    // Another file than the episode: never offered again for it, on this screen or the next.
+    if (final) addWrong([k]);
     if (error) setResolved((r) => ({ ...r, [k]: { ...r[k], error } }));
     setManual((m) => (m === k ? undefined : m));
     setLocked((l) => (l === k ? undefined : l));

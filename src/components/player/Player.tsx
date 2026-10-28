@@ -17,6 +17,7 @@ import Ionicons from '@expo/vector-icons/Ionicons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useEvent, useEventListener } from 'expo';
 import * as ScreenOrientation from 'expo-screen-orientation';
+import { activateKeepAwakeAsync, deactivateKeepAwake } from 'expo-keep-awake';
 import { StatusBar } from 'expo-status-bar';
 import {
   isPictureInPictureSupported,
@@ -160,6 +161,7 @@ export type PlayerProps = {
 
 const NEXT_WINDOW = 90;
 const LIVE_COMMENT_SECONDS = 7;
+const KEEP_AWAKE_TAG = 'huwa-player';
 const hitSlop = 10;
 
 function Ctl({ icon, label, onPress, size = 22, big, active }: { icon: IconName; label: string; onPress: () => void; size?: number; big?: boolean; active?: boolean }) {
@@ -302,6 +304,16 @@ export function Player({
   const { isPlaying } = useEvent(player, 'playingChange', { isPlaying: player.playing });
   usePlayerTrace(player, mediaKey, source?.uri);
   const { status, error } = useEvent(player, 'statusChange', { status: player.status, error: undefined });
+  // The screen stays on while a video plays or loads (AVPlayer's own view does it, mpv's does not);
+  // paused, it may sleep again.
+  const awake = isPlaying || (!!source?.uri && status === 'loading');
+  useEffect(() => {
+    if (!awake) return;
+    activateKeepAwakeAsync(KEEP_AWAKE_TAG).catch(() => {});
+    return () => {
+      deactivateKeepAwake(KEEP_AWAKE_TAG).catch(() => {});
+    };
+  }, [awake]);
 
   // ---------- fullscreen = landscape ----------
   const full = window.width > window.height;
