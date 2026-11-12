@@ -15,7 +15,7 @@
       "bundleIdentifier": "com.amintt2.huwa",
       "developerName": "Huwa",
       "subtitle": "Regarder, lire, reprendre au bon chapitre",
-      "localizedDescription": "Huwa relie les épisodes d'un anime aux chapitres du manhwa correspondant et mémorise votre progression. Catalogue AniList, lecteur vidéo (HLS/HTTP via vos addons), lecture verticale, commentaires locaux.\n\nHuwa n'héberge, n'indexe ni ne recommande aucun contenu. Voir les conditions d'utilisation : https://github.com/amintt2/huwa/blob/huwa-v1/distribution/LEGAL.md",
+      "localizedDescription": "Huwa relie les épisodes d'un anime aux chapitres du manhwa correspondant et mémorise votre progression. Catalogue AniList, lecteur vidéo (HLS/HTTP via vos addons), lecture verticale, commentaires locaux.\n\nHuwa n'héberge, n'indexe ni ne recommande aucun contenu. Voir les conditions d'utilisation : https://github.com/amintt2/huwa/blob/main/distribution/LEGAL.md",
       "iconURL": "https://huwa.mciut.fr/altstore/icon.png",
       "tintColor": "#2F6BEB",
       "category": "entertainment",

@@ -39,7 +39,7 @@ installs the PWA, runs its service worker and offers passkeys on a secure origin
 `deploy/docker-compose.yml` in the repository:
 
 ```sh
-curl -O https://raw.githubusercontent.com/amintt2/huwa/huwa-v1/deploy/docker-compose.yml
+curl -O https://raw.githubusercontent.com/amintt2/huwa/main/deploy/docker-compose.yml
 # edit HUWA_PUBLIC_URL, then
 docker compose up -d
 docker compose logs -f huwa
