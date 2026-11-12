@@ -10,6 +10,7 @@ import { BridgeToManhwa } from '@/components/bridge';
 import { DownloadSheet, EpisodeDownloadButton } from '@/components/downloads/episode-download';
 import { ListsButton } from '@/components/lists';
 import { isStoreBuild } from '@/config/channel';
+import { useCanWatch } from '@/addons/playback';
 import { PRIORITY, usePresearch } from '@/components/presearch';
 import { DetailBackdrop, DetailNav, DetailTabs, Synopsis } from '@/components/detail';
 import { DetailSkeleton } from '@/components/skeletons';
@@ -67,6 +68,8 @@ export default function AnimeDetail() {
 }
 
 function AnimeDetailPage({ id, view, onSeasons }: { id: string; view?: SeasonView; onSeasons: () => void }) {
+  // Without an extension that plays in Huwa, episodes open « Où regarder » (official services).
+  const canWatch = useCanWatch() !== false;
   const insets = useSafeAreaInsets();
   // Chapter ranges change when earlier seasons or community corrections arrive.
   useCatalog();
@@ -151,8 +154,10 @@ function AnimeDetailPage({ id, view, onSeasons }: { id: string; view?: SeasonVie
           <View style={{ gap: S.sm }}>
             <Button
               large
+              // No extension that plays in Huwa: greyed « Regarder », which opens the official options.
+              variant={canWatch ? 'solid' : 'ghost'}
               icon="play"
-              label={`${started ? 'Reprendre' : 'Commencer'} · ${view ? view.badge(resume) : `Ép. ${resume.number}`}`}
+              label={`${canWatch ? (started ? 'Reprendre' : 'Commencer') : 'Regarder'} · ${view ? view.badge(resume) : `Ép. ${resume.number}`}`}
               onPress={() => {
                 traceTap(resume.id);
                 router.push(`/watch/${resume.id}`);
@@ -178,8 +183,10 @@ function AnimeDetailPage({ id, view, onSeasons }: { id: string; view?: SeasonVie
                 accessibilityLabel={seriesBell ? 'Ne plus me rappeler les nouveaux épisodes' : 'Me rappeler les nouveaux épisodes'} />
             )}
             <ListsButton seriesId={series.id} tile />
-            <ActionTile icon="chatbubble-outline" label={commentCount ? `Avis · ${commentCount}` : 'Avis'} onPress={openComments}
-              accessibilityLabel={`Commentaires, ${commentCount}`} />
+            {!isStoreBuild && (
+              <ActionTile icon="chatbubble-outline" label={commentCount ? `Avis · ${commentCount}` : 'Avis'} onPress={openComments}
+                accessibilityLabel={`Commentaires, ${commentCount}`} />
+            )}
           </View>
 
           <Synopsis text={series.synopsis} />
@@ -187,7 +194,7 @@ function AnimeDetailPage({ id, view, onSeasons }: { id: string; view?: SeasonVie
           {series.manhwa && <BridgeToManhwa series={series} />}
 
           <DetailTabs
-            tabs={[{ label: 'Épisodes', active: true }, { label: 'Commentaires', count: commentCount, onPress: openComments }]}
+            tabs={isStoreBuild ? [{ label: 'Épisodes', active: true }] : [{ label: 'Épisodes', active: true }, { label: 'Commentaires', count: commentCount, onPress: openComments }]}
             right={view?.pickable && <SeasonButton label={view.buttonLabel} onPress={onSeasons} />}
           />
 
@@ -202,17 +209,20 @@ function AnimeDetailPage({ id, view, onSeasons }: { id: string; view?: SeasonVie
               <Press
                 key={e.id}
                 onPress={() => router.push(`/watch/${e.id}`)}
-                // App Store flavor: no episode downloads (their sources are extensions).
-                onLongPress={isStoreBuild ? undefined : () => setDlFor({ e, s: es })}
+                // No episode downloads without an extension that plays in Huwa (always in the App Store flavor).
+                onLongPress={!canWatch ? undefined : () => setDlFor({ e, s: es })}
                 delayLongPress={350}
                 scaleTo={0.98}
                 style={styles.row}
                 accessibilityLabel={`${rowLabel(e, number, title)}${done ? ', vu' : ''}${dl ? ', téléchargé' : ''}`}
-                accessibilityHint={isStoreBuild ? undefined : 'Appui long : options de téléchargement'}>
+                accessibilityHint={!canWatch ? undefined : 'Appui long : options de téléchargement'}>
                 <Cover palette={es.palette} image={es.image} width={136} height={77} radius={8} dim={done}>
-                  <View style={[styles.thumbPlay, current && { backgroundColor: C.accent, borderColor: C.accent }]}>
-                    <Ionicons name={done ? 'checkmark' : 'play'} size={13} color={C.white} style={done ? undefined : { marginLeft: 1.5 }} />
-                  </View>
+                  {/* No play badge when nothing can play in Huwa: the row opens « Où regarder ». */}
+                  {(done || canWatch) && (
+                    <View style={[styles.thumbPlay, current && { backgroundColor: C.accent, borderColor: C.accent }]}>
+                      <Ionicons name={done ? 'checkmark' : 'play'} size={13} color={C.white} style={done ? undefined : { marginLeft: 1.5 }} />
+                    </View>
+                  )}
                   <View style={styles.duration}>
                     <Text style={styles.durationText}>{e.durationMin} min</Text>
                   </View>
@@ -232,7 +242,7 @@ function AnimeDetailPage({ id, view, onSeasons }: { id: string; view?: SeasonVie
                     </Txt>
                   </View>
                 </View>
-                {!isStoreBuild && (
+                {canWatch && (
                   <EpisodeDownloadButton
                     episodeId={e.id}
                     onPress={() => (getItem(e.id) ? setDlFor({ e, s: es }) : enqueueEpisodes(es, e, 'one'))}

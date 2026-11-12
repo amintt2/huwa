@@ -29,6 +29,17 @@ Run lint and typecheck before declaring any task done.
 - Import `Link`, `router`, and `useLocalSearchParams` from `expo-router`.
 - Docs: https://docs.expo.dev/router/introduction.md
 
+## iOS distribution — read before any build or submission
+
+Huwa on iOS ships through **AltStore PAL after Apple notarization**, not through the App Store. Full details: `distribution/IOS.md` (section « État réel et règles »).
+
+- **Build for PAL = full flavor**: `HUWA_TORRENT=1 HUWA_MPV=1`, never `HUWA_LITE=1`. Local archive: `HUWA_TORRENT=1 HUWA_MPV=1 npx expo prebuild -p ios --clean`, then `xcodebuild … archive` in `ios/`, `asc xcode export`, `asc builds upload --app 6817880554`. EAS is not logged in on this Mac.
+- **Review type = Notarization** (« Certification » in the French App Store Connect: Vérification de l'app → Type de vérification). It is already set on the version; check it before submitting. `asc review submit` then sends a notarization review, not an App Store review.
+- **App Store availability stays at 0 territories**, « future territories » unticked. The `HUWA_LITE=1` store flavor is a possible later App Store app, not the current goal.
+- AltStore PAL is already added as a marketplace (App Store Connect → Utilisateurs et accès → Intégrations → Place de marché en ligne, since 2026-09-30, Huwa ticked, notifications on). Do not register again.
+- **After notarization**: get the ADP ID, let AltStore process it (`api.altstore.io/adps`), download it, host it **unmodified** under `site/adp/<version>/` and point `site/altstore-source.json` → `versions[0].downloadURL` at its `manifest.json`. Until then PAL shows « couldn't be read because it isn't in the correct format » (the URL serves the site's index.html).
+- The 2.5.19 reply to App Review is in `distribution/apple-review-reply-2.5.19.md`: paste it in the review notes when resubmitting.
+
 ## Building with EAS
 
 Use EAS to build, sign, and submit the app in the cloud (`eas build`, `eas submit`) and to ship over-the-air updates (`eas update`) — no local Xcode or Android Studio required. Run EAS CLI as `bunx eas-cli <command>` in Bun projects, or `npx eas-cli@latest <command>` otherwise; substitute that for bare `eas` in docs examples.

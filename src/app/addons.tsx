@@ -45,7 +45,7 @@ export default function Extensions() {
 
       {/* ---------- Vidéo ---------- */}
       <View style={{ gap: S.md }}>
-        {/* The count matches the list below, demo included. */}
+        {/* The count matches the list below, the built-in « Où regarder » included. */}
         <SectionTitle icon="play-circle-outline" title="Vidéo" subtitle="Addons Stremio : flux, sous-titres, catalogues" count={addons.length} action={mine.length ? 'Ajouter' : undefined} onAction={() => openAdd('video')} />
 
         <Card>
@@ -55,7 +55,7 @@ export default function Extensions() {
         </Card>
 
         {!mine.length && (
-          <EmptyCard icon="film-outline" text="Seule la démo est installée : elle lit des vidéos de test libres de droits. Ajoute un addon compatible Stremio pour trouver de vrais épisodes." action="Ajouter un addon" onAction={() => openAdd('video')} />
+          <EmptyCard icon="film-outline" text="Seule l’extension intégrée « Où regarder » est installée : elle montre les services officiels de chaque série. Ajoute un addon compatible Stremio pour lire dans Huwa." action="Ajouter un addon" onAction={() => openAdd('video')} />
         )}
         {addons.length > 1 && (
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: S.md, paddingHorizontal: S.xs }}>
@@ -146,7 +146,7 @@ export default function Extensions() {
         <Txt v="caption" accessibilityRole="header" style={{ paddingHorizontal: S.md }}>Plus</Txt>
         <Card>
           <LinkRow icon="share-social-outline" label="Partager mes extensions" hint="Un pack (lien + QR) pour qu’un ami installe les mêmes en un geste." onPress={() => router.push('/pack-create' as Href)} />
-          <LinkRow icon="download-outline" label="Importer depuis Stremio ou anime-sama" hint="Reprends ta liste et tes addons sans repartir de zéro." onPress={() => router.push('/import' as Href)} />
+          <LinkRow icon="download-outline" label="Importer ma liste depuis un fichier" hint="Reprends ta liste et tes addons sans repartir de zéro." onPress={() => router.push('/import' as Href)} />
           <LinkRow icon="globe-outline" label="Site des extensions" hint="huwa.mciut.fr : bouton « Ajouter à Huwa » et QR pour n’importe quel addon." external last onPress={() => WebBrowser.openBrowserAsync(EXTENSIONS_SITE)} />
         </Card>
       </View>

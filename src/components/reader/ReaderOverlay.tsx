@@ -30,7 +30,8 @@ export type OverlayProps = {
   onPrev: () => void;
   onNext: () => void;
   comments: number;
-  onComments: () => void;
+  /** Undefined in the App Store flavor (no comments): the button is hidden. */
+  onComments?: () => void;
   download?: { icon: IconName | null; label: string; progress?: string; done: boolean; onPress: () => void };
   locked: boolean;
   onToggleLock: () => void;
@@ -115,12 +116,14 @@ export function ReaderOverlay(p: OverlayProps) {
       )}
 
       <Animated.View pointerEvents={pe} style={[styles.abs, styles.column, edge, { bottom: bottomY, width: Math.max(44, SCRUBBER_W) }, bottomStyle]}>
-        <IconButton icon="chatbubble-outline" label={`${p.comments} commentaires sur ce chapitre`} onPress={p.onComments}
-          right={p.comments > 0 ? (
-            <View style={styles.badge} pointerEvents="none">
-              <Txt v="caption" tabular color={C.white} style={{ fontSize: 10, letterSpacing: 0 }}>{p.comments > 99 ? '99+' : p.comments}</Txt>
-            </View>
-          ) : undefined} />
+        {p.onComments && (
+          <IconButton icon="chatbubble-outline" label={`${p.comments} commentaires sur ce chapitre`} onPress={p.onComments}
+            right={p.comments > 0 ? (
+              <View style={styles.badge} pointerEvents="none">
+                <Txt v="caption" tabular color={C.white} style={{ fontSize: 10, letterSpacing: 0 }}>{p.comments > 99 ? '99+' : p.comments}</Txt>
+              </View>
+            ) : undefined} />
+        )}
         <IconButton icon={p.locked ? 'lock-closed' : 'phone-portrait-outline'} color={p.locked ? C.accentText : C.text}
           label={p.locked ? 'Orientation verrouillée, déverrouiller' : 'Orientation libre, verrouiller'} onPress={p.onToggleLock} />
         <IconButton icon="settings-outline" label="Réglages du lecteur" onPress={p.onSettings} />

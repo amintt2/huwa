@@ -2,7 +2,9 @@ import { useLocalSearchParams } from 'expo-router';
 import { useState } from 'react';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 
+import { useCanRead } from '@/addons/playback';
 import { ChapterReader } from '@/components/reader/ChapterReader';
+import { WhereToRead } from '@/components/where-to';
 import { Txt } from '@/components/ui';
 import { getChapter } from '@/data/catalog';
 import { numericParam } from '@/social/anchor-nav';
@@ -11,7 +13,12 @@ import { S } from '@/theme/tokens';
 export default function Read() {
   // `page` (1-based): open at this page (comment anchors, huwa://read/<ch>?page=12 links).
   const { id, page } = useLocalSearchParams<{ id: string; page?: string }>();
-  if (!getChapter(id)) return <Txt style={{ padding: S.xl }}>Chapitre introuvable.</Txt>;
+  const canRead = useCanRead();
+  const found = getChapter(id);
+  if (!found) return <Txt style={{ padding: S.xl }}>Chapitre introuvable.</Txt>;
+  // No manga source installed (always the case in the App Store flavor): the chapter page lists the
+  // official platforms instead of a reader of placeholder pages.
+  if (!canRead) return <WhereToRead key={id} series={found.series} chapter={found.chapter} />;
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
       <Session key={id} id={id} startPage={numericParam(page, 9999)} />

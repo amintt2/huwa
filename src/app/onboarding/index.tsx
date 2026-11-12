@@ -6,23 +6,29 @@ import { Alert, KeyboardAvoidingView, Platform, Pressable, ScrollView, View } fr
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { CloudAccountCard } from '@/components/cloud-account';
-import { Field } from '@/components/social';
+import { DANGER } from '@/components/social';
 import { Button, Txt, Wordmark, type IconName } from '@/components/ui';
 import { social } from '@/p2p/hooks';
-import { requestPasskeyOffer } from '@/p2p/passkey';
 import { getState } from '@/store/store';
 import { C, F, S, SHADOW } from '@/theme/tokens';
 
+// First screen after the introduction: one button. No pseudo, no key, no phrase, no QR code here:
+// the identity is created quietly with a temporary pseudo (changeable in the profile), and its
+// backup goes to iCloud Keychain on its own. Saving the phrase, linking a device and the technical
+// details live in Réglages → Compte et appareils.
 const POINTS: { icon: IconName; title: string; text: string }[] = [
-  { icon: 'key-outline', title: 'Ton compte, ta clé', text: 'Ton identité est une clé créée sur ce téléphone. Aucun serveur ne la détient.' },
-  { icon: 'people-outline', title: 'Entre fans, sans intermédiaire', text: 'Commentaires, abonnements et messages passent de pair à pair.' },
-  { icon: 'trophy-outline', title: 'Un rang vérifiable', text: 'Ce que tu regardes et lis te fait progresser. Chacun peut le recalculer.' },
+  { icon: 'swap-horizontal', title: 'Anime et manhwa reliés', text: 'Reprends le manhwa là où l’anime s’arrête, et inversement.' },
+  { icon: 'calendar-outline', title: 'Ta liste et tes sorties', text: 'Tes séries, tes listes et le calendrier des nouveaux épisodes.' },
+  { icon: 'lock-closed-outline', title: 'Sans email ni mot de passe', text: 'Ton compte est créé sur ce téléphone et sauvegardé dans ton iCloud.' },
 ];
+
+/** Temporary pseudo until the user picks one (profile). */
+const tempName = () => `fan-${Math.floor(1000 + Math.random() * 9000)}`;
 
 export default function Welcome() {
   const insets = useSafeAreaInsets();
   const legacy = getState().userName;
-  const [name, setName] = useState(legacy && legacy !== 'moi' ? legacy : '');
+  const name = legacy && legacy !== 'moi' && legacy.trim().length >= 2 ? legacy : tempName();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();
   // An iCloud account card takes the primary role: creating a new identity steps back.
@@ -37,7 +43,7 @@ export default function Welcome() {
     const who = cloudAccount.name ? `le compte « ${cloudAccount.name} »` : 'un compte Huwa';
     Alert.alert(
       'Remplacer la sauvegarde iCloud ?',
-      `Ton Trousseau iCloud contient déjà ${who}. Créer une nouvelle identité remplacera cette sauvegarde sur tous tes appareils Apple : si sa phrase n’est pas notée ailleurs, cet ancien compte sera perdu.`,
+      `Ton iCloud contient déjà ${who}. Commencer avec un nouveau compte remplacera cette sauvegarde sur tous tes appareils Apple : l’ancien compte pourrait être perdu.`,
       [
         { text: 'Annuler', style: 'cancel' },
         { text: 'Créer quand même', style: 'destructive', onPress: () => void doCreate() },
@@ -50,13 +56,13 @@ export default function Welcome() {
     setBusy(true);
     setError(undefined);
     try {
-      requestPasskeyOffer();
+      // No passkey sheet right after « Commencer »: the iCloud Keychain backup is enough to start;
+      // passkeys are offered in Réglages → Compte et appareils.
       await social.createIdentity(name);
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       // The protected stack now switches to the app on its own.
     } catch (e) {
-      requestPasskeyOffer(false);
-      setError(e instanceof Error ? e.message : 'Impossible de créer l’identité.');
+      setError(e instanceof Error ? e.message : 'Impossible de démarrer. Réessaie.');
       setBusy(false);
     }
   };
@@ -68,7 +74,7 @@ export default function Welcome() {
         contentContainerStyle={{ flexGrow: 1, paddingTop: insets.top + S.xxl, paddingBottom: insets.bottom + S.lg, paddingHorizontal: S.xl, gap: S.xl }}>
         <View style={{ gap: S.sm }}>
           <Wordmark size={34} />
-          <Txt v="body" color={C.body} style={{ fontSize: 17, lineHeight: 24, marginTop: S.sm }}>L’anime et le manhwa, au même endroit. Et ta communauté, sans serveur.</Txt>
+          <Txt v="body" color={C.body} style={{ fontSize: 17, lineHeight: 24, marginTop: S.sm }}>L’anime et le manhwa, au même endroit.</Txt>
         </View>
 
         <View style={{ gap: S.lg }}>
@@ -90,23 +96,8 @@ export default function Welcome() {
         <CloudAccountCard onVisibleChange={setCloudCard} onFound={setCloudAccount} />
 
         <View style={{ gap: S.md }}>
-          <Field
-            label="Choisis un pseudo"
-            value={name}
-            onChangeText={(t) => {
-              setName(t);
-              setError(undefined);
-            }}
-            placeholder="ex. mira.reads"
-            autoCapitalize="none"
-            autoCorrect={false}
-            maxLength={24}
-            returnKeyType="done"
-            onSubmitEditing={create}
-            error={error}
-            hint="Deux personnes peuvent avoir le même pseudo : une empreinte courte s’affiche à côté pour les distinguer."
-          />
-          <Button variant={cloudCard ? 'ghost' : 'solid'} large label="Créer mon identité" loading={busy} icon="sparkles" onPress={create} />
+          {error ? <Txt v="small" color={DANGER}>{error}</Txt> : null}
+          <Button variant={cloudCard ? 'ghost' : 'solid'} large label={cloudCard ? 'Nouveau compte' : 'Commencer'} loading={busy} icon="arrow-forward" iconRight onPress={create} />
           <Pressable
             onPress={() => router.push('/onboarding/restore')}
             accessibilityRole="button"

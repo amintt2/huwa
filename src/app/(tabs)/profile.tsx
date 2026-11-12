@@ -22,7 +22,7 @@ export default function Profile() {
   const stats = [
     { label: 'Épisodes vus', value: Object.values(episodes).filter((e) => e.done).length, color: C.accentText },
     { label: 'Chapitres lus', value: Object.values(chapters).filter((c) => c.done).length, color: C.accentText },
-    { label: 'Commentaires', value: comments, color: C.text },
+    ...(isStoreBuild ? [] : [{ label: 'Commentaires', value: comments, color: C.text }]),
   ];
   // PLAN §2: suggest the recovery phrase after the first uses, not at sign-up.
   const nudge = state && !state.phraseVerified && !r.loading && (r.journal.length >= 3 || r.loadedAt - (me?.createdAt ?? 0) > 86_400_000);
@@ -38,7 +38,9 @@ export default function Profile() {
         <ScreenTitle title="Profil" right={<IconButton icon="settings-outline" label="Réglages" size={40} onPress={() => router.push('/settings')} />} />
       </View>
 
-      <Press onPress={() => router.push(`/u/${me.key}`)} accessibilityRole="button" accessibilityLabel={`${me.name}, voir mon profil public`}>
+      {/* App Store flavor: no public profiles (community is full flavor only), the card edits mine. */}
+      <Press onPress={() => router.push(isStoreBuild ? '/profile-edit' : `/u/${me.key}`)} accessibilityRole="button"
+        accessibilityLabel={isStoreBuild ? `${me.name}, modifier mon profil` : `${me.name}, voir mon profil public`}>
         <View style={styles.card}>
           <LinearGradient colors={['rgba(47,107,235,0.22)', 'rgba(47,107,235,0)']} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={StyleSheet.absoluteFill} />
           <View style={styles.ring}>
@@ -47,7 +49,7 @@ export default function Profile() {
           <View style={{ flex: 1, gap: 3 }}>
             <Txt v="title" numberOfLines={1} style={{ fontSize: 21 }}>{me.name}</Txt>
             <Txt v="footnote" color={C.text3} tabular>{me.fingerprint}</Txt>
-            <Txt v="small" numberOfLines={2} color={me.bio ? C.body : C.text2} style={{ marginTop: 2 }}>{me.bio ?? 'Voir mon profil public'}</Txt>
+            <Txt v="small" numberOfLines={2} color={me.bio ? C.body : C.text2} style={{ marginTop: 2 }}>{me.bio ?? (isStoreBuild ? 'Modifier mon profil' : 'Voir mon profil public')}</Txt>
           </View>
           <Ionicons name="chevron-forward" size={16} color={C.text3} />
         </View>
@@ -92,14 +94,17 @@ export default function Profile() {
       )}
 
       <Group>
-        <Row
-          icon="chatbubbles-outline"
-          label="Messages"
-          detail={requestCount ? `${requestCount} demande${requestCount > 1 ? 's' : ''} en attente` : 'Privés, de pair à pair'}
-          right={<CountBadge n={unread + requestCount} />}
-          onPress={() => router.push('/messages')}
-        />
-        <Row icon="shield-half-outline" label="Modération" onPress={() => router.push('/settings/moderation')} />
+        {/* App Store flavor: no private messages or moderation (community is full flavor only). */}
+        {!isStoreBuild && (
+          <Row
+            icon="chatbubbles-outline"
+            label="Messages"
+            detail={requestCount ? `${requestCount} demande${requestCount > 1 ? 's' : ''} en attente` : 'Privés, de pair à pair'}
+            right={<CountBadge n={unread + requestCount} />}
+            onPress={() => router.push('/messages')}
+          />
+        )}
+        {!isStoreBuild && <Row icon="shield-half-outline" label="Modération" onPress={() => router.push('/settings/moderation')} />}
         <Row icon="albums-outline" label="Mes listes" onPress={() => router.push('/lists')} />
         {/* App Store flavor: no extensions, no torrent, no episode downloads (PLAN.md « Version App Store »). */}
         {!isStoreBuild && <Row icon="extension-puzzle-outline" label="Extensions" onPress={() => router.push('/addons')} />}

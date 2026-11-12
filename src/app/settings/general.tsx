@@ -252,7 +252,7 @@ export default function Settings() {
             />
             <Button small variant="ghost" icon="log-in-outline" label={t('anilist.login')} onPress={onLogin} />
             {!oauthAvailable() && <Txt v="small" style={{ fontSize: 12 }}>{t('anilist.noClient')}</Txt>}
-            <Button small variant="ghost" icon="download-outline" label="Importer depuis Stremio ou anime-sama" onPress={() => router.push('/import' as Href)} />
+            <Button small variant="ghost" icon="download-outline" label="Importer ma liste depuis un fichier" onPress={() => router.push('/import' as Href)} />
           </View>
         </Group>
 

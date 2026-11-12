@@ -6,6 +6,7 @@ import Ionicons from '@expo/vector-icons/Ionicons';
 import { activateKeepAwakeAsync, deactivateKeepAwake } from 'expo-keep-awake';
 import { router, Stack } from 'expo-router';
 
+import { isStoreBuild } from '@/config/channel';
 import { registerPageTarget } from '@/social/anchor-nav';
 import * as ScreenOrientation from 'expo-screen-orientation';
 import { StatusBar } from 'expo-status-bar';
@@ -467,7 +468,7 @@ export function ChapterReader({ startId, startPage, onRestart }: { startId: stri
         onPrev={() => goChapter(prev?.id)}
         onNext={() => goChapter(next?.id)}
         comments={comments}
-        onComments={() => router.push({ pathname: '/comments', params: { target: `ch:${chapter.id}`, kind: 'manhwa', page: String(loc.page + 1) } })}
+        onComments={isStoreBuild ? undefined : () => router.push({ pathname: '/comments', params: { target: `ch:${chapter.id}`, kind: 'manhwa', page: String(loc.page + 1) } })}
         download={dl}
         locked={settings.orientationLock}
         onToggleLock={() => setActiveSetting(keys, { orientationLock: !settings.orientationLock })}

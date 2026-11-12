@@ -34,6 +34,7 @@ import { useReduceMotion } from './reduce-motion';
 import { Skeleton } from './skeleton';
 import { LineSkeleton } from './skeletons';
 import { ActionTile, Button, Cover, MetaLine, Txt } from './ui';
+import { useCanRead, useCanWatch } from '@/addons/playback';
 
 /**
  * Hero height: the full 2:3 poster at the screen width (AniList covers), so its top — usually
@@ -297,6 +298,9 @@ function Slide({
 }) {
   const eps = series.anime?.episodes ?? [];
   const { target, seasonNumber } = useFranchiseTarget(series, active);
+  // Without extensions that play in Huwa, the buttons open « Où regarder / Où lire ».
+  const canWatch = useCanWatch() !== false;
+  const canRead = useCanRead();
   // The slide on screen for a second: its "Regarder" episode is pre-searched (lowest priority).
   usePresearch(
     'hero',
@@ -381,9 +385,9 @@ function Slide({
           <ActionTile icon={inList ? 'checkmark' : 'add'} label="Ma liste" active={inList} onPress={() => toggleMyList(series.id)}
             accessibilityLabel={inList ? 'Retirer de ma liste' : 'Ajouter à ma liste'} />
           {eps.length > 0 ? (
-            <Button icon="play" label={target?.label ?? 'Lecture'} onPress={play} style={{ flex: 1 }} />
+            <Button variant={canWatch ? 'solid' : 'ghost'} icon="play" label={canWatch ? (target?.label ?? 'Lecture') : 'Regarder'} onPress={play} style={{ flex: 1 }} />
           ) : nextCh ? (
-            <Button icon="book" label={`Lire · Ch. ${nextCh.number}`} onPress={() => router.push(`/read/${nextCh.id}`)} style={{ flex: 1 }} />
+            <Button variant={canRead ? 'solid' : 'ghost'} icon="book" label={`Lire · Ch. ${nextCh.number}`} onPress={() => router.push(`/read/${nextCh.id}`)} style={{ flex: 1 }} />
           ) : (
             <View style={{ flex: 1 }} />
           )}

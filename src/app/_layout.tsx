@@ -3,14 +3,16 @@ import { isDemo } from '@/demo';
 import { DemoRoute } from '@/demo/route';
 // An account deleted last session: its P2P store goes before anything opens it.
 import { finishPendingDeletion } from '@/settings/delete-account';
-import { DarkTheme, Stack, ThemeProvider, router } from 'expo-router';
+import { DarkTheme, Stack, ThemeProvider, router, type Href } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
 import { StatusBar } from 'expo-status-bar';
 import { useEffect, useState } from 'react';
 import { AppState, LogBox, Platform } from 'react-native';
 import { FullWindowOverlay } from 'react-native-screens';
 
-import { hydrateAddons } from '@/addons/registry';
+import { onAddonsAdded } from '@/addons/addon-store';
+import { resourceNames } from '@/addons/protocol';
+import { BUILTIN_ID, hydrateAddons } from '@/addons/registry';
 import { isStoreBuild } from '@/config/channel';
 import { cloudBackup } from '@/p2p/cloud-backup';
 import { registerHttpProxy } from '@/torrent/http-proxy';
@@ -33,7 +35,7 @@ import { useMe, useP2PStatus } from '@/p2p/hooks';
 import { canCarryAccount, consumePasskeyOffer, usePasskeyOfferPending, usePasskeyRecord } from '@/p2p/passkey';
 import { useJournalSync } from '@/p2p/sync';
 import { setPendingLink, usePendingLink } from '@/packs/routes';
-import { useSettings, useSettingsHydrated } from '@/settings/settings';
+import { getSettings, useSettings, useSettingsHydrated } from '@/settings/settings';
 import { useListsHydrated } from '@/store/lists';
 import { flushPendingWrites, leavesForeground } from '@/store/persist';
 import { useHydrated } from '@/store/store';
@@ -133,13 +135,7 @@ export default function RootLayout() {
           <Stack.Screen name="manhwa/[id]" />
           <Stack.Screen name="watch/[id]" options={{ contentStyle: { backgroundColor: C.black } }} />
           <Stack.Screen name="read/[id]" options={{ contentStyle: { backgroundColor: C.black } }} />
-          {/* Card modal, not a detent form sheet: in a detent sheet the scrollable thread and its header
-              got broken heights (overlap, then an empty sheet). Swipe down still closes it. */}
-          <Stack.Screen name="comments" options={{ presentation: 'modal', contentStyle: { backgroundColor: C.surface } }} />
-          <Stack.Screen name="u/[key]" />
           <Stack.Screen name="profile-edit" options={SHEET} />
-          <Stack.Screen name="messages" />
-          <Stack.Screen name="dm/[key]" />
           <Stack.Screen name="rank" />
           <Stack.Screen name="settings/index" />
           <Stack.Screen name="settings/general" />
@@ -150,8 +146,6 @@ export default function RootLayout() {
           <Stack.Screen name="settings/pair" options={SHEET} />
           <Stack.Screen name="settings/link-web" options={SHEET} />
           <Stack.Screen name="passkey" options={{ ...SHEET, sheetAllowedDetents: [0.62, 1] }} />
-          <Stack.Screen name="settings/moderation" />
-          <Stack.Screen name="settings/notifications" />
           <Stack.Screen name="settings/stats" />
           <Stack.Screen name="settings/delete-account" />
           <Stack.Screen name="about" />
@@ -159,6 +153,16 @@ export default function RootLayout() {
               library app (PLAN.md « Version App Store »); links there are also redirected by
               +native-intent. */}
           <Stack.Protected guard={!isStoreBuild}>
+            {/* Community: peer-to-peer comments and messages can't be taken down by the developer
+                for everyone, so the App Store flavor leaves them out (guideline 1.2).
+                Comments: card modal, not a detent form sheet (a detent sheet broke the thread's heights). */}
+            <Stack.Screen name="comments" options={{ presentation: 'modal', contentStyle: { backgroundColor: C.surface } }} />
+            <Stack.Screen name="u/[key]" />
+            <Stack.Screen name="messages" />
+            <Stack.Screen name="dm/[key]" />
+            <Stack.Screen name="settings/moderation" />
+            <Stack.Screen name="settings/notifications" />
+            <Stack.Screen name="playback-setup" options={SHEET} />
             <Stack.Screen name="addons" />
             <Stack.Screen name="manga-sources" />
             <Stack.Screen name="paperback" options={{ animation: 'none' }} />
@@ -191,6 +195,7 @@ export default function RootLayout() {
         </Stack.Protected>
       </Stack>
       {isDemo ? <DemoRoute /> : <EpisodeNotifications />}
+      {!isStoreBuild && !!me && <PlaybackSetupPrompt />}
       {!isDemo && me ? <PasskeyOffer /> : null}
       {me ? <PendingLink /> : null}
       {/* Once, right after onboarding: « Rejoins la communauté Huwa sur Discord ». */}
@@ -248,6 +253,21 @@ function PendingLink() {
 }
 
 /** Schedules new-episode notifications and handles taps (needs the navigator mounted). */
+/** First extension that plays in Huwa: ask the watching questions once (app/playback-setup.tsx). */
+function PlaybackSetupPrompt() {
+  useEffect(
+    () =>
+      onAddonsAdded((added) => {
+        if (getSettings().playbackSetupDone) return;
+        if (!added.some((a) => a.manifest.id !== BUILTIN_ID && resourceNames(a.manifest).includes('stream'))) return;
+        // After the install sheet closes.
+        setTimeout(() => router.push('/playback-setup' as Href), 600);
+      }),
+    [],
+  );
+  return null;
+}
+
 function EpisodeNotifications() {
   useEpisodeNotifications();
   // Android sideload: offer a newer APK from GitHub Releases.

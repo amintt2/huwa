@@ -58,7 +58,7 @@ export default function ImportLibrary() {
       cands = exp.items.map((x) => ({ source: x.name, status: x.status, stremioId: x.id.split(':').slice(0, 2).join(':') }));
     }
     if (!cands.length && !addons.length) {
-      Alert.alert('Rien à importer', 'Ce fichier ne contient ni liste ni addon reconnus. Vérifie que c’est bien l’export de Stremio ou d’anime-sama.');
+      Alert.alert('Rien à importer', 'Ce fichier ne contient ni liste ni addon reconnus. Vérifie que c’est bien un fichier d’export de ta liste.');
       return;
     }
     setPhase({ k: 'resolving', source, done: 0, total: cands.length });
@@ -121,14 +121,6 @@ export default function ImportLibrary() {
             <Button small variant="soft" icon="open-outline" label="Ouvrir web.stremio.com" onPress={() => WebBrowser.openBrowserAsync('https://web.stremio.com/#/settings')} />
           </View>
 
-          <View style={styles.card}>
-            <Txt v="section">anime-sama</Txt>
-            <Step n={1} text="Sur anime-sama, connecte-toi et ouvre ton Profil." />
-            <Step n={2} text="Touche « Exporter » : tu obtiens un fichier anime-sama_sauvegarde_….json (historique, watchlist, favoris, vus)." />
-            <Step n={3} text="Choisis ce fichier ici. Les titres sont retrouvés sur AniList ; tu vérifies avant d’importer." />
-            <Button label="Choisir la sauvegarde" icon="document-outline" onPress={fromFile} />
-          </View>
-
           <Group title="AUTRES">
             <Row icon="swap-horizontal-outline" label="AniList" hint="Import par nom d’utilisateur, dans Réglages → Général." last onPress={() => router.push('/settings/general' as Href)} />
           </Group>
@@ -140,7 +132,7 @@ export default function ImportLibrary() {
                 <TextInput
                   value={paste}
                   onChangeText={setPaste}
-                  placeholder='{"_app":"anime-sama", … } ou {"library": … }'
+                  placeholder='Contenu du fichier .json'
                   placeholderTextColor={C.text2}
                   multiline
                   autoCapitalize="none"

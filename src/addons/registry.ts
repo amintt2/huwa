@@ -59,12 +59,7 @@ export {
   toggleAddon,
 } from './addon-store';
 
-// Built-in demo source: open Blender / Apple test streams, so the player works with zero setup.
-const DEMO_STREAMS = [
-  { name: 'HLS 720p', title: 'Flux de test (Mux)', url: 'https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8' },
-  { name: 'MP4 480p', title: 'Sintel trailer (Blender, CC-BY)', url: 'https://download.blender.org/durian/trailer/sintel_trailer-480p.mp4' },
-  { name: 'HLS adaptatif', title: 'Apple bipbop', url: 'https://devstreaming-cdn.apple.com/videos/streaming/examples/img_bipbop_adv_example_fmp4/master.m3u8' },
-];
+
 
 const getAddons = () => getAddonsState().addons;
 const getPrefs = () => getAddonsState().prefs;
@@ -126,11 +121,10 @@ function useAggregate<T>(
   const lazy = ids && absoluteNumbering(ids) ? lazyImdbId(seriesId, episode, ids) : undefined;
   const asked: JobSpec[] = ready && enabled
     ? list
-        .filter((a) => a.enabled && (a.baseUrl !== builtin.baseUrl || resource === 'stream'))
-        .map((a) => ({
-          a,
-          reqs: a.baseUrl === builtin.baseUrl ? [{ type: 'series', id: videoId(seriesId, episode) }] : requestsFor(a.manifest, resource, seriesId, episode, ids ?? null, lazy),
-        }))
+        // The built-in « Où regarder » extension lists official services (data/official-links.ts):
+        // it serves no stream, so it is never asked.
+        .filter((a) => a.enabled && a.baseUrl !== builtin.baseUrl)
+        .map((a) => ({ a, reqs: requestsFor(a.manifest, resource, seriesId, episode, ids ?? null, lazy) }))
         .filter((j) => j.reqs.length > 0)
     : [];
   const specs = dropDemoWhenReal(asked, builtin.baseUrl, resource);
@@ -174,7 +168,7 @@ const streamOpts: JobOptions<AddonStream> = {
 /** Streams for an episode, unsorted (see `rankStreams`). */
 export function useStreams(seriesId: string, episode: number, enabled = true) {
   const r = useAggregate<AddonStream>('stream', seriesId, episode, async (a, req) => {
-    const items: StreamItem[] = a.baseUrl === builtin.baseUrl ? DEMO_STREAMS : await timedAddon(a.manifest, () => fetchStreams(a.baseUrl, req.type, req.id));
+    const items: StreamItem[] = await timedAddon(a.manifest, () => fetchStreams(a.baseUrl, req.type, req.id));
     return items.map((s) => ({ ...s, addonId: a.manifest.id, addonName: a.manifest.name }));
   }, enabled, streamOpts);
   // Status rows (scrape summaries, errors, donation banners) are kept apart for the "Infos" section.

@@ -27,9 +27,9 @@ export const builtin: InstalledAddon = {
   enabled: true,
   manifest: {
     id: BUILTIN_ID,
-    name: 'Démo Huwa',
-    description: 'Flux de démonstration libres de droits. Installe un addon pour de vrais contenus.',
-    resources: ['stream'],
+    name: 'Où regarder',
+    description: 'Les services officiels (Crunchyroll, Netflix, ADN, Webtoon…) où regarder chaque épisode et lire chaque chapitre, d’après AniList.',
+    resources: [],
     types: ['series', 'movie', 'anime'],
   },
 };

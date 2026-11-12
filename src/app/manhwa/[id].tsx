@@ -33,8 +33,11 @@ import { getSeries, type Chapter } from '@/data/catalog';
 import { useEnsureSeries } from '@/data/use-anilist';
 import { toggleMyList, useStore } from '@/store/store';
 import { C, F, R, S, TABULAR } from '@/theme/tokens';
+import { useCanRead } from '@/addons/playback';
 
 export default function ManhwaDetail() {
+  // Without a manga source, chapters open « Où lire » (official platforms).
+  const canRead = useCanRead();
   const { id } = useLocalSearchParams<{ id: string }>();
   const insets = useSafeAreaInsets();
   // Re-renders with the catalog; opened from a link before anything is cached: fetched meanwhile.
@@ -191,8 +194,10 @@ export default function ManhwaDetail() {
             <View style={{ paddingHorizontal: S.lg, gap: S.lg }}>
               <Button
                 large
+                // No manhwa source: greyed « Lire », which opens the official options.
+                variant={canRead ? 'solid' : 'ghost'}
                 icon="book"
-                label={!resume ? 'Aucun chapitre' : started ? `Continuer · Ch. ${resume.number}` : `Lire · Ch. ${resume.number}`}
+                label={!resume ? 'Aucun chapitre' : !canRead ? `Lire · Ch. ${resume.number}` : started ? `Continuer · Ch. ${resume.number}` : `Lire · Ch. ${resume.number}`}
                 disabled={!resume}
                 onPress={() => resume && router.push(`/read/${resume.id}`)}
               />

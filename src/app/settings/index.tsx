@@ -4,7 +4,7 @@ import { Alert } from 'react-native';
 import { useDiscordInvite } from '@/community/invite';
 import { DiscordRow } from '@/components/discord-invite';
 import { Screen } from '@/components/screen';
-import { Group, Row, WARN } from '@/components/social';
+import { Group, Row } from '@/components/social';
 import { Txt } from '@/components/ui';
 import { useAddons } from '@/addons/registry';
 import { useMangaExt } from '@/manga-ext/registry';
@@ -52,31 +52,32 @@ export default function Settings() {
         <Group title="Compte">
           <Row icon="person-circle-outline" label="Modifier le profil" onPress={() => router.push('/profile-edit')} />
           <Row
-            icon={state && !state.phraseVerified ? 'warning-outline' : 'shield-checkmark-outline'}
-            iconColor={state && !state.phraseVerified ? WARN : C.accentText}
-            label="Sécurité et sauvegarde"
-            detail={state ? (state.phraseVerified ? `Phrase vérifiée · ${state.devices} appareil${state.devices > 1 ? 's' : ''}` : 'Phrase de récupération non vérifiée') : undefined}
+            icon="shield-checkmark-outline"
+            iconColor={C.accentText}
+            label="Compte et appareils"
+            detail={state ? `Sauvegarde, autres appareils · ${state.devices} appareil${state.devices > 1 ? 's' : ''}` : 'Sauvegarde, autres appareils'}
             onPress={() => router.push('/settings/security')}
             last
           />
         </Group>
 
-        <Group title="Communauté">
-          <Row
+        {(!isStoreBuild || discord) && <Group title="Communauté">
+          {/* App Store flavor: no comments or messages, so no moderation or message notifications. */}
+          {!isStoreBuild && <Row
             icon="shield-half-outline"
             label="Modération"
             detail={`${lists} liste${lists > 1 ? 's' : ''} de blocage · ${words} mot${words > 1 ? 's' : ''} masqué${words > 1 ? 's' : ''}`}
             onPress={() => router.push('/settings/moderation')}
-          />
-          <Row
+          />}
+          {!isStoreBuild && <Row
             icon="notifications-outline"
             label="Notifications des messages"
             value={dmNotif === 'discreet' ? 'Discret' : 'Instantané'}
             onPress={() => router.push('/settings/notifications')}
             last={!discord}
-          />
+          />}
           <DiscordRow />
-        </Group>
+        </Group>}
 
         <Group title="Lecture">
           <Row icon="text" label="Sous-titres" detail={subtitleDetail} onPress={() => router.push('/settings/subtitles')} />
@@ -103,9 +104,9 @@ export default function Settings() {
           />
         </Group>
 
-        <Group title="Réseau" footer="Huwa n’a pas de serveur : ton compte et tes données vivent sur tes appareils et chez les pairs que tu rejoins.">
+        {!isStoreBuild && <Group title="Réseau" footer="Huwa n’a pas de serveur : ton compte et tes données vivent sur tes appareils et chez les pairs que tu rejoins.">
           <Row icon="git-network-outline" label={networkLabel} detail={network} last />
-        </Group>
+        </Group>}
 
         <Group>
           <Row icon="information-circle-outline" label="À propos" detail="Version, conditions, confidentialité, licences, contact" onPress={() => router.push('/about')} last />

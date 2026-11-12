@@ -6,6 +6,7 @@ import { router } from 'expo-router';
 import { useState, type ReactNode } from 'react';
 import { ActivityIndicator, StyleSheet, View } from 'react-native';
 
+import { isStoreBuild } from '@/config/channel';
 import { Skeleton } from '@/components/skeleton';
 import { Press, Txt } from '@/components/ui';
 import { episodeForChapter } from '@/data/bridge';
@@ -185,7 +186,7 @@ export function DividerView({
         {!a && <Txt v="small" style={{ paddingHorizontal: S.lg, marginTop: -6 }}>Le prochain chapitre arrive bientôt.</Txt>}
         {beforeLoaded && before && (
           <View style={styles.actions}>
-            <CommentsButton chapterId={before} />
+            {!isStoreBuild && <CommentsButton chapterId={before} />}
             {ep && (
               <Press onPress={() => router.push(`/watch/${ep.id}`)} style={styles.action} accessibilityRole="button" accessibilityLabel={`Revoir ce passage en anime, épisode ${ep.number}`}>
                 <Ionicons name="tv-outline" size={15} color={C.accentText} />

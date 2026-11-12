@@ -3,6 +3,7 @@ import { router } from 'expo-router';
 import { useEffect, useState } from 'react';
 import { Alert, Platform, StyleSheet, Switch, View } from 'react-native';
 
+import { isStoreBuild } from '@/config/channel';
 import { Group, Loading, PillAction, Row, WARN } from '@/components/social';
 import { Screen } from '@/components/screen';
 import { Button, Chip, Txt } from '@/components/ui';
@@ -82,7 +83,7 @@ export default function Security() {
   };
 
   return (
-    <Screen title="Sécurité">
+    <Screen title="Compte et appareils">
         {!state ? (
           <Loading />
         ) : (
@@ -103,7 +104,7 @@ export default function Security() {
                   : passkey && !state.phraseVerified
                     ? 'Ta clé d’accès transporte ton compte : sur un nouvel appareil, connecte-toi avec elle.'
                     : 'Si tu perds ce téléphone, ta phrase de récupération suffit à retrouver ton identité, ton rang et tes abonnements.'
-                : 'Ta clé n’existe que sur ce téléphone. Si tu le perds sans avoir noté ta phrase, personne ne pourra te rendre ton compte.'}
+                : 'Ton compte n’existe que sur ce téléphone. Active la sauvegarde iCloud ou note ta phrase pour le retrouver si tu changes de téléphone.'}
             </Txt>
             {!safe && <Button label="Sauvegarder ma phrase" icon="key" onPress={() => router.push('/settings/phrase')} />}
           </View>
@@ -187,7 +188,8 @@ export default function Security() {
           )}
         </Group>
 
-        <Group
+        {/* Technical details: full flavor only (the App Store flavor has no community features). */}
+        {!isStoreBuild && <Group
           title="Réseau"
           footer="Les relais gardent une copie de ton compte quand tes appareils sont éteints : c’est ce qui permet de le retrouver avec ta phrase si ton seul téléphone est perdu.">
           <Row
@@ -197,10 +199,10 @@ export default function Security() {
             onPress={() => router.push('/settings/relays')}
             last
           />
-        </Group>
+        </Group>}
 
-        {me && (
-          <Group title="Identité publique" footer="Ta clé publique t’identifie partout. Elle ne permet pas d’agir en ton nom.">
+        {me && !isStoreBuild && (
+          <Group title="Détails techniques" footer="Ta clé publique t’identifie partout. Elle ne permet pas d’agir en ton nom.">
             <Row icon="finger-print-outline" label={`Empreinte ${me.fingerprint}`} detail={me.key} last />
           </Group>
         )}

@@ -38,7 +38,7 @@ test('store flavor: extension, pack, debrid and torrent links land on the home s
   assert.equal(redirectLink('huwa://paperback?repo=x', store), '/');
   assert.equal(redirectLink('/debrid', store), '/');
   assert.equal(redirectLink('huwa://anime/al123', store), 'huwa://anime/al123');
-  assert.equal(redirectLink('huwa://u/abcdef', store), 'huwa://u/abcdef');
+  assert.equal(redirectLink('huwa://watch/ep1?t=30', store), 'huwa://watch/ep1?t=30');
 });
 
 test('route of a path or link', () => {
@@ -56,4 +56,13 @@ test('huwa://link-web (QR of Huwa Web) opens the phone screen that answers it, i
   assert.equal(redirectLink(qr, full), expected);
   assert.equal(redirectLink(qr, store), expected);
   assert.equal(redirectLink('huwa://link-web', full), '/settings/link-web');
+});
+
+test('App Store flavor: community links (comments, messages, profiles, moderation) land on the home screen', () => {
+  for (const link of ['huwa://u/abc', 'huwa://dm/abc', 'huwa://messages', '/comments?target=ep%3A1', 'huwa://settings/moderation', '/settings/notifications']) {
+    assert.equal(redirectLink(link, store), '/', link);
+    assert.equal(redirectLink(link, full), link, link);
+  }
+  assert.equal(redirectLink('huwa://settings/security', store), 'huwa://settings/security');
+  assert.equal(isFullOnlyRoute('/settings'), false);
 });

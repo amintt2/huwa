@@ -155,7 +155,7 @@ export default function ExtensionDetail() {
               <Txt v="label" color="#FF6B6B" style={F.semibold}>Supprimer l’extension</Txt>
             </Press>
           ) : (
-            <Txt v="small" style={{ lineHeight: 18 }}>Flux de démonstration libres de droits, fournis avec Huwa. Désactive-la quand tu as tes propres extensions.</Txt>
+            <Txt v="small" style={{ lineHeight: 18 }}>Fournie avec Huwa : les services officiels où regarder chaque épisode et lire chaque chapitre, d’après AniList.</Txt>
           )}
         </View>
       </Animated.ScrollView>

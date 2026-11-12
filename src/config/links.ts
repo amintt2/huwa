@@ -30,7 +30,16 @@ export const FULL_ONLY_ROUTES = [
   'discover',
   'meta',
   'downloads',
+  // Community (comments, private messages, public profiles): peer-to-peer content the developer
+  // cannot take down for everyone, so it stays out of the App Store flavor (guideline 1.2).
+  'comments',
+  'messages',
+  'dm',
+  'u',
 ] as const;
+
+/** Full-flavor screens under a shared first segment (`/settings/moderation`). */
+const FULL_ONLY_PATHS = ['settings/moderation', 'settings/notifications'];
 
 const URL_RE = /^([a-z][\w+.-]*):\/\/([^/?#]*)([^?#]*)(\?[^#]*)?(#.*)?$/i;
 
@@ -41,7 +50,13 @@ export function routeOf(pathOrUrl: string): string {
   return path.split('/').filter(Boolean)[0]?.toLowerCase() ?? '';
 }
 
-export const isFullOnlyRoute = (pathOrUrl: string) => (FULL_ONLY_ROUTES as readonly string[]).includes(routeOf(pathOrUrl));
+export const isFullOnlyRoute = (pathOrUrl: string) => {
+  if ((FULL_ONLY_ROUTES as readonly string[]).includes(routeOf(pathOrUrl))) return true;
+  const m = URL_RE.exec(pathOrUrl);
+  const path = (m ? (/^https?$/i.test(m[1]) ? m[3] : `/${m[2]}${m[3]}`) : pathOrUrl.replace(/[?#].*$/, ''))
+    .split('/').filter(Boolean).slice(0, 2).join('/').toLowerCase();
+  return FULL_ONLY_PATHS.includes(path);
+};
 
 /** App path for a link to the site, or undefined when the link is not one of ours. */
 export function sitePath(url: string): string | undefined {

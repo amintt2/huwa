@@ -17,7 +17,6 @@ import { moveLink, openSourceManga, refreshLinked as refreshLinkedQuiet, refresh
 import type { RankedCandidate } from '@/manga-ext/match';
 import { getInstalled, useMangaExt, type InstalledSource } from '@/manga-ext/registry';
 import type { ExtSearchItem } from '@/manga-ext/validate';
-import { isStoreBuild } from '@/config/channel';
 import { C, F, R, S } from '@/theme/tokens';
 
 const PLACEHOLDER = palette(null);
@@ -314,21 +313,9 @@ export function SourcePanel({ series }: { series: Series }) {
     );
   }
 
-  if (!hasSources) {
-    // App Store flavor: no extensions to add.
-    if (isStoreBuild) return null;
-    return (
-      <Press onPress={() => router.push('/manga-sources' as Href)} style={[styles.panel, { flexDirection: 'row', alignItems: 'center', gap: S.md }]}
-        accessibilityRole="button" accessibilityLabel="Ajouter des extensions manhwa">
-        <Ionicons name="extension-puzzle-outline" size={20} color={C.accentText} />
-        <View style={{ flex: 1, gap: 2 }}>
-          <Txt v="label" style={{ fontSize: 14 }}>Lire les vrais chapitres</Txt>
-          <Txt v="small" style={{ fontSize: 12 }}>Ajoute un dépôt d’extensions Paperback et installe tes sources.</Txt>
-        </View>
-        <Ionicons name="chevron-forward" size={16} color={C.text2} />
-      </Press>
-    );
-  }
+  // No manhwa source installed: nothing here. The « Où lire » screen lists the official platforms,
+  // and sources are added from Profil → Extensions, never pushed from a series page.
+  if (!hasSources) return null;
 
   const searching = auto.status === 'searching';
   const proposals = (auto.match?.candidates ?? []).filter((c) => !auto.match?.rejected.includes(`${c.sourceKey}|${c.mangaId}`));

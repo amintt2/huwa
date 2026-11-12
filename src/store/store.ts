@@ -134,6 +134,22 @@ export function saveChapterProgress(id: string, ratio: number) {
   });
 }
 
+/** Undo « Marquer comme vu » (where-to-watch screen): forget this episode's progress. */
+export function unmarkEpisode(id: string) {
+  set((s) => {
+    const { [id]: _, ...episodes } = s.episodes;
+    return { ...s, episodes };
+  });
+}
+
+/** Undo « Marquer comme lu » (where-to-read screen): forget this chapter's progress. */
+export function unmarkChapter(id: string) {
+  set((s) => {
+    const { [id]: _, ...chapters } = s.chapters;
+    return { ...s, chapters };
+  });
+}
+
 export function toggleMyList(seriesId: string) {
   set((s) => ({
     ...s,

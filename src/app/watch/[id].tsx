@@ -2,7 +2,7 @@ import Ionicons from '@expo/vector-icons/Ionicons';
 import { router, Stack, useLocalSearchParams, useNavigation } from 'expo-router';
 import type { AudioTrack } from 'expo-video';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { StyleSheet, View } from 'react-native';
+import { ScrollView, StyleSheet, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { dubName, languageMismatch, noDubTitle } from '@/addons/audio';
@@ -53,6 +53,8 @@ import { flushPendingWrites } from '@/store/persist';
 import { getState, markEpisodeDone, saveEpisodeProgress, toggleMyList, useStore } from '@/store/store';
 import { enableTorrentEngine, getTorrentSettings, isAvailable as torrentEngineLinked, useTorrentSettings } from '@/torrent';
 import { isStoreBuild } from '@/config/channel';
+import { useCanWatch } from '@/addons/playback';
+import { WhereToWatch } from '@/components/where-to';
 import { C, R, S, SHADOW } from '@/theme/tokens';
 
 // A player crash stays on this route (retry / back) instead of taking the whole app down.
@@ -62,7 +64,12 @@ export default function Watch() {
   // `t`: start at this second (comment anchors, huwa://watch/<ep>?t=767 links).
   const { id, t } = useLocalSearchParams<{ id: string; t?: string }>();
   const found = getEpisode(id);
+  const canWatch = useCanWatch();
   if (!found) return <Txt style={{ padding: S.xl }}>Épisode introuvable.</Txt>;
+  // No extension that plays in Huwa (always the case in the App Store flavor): the episode page
+  // lists the official services instead of opening an empty player.
+  if (canWatch === undefined) return null;
+  if (!canWatch) return <WhereToWatch key={id} series={found.series} episode={found.episode} />;
   return <WatchScreen key={id} id={id} at={numericParam(t, 86400)} />;
 }
 
@@ -442,8 +449,10 @@ function WatchScreen({ id, at }: { id: string; at?: number }) {
 
       <View style={styles.tiles}>
         <ActionTile icon={inList ? 'checkmark' : 'add'} label="Ma liste" active={inList} onPress={() => toggleMyList(series.id)} />
-        <ActionTile icon="chatbubble-outline" label={count ? `${count}` : 'Commenter'} accessibilityLabel={`Commentaires, ${count}`}
-          onPress={() => router.push({ pathname: '/comments', params: { target, kind: 'anime' } })} />
+        {!isStoreBuild && (
+          <ActionTile icon="chatbubble-outline" label={count ? `${count}` : 'Commenter'} accessibilityLabel={`Commentaires, ${count}`}
+            onPress={() => router.push({ pathname: '/comments', params: { target, kind: 'anime' } })} />
+        )}
         {/* App Store flavor: no episode downloads (their sources are extensions). */}
         {!isStoreBuild && (
           <ActionTile
@@ -536,8 +545,8 @@ function WatchScreen({ id, at }: { id: string; at?: number }) {
             onFullscreenChange={setFull}
             onOpenSources={() => setMenuOpen(true)}
             sourceLabel={sourceLabel}
-            commentCount={count}
-            renderComments={renderComments}
+            commentCount={isStoreBuild ? undefined : count}
+            renderComments={isStoreBuild ? undefined : renderComments}
           />
         ) : (
           <Player
@@ -591,9 +600,9 @@ function WatchScreen({ id, at }: { id: string; at?: number }) {
             sourceLabel={sourceLabel}
             sourceValue={src.current ? `${qualityLabel(src.quality)} · ${src.auto ? 'Auto' : 'Manuel'}` : 'Aucune'}
             renderSources={offline ? undefined : (done) => <SourcesList src={src} onDone={done} />}
-            commentCount={count}
-            timedComments={timed}
-            renderComments={renderComments}
+            commentCount={isStoreBuild ? undefined : count}
+            timedComments={isStoreBuild ? undefined : timed}
+            renderComments={isStoreBuild ? undefined : renderComments}
             upgrade={src.auto ? ctl.request : null}
             onUpgraded={ctl.onSwapped}
             onUpgradeDeferred={ctl.onDeferred}
@@ -648,13 +657,18 @@ function WatchScreen({ id, at }: { id: string; at?: number }) {
       {next && <PrefetchNext seriesId={series.id} episode={next.number} officialMin={next.officialMin} armed={prefetchArmed} buffer={prewarmNext} onDub={setNextDub} />}
       {/* Hidden, not unmounted, in fullscreen: keeps the comment draft and scroll position. */}
       <View style={{ flex: 1, display: full ? 'none' : 'flex' }}>
-        <CommentsPanel
-          target={target}
-          kind="anime"
-          header={header}
-          getTime={() => playerRef.current?.getTime() ?? 0}
-          onSeek={(t) => playerRef.current?.seekTo(t)}
-        />
+        {/* App Store flavor: no comments (community is full flavor only), just the episode header. */}
+        {isStoreBuild ? (
+          <ScrollView contentInsetAdjustmentBehavior="automatic">{header}</ScrollView>
+        ) : (
+          <CommentsPanel
+            target={target}
+            kind="anime"
+            header={header}
+            getTime={() => playerRef.current?.getTime() ?? 0}
+            onSeek={(t) => playerRef.current?.seekTo(t)}
+          />
+        )}
       </View>
     </View>
   );

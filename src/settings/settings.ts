@@ -63,6 +63,12 @@ export type Settings = {
    * and resume point fetched in parallel). Builds with the native engine only.
    */
   httpProxy: boolean;
+  /**
+   * The playback setup (VO / VF, subtitle and chapter languages, stats opt-in) was shown. It comes
+   * with the first extension that plays in Huwa, not with the first-launch onboarding: without
+   * one, Huwa is a library (« Où regarder »), so those questions would make no sense.
+   */
+  playbackSetupDone: boolean;
 };
 
 export const SETTINGS_KEY = 'huwa/settings/v1';
@@ -88,6 +94,7 @@ export const DEFAULT_SETTINGS: Settings = {
   autoSwitchSource: true,
   switchToast: true,
   httpProxy: true,
+  playbackSetupDone: false,
 };
 
 /** Font size in points for each subtitle size setting. */
@@ -133,6 +140,8 @@ function sanitize(raw: unknown): Settings {
     autoSwitchSource: pick('autoSwitchSource', bool),
     switchToast: pick('switchToast', bool),
     httpProxy: pick('httpProxy', bool),
+    // Installs onboarded before this setting existed answered these questions in the onboarding.
+    playbackSetupDone: typeof v.playbackSetupDone === 'boolean' ? v.playbackSetupDone : !!v.onboarded,
   };
 }
 
